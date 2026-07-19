@@ -22,12 +22,12 @@ None.
 
 Define targets and dependency direction for:
 
-- [ ] Domain and command model.
-- [ ] Notation layout, hit testing, and toolkit-neutral drawing commands.
-- [ ] Adaptive playback scheduler and MIDI model.
-- [ ] Runtime C ABI and cooked-asset loader.
-- [ ] Writer platform shell, accessibility bridge, audio devices, and VST3 adapter.
-- [ ] Plugin scanner helper and game-engine wrappers.
+- [x] Domain and command model.
+- [x] Notation layout, hit testing, and toolkit-neutral drawing commands.
+- [x] Adaptive playback scheduler and MIDI model.
+- [x] Runtime C ABI and cooked-asset loader.
+- [x] Writer platform shell, accessibility bridge, audio devices, and VST3 adapter.
+- [x] Plugin scanner helper and game-engine wrappers.
 
 The domain, scheduler, persistence, and C ABI must build without UI, audio-device, or VST3 dependencies.
 

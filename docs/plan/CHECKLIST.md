@@ -7,7 +7,7 @@ This source-controlled checklist tracks the phases and major steps in the milest
 - [ ] [Milestone 00 complete](00-architecture-spikes.md)
 - [x] Dependencies confirmed
 - [x] Permissive dependency policy completed
-- [ ] Architectural boundaries recorded
+- [x] Architectural boundaries recorded
 - [ ] Rendering and accessibility spike completed
 - [ ] Engraving-engine spike completed
 - [ ] Direct VST3 hosting spike completed
