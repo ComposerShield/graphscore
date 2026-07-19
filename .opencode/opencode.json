@@ -1,11 +1,16 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "permission": {
-    "external_directory": {
-      "**/soul-redux/**": "allow"
+    "read": {
+      "/tmp/*": "allow"
     },
     "edit": {
-      "**/soul-redux/**": "deny"
+      "**/soul-redux/**": "deny",
+      "/tmp/*": "allow"
+    },
+    "external_directory": {
+      "**/soul-redux/**": "allow",
+      "/tmp/*": "allow"
     }
   }
 }
