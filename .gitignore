@@ -1,0 +1,35 @@
+# macOS metadata
+.DS_Store
+**/.DS_Store
+
+# CMake build output
+build/
+cmake-build-*/
+CMakeUserPresets.json
+
+# IDE / editor artifacts
+.idea/
+.vs/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Compiled output
+*.o
+*.obj
+*.elf
+*.bin
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.app/
+
+# Package archives
+*.zip
+*.tar.gz
+*.tar.xz
+*.dmg
