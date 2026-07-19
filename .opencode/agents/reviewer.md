@@ -2,7 +2,7 @@
 description: Use for reviewing code changes for correctness, style, security, edge cases, and regressions. This agent audits work but does not modify code.
 mode: subagent
 model: openai/gpt-5.6-terra
-variant: xhigh
+variant: high
 color: "#E74C3C"
 permission:
   read: allow

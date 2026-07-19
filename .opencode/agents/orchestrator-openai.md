@@ -5,6 +5,12 @@ model: openai/gpt-5.6-sol
 variant: high
 color: "#8E44AD"
 permission:
+  read: allow
+  glob: allow
+  grep: allow
+  list: allow
+  edit: deny
+  bash: deny
   task:
     "*": deny
     explore: allow
