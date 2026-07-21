@@ -103,12 +103,11 @@ export, and full bounds validation on hostile input. Schema-generated formats
 fight all four. This is a design decision, not an empirical unknown, and
 Milestone 03 is a cheap place to discover it was wrong.
 
-- [ ] Write ADR 0006 selecting a cooked-format direction, justified against:
-      deterministic byte-for-byte export, versioning and unknown-field behavior,
-      bounds/offset validation on hostile input, load-time allocation count and
-      host-allocator support, compact representation of UUID/index maps, and
-      debuggability.
-- [ ] Record the fallback if the selected direction fails in Milestone 03.
+- [x] Write ADR 0006 selecting a cooked-format direction. **Decided: GraphScore
+      owns its binary format.** FlatBuffers rejected on allocator control,
+      byte-determinism cost, and the no-third-party-types rule.
+- [x] Record the fallback if the selected direction fails in Milestone 03 —
+      FlatBuffers confined behind the owned reader API in one library.
 - [x] Delete `spikes/m0/cooked-format/` — stub scaffold removed 2026-07-21.
 
 **Time box: 2 hours, documentation only.** No format is implemented in M0.

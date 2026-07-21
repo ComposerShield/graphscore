@@ -15,6 +15,8 @@ current state.
 | Architecture boundaries and dependency direction | Recorded target DAG | ADR 0003 |
 | Rendering and accessibility | Viable on macOS; custom-drawn notation is screen-reader navigable | ADR 0004 |
 | Engraving engine | No permissively licensed embeddable interactive engine exists; GraphScore owns its layout using SMuFL glyphs and a toolkit-neutral render list | ADR 0005 |
+| Cooked asset format | GraphScore owns its binary format; FlatBuffers rejected on allocator control and byte-determinism cost | ADR 0006 |
+| VST3 SDK licensing | MIT across the root repo and all core submodules incl. `pluginterfaces`; VSTGUI BSD-3-style and not required | `spikes/m0/vst3-hosting/README.md` |
 
 macOS physical VoiceOver and trackpad gates were run and accepted by Adam; both
 are recorded in ADR 0004 and the rendering spike's evidence directory. Windows
@@ -23,14 +25,11 @@ Milestone 10 by recorded scope decision.
 
 ## Remaining
 
-1. Write ADR 0006 selecting a cooked-format direction. Paper only, 2-hour box.
-2. Confirm the VST3 SDK license from `LICENSE.txt` at the pinned commit. The
-   scaffold claims MIT as of SDK 3.8.x, replacing the former GPLv3 + Steinberg
-   proprietary dual license. This is unverified and load-bearing for all of
-   Milestone 08 — stop and escalate if it does not hold.
-3. Run the direct VST3 hosting spike on macOS arm64. One working day.
-4. Delete or quarantine everything under `spikes/m0/`.
-5. Approve the M0 exit decision.
+1. Run the direct VST3 hosting spike on macOS arm64. One working day.
+   The native editor attach/resize/focus step is a physical gate requiring
+   Adam at the machine, like the VoiceOver gate before it.
+2. Delete or quarantine `spikes/m0/vst3-hosting/` once its ADR lands.
+3. Approve the M0 exit decision.
 
 ## Repository Notes
 

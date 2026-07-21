@@ -13,7 +13,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [x] Architectural boundaries recorded (ADR 0003)
 - [x] Rendering and accessibility decision recorded, macOS (ADR 0004)
 - [x] Engraving-engine decision recorded (ADR 0005)
-- [ ] Cooked-format decision recorded (ADR 0006) — paper only, 2h box
+- [x] Cooked-format decision recorded (ADR 0006) — owned binary format
 - [x] VST3 SDK license confirmed from upstream — MIT across all core
       submodules, incl. `pluginterfaces`; VSTGUI BSD-3-style and not required
 - [ ] Direct VST3 hosting spike completed, macOS arm64 — 1 day box
