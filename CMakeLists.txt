@@ -31,13 +31,9 @@ if (GRAPHSCORE_BUILD_TESTS)
   include(dependencies)
 endif()
 
-# Milestone 01 Phase 3 adds the full target DAG here:
-#   add_subdirectory(src)
-#   add_subdirectory(apps)
-#   if (GRAPHSCORE_BUILD_TESTS)
-#     add_subdirectory(tests)
-#   endif()
+add_subdirectory(src)
+add_subdirectory(apps)
 
 if (GRAPHSCORE_BUILD_TESTS)
-  add_subdirectory(tests/smoke)
+  add_subdirectory(tests)
 endif()

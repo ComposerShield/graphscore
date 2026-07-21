@@ -24,8 +24,8 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 
 - [ ] [Milestone 01 complete](01-toolchain-ci.md)
 - [x] Dependencies completed
-- [ ] Repository structure created
-- [ ] Git source control initialized and required project/planning files tracked
+- [x] Repository structure created
+- [x] Git source control initialized and required project/planning files tracked
 - [x] Root `AGENTS.md` created and validated
 - [x] Commit-message model/vendor attribution prohibition documented in `AGENTS.md`
 - [x] Tracked `CLAUDE.md` symlink to `AGENTS.md` created and validated
