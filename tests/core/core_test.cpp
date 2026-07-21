@@ -12,8 +12,10 @@ TEST(CoreTest, UuidDefaultIsZero) {
 }
 
 TEST(CoreTest, UuidGenerateIsNonZero) {
-  const graphscore::Uuid u           = graphscore::Uuid::generate();
-  bool                   any_nonzero = false;
+  const graphscore::Uuid u = graphscore::Uuid::generate();
+  // misc-const-correctness false positive on clang-tidy 18: the variable is
+  // written inside the range-for body, but the check does not see the write.
+  bool any_nonzero = false;  // NOLINT(misc-const-correctness)
   for (auto b : u.bytes()) {
     if (b != 0)
       any_nonzero = true;

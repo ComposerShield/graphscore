@@ -103,7 +103,7 @@ foreach (dependency IN LISTS dependency_names)
   set(expected "${GRAPHSCORE_BINARY_DIR}/_deps/${dependency}-src")
 
   if (NOT cache_contents MATCHES
-      "FETCHCONTENT_SOURCE_DIR_${dependency_upper}:PATH=([^\n]*)")
+      "FETCHCONTENT_SOURCE_DIR_${dependency_upper}:[A-Z_]+=([^\n]*)")
     message(FATAL_ERROR
       "FETCHCONTENT_SOURCE_DIR_${dependency_upper} is absent from the "
       "scratch build tree's cache. The override was not applied.")
