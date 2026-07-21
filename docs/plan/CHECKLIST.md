@@ -26,9 +26,9 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [ ] Dependencies completed
 - [ ] Repository structure created
 - [ ] Git source control initialized and required project/planning files tracked
-- [ ] Root `AGENTS.md` created and validated
-- [ ] Commit-message model/vendor attribution prohibition documented in `AGENTS.md`
-- [ ] Tracked `CLAUDE.md` symlink to `AGENTS.md` created and validated
+- [x] Root `AGENTS.md` created and validated
+- [x] Commit-message model/vendor attribution prohibition documented in `AGENTS.md`
+- [x] Tracked `CLAUDE.md` symlink to `AGENTS.md` created and validated
 - [ ] CMake and FetchContent foundation completed
 - [ ] Const-correctness policy implemented
 - [ ] Local quality gates and `.githooks/pre-commit` completed
