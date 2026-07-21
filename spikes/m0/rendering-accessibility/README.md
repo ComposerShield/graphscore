@@ -1,3 +1,8 @@
+> **QUARANTINED 2026-07-21.** The spike source, tests, and CMake
+> project were deleted after the decision was recorded. Only the
+> evidence logs and this README remain, as citations from the ADR.
+> Nothing here builds. Recover the code from git history if needed.
+
 # M0 Phase C — Rendering & Accessibility Spike
 
 ## Purpose

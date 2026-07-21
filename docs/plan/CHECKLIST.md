@@ -4,16 +4,20 @@ This source-controlled checklist tracks the phases and major steps in the milest
 
 ## Milestone 00: Architecture And Risk Spikes
 
+Spike rules in [00-architecture-spikes.md](00-architecture-spikes.md) apply.
+The cross-milestone Definition Of Done does **not**. Each box below is one
+ADR or one time-boxed investigation, not a review-and-evidence cycle.
+
 - [ ] [Milestone 00 complete](00-architecture-spikes.md)
-- [x] Dependencies confirmed
-- [x] Permissive dependency policy completed
-- [x] Architectural boundaries recorded
-- [x] Rendering and accessibility spike completed
-- [x] Engraving-engine spike completed
-- [ ] Direct VST3 hosting spike completed
-- [ ] Cooked-format spike completed
-- [ ] Acceptance criteria passed
-- [ ] Test and evidence requirements completed
+- [x] Permissive dependency policy recorded (ADR 0001, ADR 0002)
+- [x] Architectural boundaries recorded (ADR 0003)
+- [x] Rendering and accessibility decision recorded, macOS (ADR 0004)
+- [x] Engraving-engine decision recorded (ADR 0005)
+- [ ] Cooked-format decision recorded (ADR 0006) — paper only, 2h box
+- [x] VST3 SDK license confirmed from upstream — MIT across all core
+      submodules, incl. `pluginterfaces`; VSTGUI BSD-3-style and not required
+- [ ] Direct VST3 hosting spike completed, macOS arm64 — 1 day box
+- [ ] Spike directories deleted or quarantined
 - [ ] Exit decision approved
 
 ## Milestone 01: Toolchain And CI Foundation

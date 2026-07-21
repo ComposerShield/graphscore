@@ -199,7 +199,13 @@ Progress is tracked in the source-controlled [execution checklist](CHECKLIST.md)
 
 ## Cross-Milestone Definition Of Done
 
-Every milestone must:
+This section applies to **production milestones 01 through 12**. Milestone 00
+produces disposable spikes and written decisions, and is governed instead by the
+spike rules in [00-architecture-spikes.md](00-architecture-spikes.md). Applying
+production gates to throwaway spike code is a known failure mode of this plan
+and is explicitly out of scope.
+
+Every production milestone must:
 
 - Keep the three primary platform builds green with Clang.
 - Add GTest coverage for new domain and runtime behavior before considering the behavior complete.
@@ -214,6 +220,6 @@ Every milestone must:
 
 - Milestones are dependency-ordered, not promises of calendar duration.
 - A milestone may use feature branches or internal increments, but its acceptance gates must pass together.
-- Architecture and dependency spikes may reject a candidate; the recorded decision and fallback are the deliverable.
+- Architecture and dependency spikes may reject a candidate; the recorded decision and fallback are the deliverable. Spikes carry stated time boxes, and reaching a time box without a clear answer is itself an answer.
 - The tested scale is a release contract for representative fixtures, not permission to add arbitrary hard-coded storage limits.
 - `0.1.0` denotes a coherent first release, not API stability equivalent to `1.0.0`; nevertheless, cooked assets and the C ABI are versioned from their first public appearance.

@@ -1,3 +1,0 @@
-PresentToWindow: SDL_GetWindowSurface failed: Window framebuffer support not available
-Smoke: PresentToWindow failed
-exit: 1

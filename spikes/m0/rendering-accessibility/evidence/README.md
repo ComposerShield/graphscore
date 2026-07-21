@@ -112,4 +112,7 @@ Windows UIA/Narrator, Linux AT-SPI2/Orca implementation status.
 
 ## Historical Evidence
 
-See `historical/pass-history.md` for previous pass summaries.
+Removed on 2026-07-21. Earlier passes recorded superseded self-test counts
+(362, 436) that conflicted with the final 476 and repeatedly caused confusion.
+The logs in this directory are the only authoritative record. Prior passes are
+in the git history.
