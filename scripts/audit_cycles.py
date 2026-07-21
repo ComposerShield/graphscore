@@ -2,22 +2,21 @@
 # SPDX-License-Identifier: Apache-2.0
 """No-cycles audit (ADR 0003 §7.6).
 
-CMake already rejects cyclic ``target_link_libraries`` at configure time, so
-this script exists as an independent cross-check rather than as the primary
-defence: it derives the dependency graph from ``cmake --graphviz`` output —
-CMake's own rendering of the generated buildsystem — instead of from
-cmake/architecture_contract.cmake or the audit's target-graph dump. A bug in
-either of those cannot hide a cycle from this audit.
+Derives the dependency graph from the configure-time target-graph dump that
+cmake/ArchitectureAudit.cmake writes, rather than from ``cmake --graphviz``
+output.  The dump is always up to date (it is written at configure time) and
+never touches the Ninja build files, so it avoids the ``ninja: failed
+recompaction: Permission denied`` error that ``cmake --graphviz`` can hit on
+Windows while the build is running.
 
-It also enforces the layer ordering that CMake has no opinion about: a target
-in layer N may not depend on a target in a layer above N, except for the
-same-layer edges ADR 0003 §2.1 permits explicitly.
+Enforces layer ordering: a target in layer N may not depend on a target in a
+layer above N, except for the same-layer edges ADR 0003 §2.1 permits
+explicitly.
 
 Run by the ``audit_architecture`` CMake target and by CI.
 """
 
 import re
-import subprocess
 import sys
 
 import graphscore_audit as audit
@@ -61,92 +60,47 @@ PERMITTED_SAME_LAYER_EDGES = {
     ("graphscore_writer_app", "graphscore_plugin_scanner_client"),
 }
 
-_NODE_RE = re.compile(r'^\s*"(node\d+)"\s*\[\s*label\s*=\s*"([^"]+)"')
-_EDGE_RE = re.compile(r'^\s*"(node\d+)"\s*->\s*"(node\d+)"')
+# Synthesised CMake targets that are not real libraries but appear as
+# link-time requirements in the target-graph dump. They have no sources,
+# no output, and no layer, so they are excluded from cycle and layer
+# checking.
+_IGNORE_GRAPHSCORE_TARGETS = frozenset({
+    "graphscore_warnings",
+})
+
+_SET_FN_RE = re.compile(
+    r'^\s*set\s*\(\s*GRAPHSCORE_GRAPH_(?:LINK|INTERFACE)_(\S+)\s+"([^"]*)"')
 
 
-def generate_graphviz(source_dir, binary_dir):
-    """Ask CMake to render the generated buildsystem as a Graphviz graph.
+def parse_target_graph(target_graph_path):
+    """Read the configure-time target-graph dump and return {label: {dep, ...}}.
 
-    Passes only the existing binary directory — no ``-S`` / ``-B`` pair — so
-    CMake reads the already-resolved CMakeCache.txt and never regenerates the
-    build system. On Windows, this avoids a Ninja ``failed recompaction:
-    Permission denied`` error that a full ``cmake -S ... -B ...`` would
-    trigger while the build is running (or shortly after it finishes).
-    """
-    dot_path = binary_dir / "graphscore_dependencies.dot"
-    result = subprocess.run(
-        ["cmake", f"--graphviz={dot_path}", str(binary_dir)],
-        capture_output=True, text=True, check=False)
-
-    if result.returncode != 0:
-        print(
-            "audit_cycles: `cmake --graphviz` failed:\n" + result.stderr,
-            file=sys.stderr)
-        return None
-
-    if not dot_path.exists():
-        print(
-            f"audit_cycles: CMake reported success but wrote no graph at "
-            f"{dot_path}.",
-            file=sys.stderr)
-        return None
-
-    return dot_path
-
-
-def parse_graphviz(dot_path):
-    """Parse the Graphviz output into (id_graph, id_to_label).
-
-    The graph is keyed by Graphviz **node id**, not by target label. CMake
-    versions differ in whether a target can appear as more than one node —
-    for instance once in the global graph and again inside a per-directory
-    cluster. Collapsing nodes by label merges those duplicates, and an edge
-    between two nodes that share a label then becomes an apparent
-    self-dependency: a cycle that does not exist. Keeping ids distinct
-    reports exactly the cycles CMake actually generated, and labels are
-    resolved only when a violation is described.
-    """
-    id_to_label = {}
-    id_graph = {}
-
-    for line in dot_path.read_text(encoding="utf-8").splitlines():
-        node_match = _NODE_RE.match(line)
-        if node_match:
-            node_id, label = node_match.group(1), node_match.group(2)
-            id_to_label[node_id] = label
-            id_graph.setdefault(node_id, set())
-            continue
-
-        edge_match = _EDGE_RE.match(line)
-        if edge_match:
-            source_id, target_id = edge_match.group(1), edge_match.group(2)
-            if source_id == target_id:
-                continue  # self-edge is a CMake version artefact, not a cycle
-            id_graph.setdefault(source_id, set()).add(target_id)
-            id_graph.setdefault(target_id, set())
-
-    return id_graph, id_to_label
-
-
-def label_graph(id_graph, id_to_label):
-    """Collapse the id graph to {label: {label, ...}} for layer checking.
-
-    Layer ordering is a property of targets, not of Graphviz nodes, so
-    duplicate labels are merged here deliberately. Self-edges introduced by
-    that merge are dropped: they are an artefact of the collapse, and cycle
-    detection has already run on the id graph where they cannot occur.
+    ``cmake/ArchitectureAudit.cmake`` writes ``graphscore_target_graph.cmake``
+    at configure time.  This script reads it directly instead of invoking
+    ``cmake --graphviz``, which on Windows would re-run the Ninja generator
+    and collide with its file lock (``failed recompaction: Permission
+    denied``).
     """
     graph = {}
-    for source_id, target_ids in id_graph.items():
-        source = id_to_label.get(source_id)
-        if source is None:
+    text = target_graph_path.read_text(encoding="utf-8")
+
+    for line in text.splitlines():
+        match = _SET_FN_RE.match(line)
+        if not match:
             continue
-        targets = graph.setdefault(source, set())
-        for target_id in target_ids:
-            target = id_to_label.get(target_id)
-            if target is not None and target != source:
-                targets.add(target)
+        target = match.group(1)
+        if target in _IGNORE_GRAPHSCORE_TARGETS:
+            continue
+        graph.setdefault(target, set())
+        for dep in match.group(2).split(";"):
+            dep = dep.strip()
+            if not dep or dep == target:
+                continue
+            if dep in _IGNORE_GRAPHSCORE_TARGETS or dep.startswith("$<"):
+                continue
+            graph[target].add(dep)
+            graph.setdefault(dep, set())
+
     return graph
 
 
@@ -217,33 +171,31 @@ def main():
     source_dir = args.source_dir.resolve()
     binary_dir = args.binary_dir.resolve()
 
-    dot_path = generate_graphviz(source_dir, binary_dir)
-    if dot_path is None:
+    target_graph_path = binary_dir / "graphscore_target_graph.cmake"
+    if not target_graph_path.exists():
+        print(
+            f"audit_cycles: target-graph dump not found at "
+            f"{target_graph_path} (reconfigure to generate it).",
+            file=sys.stderr)
         return 1
 
-    id_graph, id_to_label = parse_graphviz(dot_path)
-    graph = label_graph(id_graph, id_to_label)
+    graph = parse_target_graph(target_graph_path)
     owned = {name for name in graph if name in LAYERS}
 
     if not owned:
         print(
-            "audit_cycles found no GraphScore targets in the Graphviz "
-            "output. This is an audit-wiring bug, not a clean result.",
+            "audit_cycles found no GraphScore targets in the target-graph "
+            "dump. This is an audit-wiring bug, not a clean result.",
             file=sys.stderr)
         return 1
 
     violations = []
 
-    cycle = find_cycle(id_graph)
+    cycle = find_cycle(graph)
     if cycle:
-        # Report labels, but keep the node ids alongside them: a cycle whose
-        # labels repeat is the signature of the duplicate-node case, and
-        # without the ids that report is impossible to act on.
-        described = " -> ".join(
-            f"{id_to_label.get(node, '?')} [{node}]" for node in cycle)
         violations.append(audit.Violation(
             "cmake/architecture_contract.cmake", None,
-            "dependency cycle: " + described))
+            "dependency cycle: " + " -> ".join(cycle)))
 
     check_layers(graph, violations)
 
