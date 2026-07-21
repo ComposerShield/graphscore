@@ -3,12 +3,6 @@
 #include <graphscore/c_abi/graphscore_c_abi.h>
 #include <graphscore/runtime_impl/graphscore_runtime_impl.hpp>
 
-namespace {
-
-graphscore::RuntimeImpl g_impl;
-
-}  // namespace
-
 extern "C" {
 
 GS_API gs_version_t gs_query_version(void) {
@@ -23,7 +17,16 @@ GS_API gs_version_t gs_query_version(void) {
 
 GS_API gs_result_t gs_player_create(const gs_allocator_t* /*allocator*/,
                                     gs_player_t** out_player) {
-  (void)g_impl;
+  // M1 placeholder: one process-wide instance, so the C ABI is callable end
+  // to end before the runtime owns any state. M4 replaces this with an
+  // instance allocated through the caller-supplied gs_allocator_t, at which
+  // point independent players become possible.
+  //
+  // Function-local rather than namespace-scope: a namespace-scope mutable
+  // object is shared mutable state whose initialisation order relative to
+  // other translation units is unspecified.
+  static graphscore::RuntimeImpl impl;
+
   if (out_player == nullptr) {
     gs_result_t r{};
     r.size    = sizeof(r);
@@ -31,7 +34,7 @@ GS_API gs_result_t gs_player_create(const gs_allocator_t* /*allocator*/,
     r.code    = GS_RESULT_INVALID_ARGUMENT;
     return r;
   }
-  *out_player = reinterpret_cast<gs_player_t*>(&g_impl);
+  *out_player = reinterpret_cast<gs_player_t*>(&impl);
   gs_result_t r{};
   r.size    = sizeof(r);
   r.version = 1;

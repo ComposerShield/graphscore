@@ -17,6 +17,11 @@ add_test(NAME graphscore_cmake_consumer
     -D "GRAPHSCORE_CONFIG=$<IF:$<CONFIG:>,Debug,$<CONFIG>>"
     -D "GRAPHSCORE_C_COMPILER=${CMAKE_C_COMPILER}"
     -D "GRAPHSCORE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+    # A sanitizer-instrumented runtime leaves its sanitizer-runtime symbols
+    # for the consuming link to resolve, so the out-of-tree consumers must be
+    # built with the same flags. See cmake/Sanitizers.cmake.
+    -D "GRAPHSCORE_SANITIZER_COMPILE_FLAGS=${GRAPHSCORE_SANITIZER_COMPILE_FLAGS}"
+    -D "GRAPHSCORE_SANITIZER_LINK_FLAGS=${GRAPHSCORE_SANITIZER_LINK_FLAGS}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/run_consumer_test.cmake"
 )
 

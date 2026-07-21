@@ -57,6 +57,13 @@ struct ShellResult {
 class WriterShell {
  public:
   WriterShell();
+
+  // Declared and defined out of line, not defaulted here. Impl is incomplete
+  // at this point, and std::unique_ptr's deleter requires a complete type at
+  // the point the destructor is instantiated — defaulting in-class would not
+  // compile. performance-trivially-destructible sees only the translation
+  // unit where Impl is complete and cannot know that.
+  // NOLINTNEXTLINE(performance-trivially-destructible)
   ~WriterShell();
 
   WriterShell(const WriterShell&)            = delete;

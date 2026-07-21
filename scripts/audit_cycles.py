@@ -90,26 +90,55 @@ def generate_graphviz(source_dir, binary_dir):
 
 
 def parse_graphviz(dot_path):
-    """Return {target: {dependency, ...}} for GraphScore-owned targets."""
-    names = {}
-    raw_edges = []
+    """Parse the Graphviz output into (id_graph, id_to_label).
+
+    The graph is keyed by Graphviz **node id**, not by target label. CMake
+    versions differ in whether a target can appear as more than one node —
+    for instance once in the global graph and again inside a per-directory
+    cluster. Collapsing nodes by label merges those duplicates, and an edge
+    between two nodes that share a label then becomes an apparent
+    self-dependency: a cycle that does not exist. Keeping ids distinct
+    reports exactly the cycles CMake actually generated, and labels are
+    resolved only when a violation is described.
+    """
+    id_to_label = {}
+    id_graph = {}
 
     for line in dot_path.read_text(encoding="utf-8").splitlines():
         node_match = _NODE_RE.match(line)
         if node_match:
-            names[node_match.group(1)] = node_match.group(2)
+            node_id, label = node_match.group(1), node_match.group(2)
+            id_to_label[node_id] = label
+            id_graph.setdefault(node_id, set())
             continue
+
         edge_match = _EDGE_RE.match(line)
         if edge_match:
-            raw_edges.append((edge_match.group(1), edge_match.group(2)))
+            source_id, target_id = edge_match.group(1), edge_match.group(2)
+            id_graph.setdefault(source_id, set()).add(target_id)
+            id_graph.setdefault(target_id, set())
 
-    graph = {name: set() for name in names.values()}
-    for source_node, target_node in raw_edges:
-        source = names.get(source_node)
-        target = names.get(target_node)
-        if source is not None and target is not None:
-            graph[source].add(target)
+    return id_graph, id_to_label
 
+
+def label_graph(id_graph, id_to_label):
+    """Collapse the id graph to {label: {label, ...}} for layer checking.
+
+    Layer ordering is a property of targets, not of Graphviz nodes, so
+    duplicate labels are merged here deliberately. Self-edges introduced by
+    that merge are dropped: they are an artefact of the collapse, and cycle
+    detection has already run on the id graph where they cannot occur.
+    """
+    graph = {}
+    for source_id, target_ids in id_graph.items():
+        source = id_to_label.get(source_id)
+        if source is None:
+            continue
+        targets = graph.setdefault(source, set())
+        for target_id in target_ids:
+            target = id_to_label.get(target_id)
+            if target is not None and target != source:
+                targets.add(target)
     return graph
 
 
@@ -184,7 +213,8 @@ def main():
     if dot_path is None:
         return 1
 
-    graph = parse_graphviz(dot_path)
+    id_graph, id_to_label = parse_graphviz(dot_path)
+    graph = label_graph(id_graph, id_to_label)
     owned = {name for name in graph if name in LAYERS}
 
     if not owned:
@@ -196,11 +226,16 @@ def main():
 
     violations = []
 
-    cycle = find_cycle(graph)
+    cycle = find_cycle(id_graph)
     if cycle:
+        # Report labels, but keep the node ids alongside them: a cycle whose
+        # labels repeat is the signature of the duplicate-node case, and
+        # without the ids that report is impossible to act on.
+        described = " -> ".join(
+            f"{id_to_label.get(node, '?')} [{node}]" for node in cycle)
         violations.append(audit.Violation(
             "cmake/architecture_contract.cmake", None,
-            "dependency cycle: " + " -> ".join(cycle)))
+            "dependency cycle: " + described))
 
     check_layers(graph, violations)
 

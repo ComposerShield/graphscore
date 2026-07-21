@@ -76,19 +76,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned. clang-tidy's checks and their defaults change between
+      # releases, so an unpinned version turns an unrelated toolchain bump
+      # into a red build, and makes local reproduction guesswork.
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang clang-tidy ninja-build
+          sudo apt-get install -y clang-18 clang-tidy-18 ninja-build
+          sudo update-alternatives --install \
+            /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-18 100
 
+      # The compiler is pinned to the same release as the analyzer: clang-tidy
+      # reads the compile flags but parses with its own frontend, so a
+      # version skew between them produces diagnostics that cannot be
+      # reproduced with either version alone.
       - name: Configure
         run: |
           cmake --preset debug \
+            -DCMAKE_C_COMPILER=clang-18 \
+            -DCMAKE_CXX_COMPILER=clang++-18 \
             -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON \
             -DGRAPHSCORE_BUILD_WRITER=OFF
 
+      # -k 0 keeps going after the first failing translation unit, so one run
+      # reports every finding. Stopping at the first file turns a review into
+      # one round trip per file.
       - name: Build with clang-tidy
-        run: cmake --build --preset debug
+        run: cmake --build --preset debug -- -k 0
 
   # ---------------------------------------------------------------------
   # Native build and test.

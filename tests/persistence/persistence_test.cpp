@@ -5,7 +5,7 @@
 #include <graphscore/persistence/graphscore_persistence.hpp>
 
 TEST(PersistenceTest, Compiles) {
-  graphscore::Persistence p;
+  const graphscore::Persistence p;
   static_cast<void>(p);
   SUCCEED();
 }

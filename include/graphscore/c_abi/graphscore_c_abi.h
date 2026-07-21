@@ -9,6 +9,25 @@
 #ifndef GRAPHSCORE_C_ABI_H
 #define GRAPHSCORE_C_ABI_H
 
+/* This header is C99. Several checks in the root .clang-tidy target C++23
+ * GraphScore code and are wrong here:
+ *
+ *   modernize-use-using       `using` does not exist in C; `typedef struct
+ *                             { ... } name_t;` is the only way to name these
+ *                             types, and the header must stay C-compilable.
+ *   bugprone-reserved-identifier
+ *                             fires on the include guard and on the
+ *                             GS_STATIC_ASSERT-generated typedef names, both
+ *                             deliberate and namespaced.
+ *   readability-identifier-length
+ *                             the C ABI uses short conventional names.
+ *
+ * Suppressed inline rather than by header filter: a .clang-tidy beside this
+ * header is never consulted, because clang-tidy takes its check list from
+ * the translation unit being compiled. See the root .clang-tidy. */
+/* NOLINTBEGIN(modernize-use-using,bugprone-reserved-identifier,readability-identifier-length)
+ */
+
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -243,5 +262,8 @@ GS_STATIC_ASSERT(sizeof(gs_asset_descriptor_t) ==
 #ifdef __cplusplus
 }  // extern "C"
 #endif
+
+/* NOLINTEND(modernize-use-using,bugprone-reserved-identifier,readability-identifier-length)
+ */
 
 #endif  // GRAPHSCORE_C_ABI_H

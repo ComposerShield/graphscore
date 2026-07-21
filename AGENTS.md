@@ -71,8 +71,13 @@ cmake --build --preset debug --target lint
 
 # Const-correctness analysis. Off by default because clang-tidy roughly
 # triples compile time; CI runs it as its own job.
+#
+# Use clang-tidy 18 to match CI. Check selections and their defaults change
+# between releases, so another version will report a different set — newer
+# ones both add and drop findings. `pip install clang-tidy==18.1.8` provides
+# a matching binary on any platform.
 cmake --preset debug -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON
-cmake --build --preset debug
+cmake --build --preset debug -- -k 0   # -k 0: report every file, not the first
 
 # Architecture boundary audit (ADR 0003 §7).
 cmake --build --preset debug --target audit_architecture

@@ -5,7 +5,7 @@
 #include <graphscore/compiler/graphscore_compiler.hpp>
 
 TEST(CompilerTest, Compiles) {
-  graphscore::Compiler c;
+  const graphscore::Compiler c;
   static_cast<void>(c);
   SUCCEED();
 }

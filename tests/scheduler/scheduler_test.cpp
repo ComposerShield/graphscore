@@ -5,7 +5,7 @@
 #include <graphscore/scheduler/graphscore_scheduler.hpp>
 
 TEST(SchedulerTest, Compiles) {
-  graphscore::Scheduler s;
+  const graphscore::Scheduler s;
   static_cast<void>(s);
   SUCCEED();
 }

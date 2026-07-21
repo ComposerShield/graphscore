@@ -11,6 +11,19 @@
 # Third-party sources are excluded via HeaderFilterRegex plus the
 # `.clang-tidy` that each FetchContent dependency ships (or the absence of
 # any GraphScore include path in its translation units).
+#
+# Notes on the disabled checks below — YAML folded scalars take `#` lines as
+# literal text, so no comment may appear inside the `Checks:` block itself:
+#
+#   bugprone-easily-swappable-parameters
+#       fires on every function taking two same-typed values; the C ABI is
+#       full of them by design.
+#   performance-avoid-endl
+#       GraphScore does not use iostreams on any hot path.
+#   performance-enum-size
+#       enum widths here are deliberate, most of them mirroring the fixed
+#       32-bit codes of the C ABI. Narrowing them to save bytes would break
+#       that correspondence for no measurable gain.
 
 Checks: >
   -*,
@@ -35,6 +48,7 @@ Checks: >
 
   performance-*,
   -performance-avoid-endl,
+  -performance-enum-size,
 
   readability-const-return-type,
   readability-implicit-bool-conversion,
@@ -49,6 +63,12 @@ WarningsAsErrors: '*'
 # Only diagnose GraphScore-owned headers. FetchContent dependency headers are
 # consumed with -isystem and must never fail a GraphScore build (ADR 0001,
 # "Warning isolation").
+#
+# graphscore_c_abi.h is a pure C99 header for which several C++ checks are
+# wrong. It suppresses them inline with NOLINTBEGIN/NOLINTEND rather than
+# being excluded here, for two reasons: this setting is a POSIX ERE, which
+# has no negative lookahead, and ExcludeHeaderFilterRegex requires
+# clang-tidy 19 while the pinned CI version is 18.
 HeaderFilterRegex: '.*/(src|include|apps|tools|tests)/.*'
 
 FormatStyle: file

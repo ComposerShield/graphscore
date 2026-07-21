@@ -5,13 +5,13 @@
 #include <graphscore/domain/graphscore_domain.hpp>
 
 TEST(DomainTest, Compiles) {
-  graphscore::Project*           p = nullptr;
-  graphscore::Track*             t = nullptr;
-  graphscore::Node*              n = nullptr;
-  graphscore::Graph*             g = nullptr;
-  graphscore::Command*           c = nullptr;
-  graphscore::Selection*         s = nullptr;
-  graphscore::ValidationService* v = nullptr;
+  const graphscore::Project*           p = nullptr;
+  const graphscore::Track*             t = nullptr;
+  const graphscore::Node*              n = nullptr;
+  const graphscore::Graph*             g = nullptr;
+  const graphscore::Command*           c = nullptr;
+  const graphscore::Selection*         s = nullptr;
+  const graphscore::ValidationService* v = nullptr;
   EXPECT_EQ(p, nullptr);
   EXPECT_EQ(t, nullptr);
   EXPECT_EQ(n, nullptr);

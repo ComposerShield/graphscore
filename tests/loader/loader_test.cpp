@@ -5,7 +5,7 @@
 #include <graphscore/loader/graphscore_loader.hpp>
 
 TEST(LoaderTest, Compiles) {
-  graphscore::Loader l;
+  const graphscore::Loader l;
   static_cast<void>(l);
   SUCCEED();
 }

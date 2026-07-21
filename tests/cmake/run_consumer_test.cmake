@@ -26,6 +26,26 @@ foreach (required
   endif()
 endforeach()
 
+# Under a sanitizer preset, the installed runtime is instrumented and leaves
+# its sanitizer-runtime references for the consuming link to resolve. A
+# consumer built without matching flags fails to link on `__asan_*` /
+# `__tsan_*`. This is not a weakening of the test: it is what a real
+# integrator building against a sanitizer-instrumented GraphScore would also
+# have to do. On a normal preset both variables are empty and nothing is
+# added.
+set(sanitizer_arguments "")
+
+if (GRAPHSCORE_SANITIZER_COMPILE_FLAGS OR GRAPHSCORE_SANITIZER_LINK_FLAGS)
+  list(APPEND sanitizer_arguments
+    "-DCMAKE_C_FLAGS=${GRAPHSCORE_SANITIZER_COMPILE_FLAGS}"
+    "-DCMAKE_CXX_FLAGS=${GRAPHSCORE_SANITIZER_COMPILE_FLAGS}"
+    "-DCMAKE_EXE_LINKER_FLAGS=${GRAPHSCORE_SANITIZER_LINK_FLAGS}"
+  )
+  message(STATUS
+    "CMake consumer test: forwarding sanitizer flags to the out-of-tree "
+    "consumer (${GRAPHSCORE_SANITIZER_COMPILE_FLAGS})")
+endif()
+
 set(prefix "${GRAPHSCORE_SCRATCH_DIR}/install")
 set(consumer_build "${GRAPHSCORE_SCRATCH_DIR}/consumer-build")
 set(leak_build "${GRAPHSCORE_SCRATCH_DIR}/writer-leak-build")
@@ -111,7 +131,8 @@ run_step("configure consumer project"
     "-DCMAKE_PREFIX_PATH=${prefix}"
     "-DCMAKE_BUILD_TYPE=${GRAPHSCORE_CONFIG}"
     "-DCMAKE_C_COMPILER=${GRAPHSCORE_C_COMPILER}"
-    "-DCMAKE_CXX_COMPILER=${GRAPHSCORE_CXX_COMPILER}")
+    "-DCMAKE_CXX_COMPILER=${GRAPHSCORE_CXX_COMPILER}"
+    ${sanitizer_arguments})
 
 run_step("build consumer project"
   COMMAND ${CMAKE_COMMAND} --build "${consumer_build}"

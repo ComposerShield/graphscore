@@ -15,8 +15,8 @@ Uuid Uuid::generate() {
   static thread_local std::uniform_int_distribution<std::uint64_t> dis;
 
   std::array<std::uint8_t, kSize> bytes{};
-  std::uint64_t                   hi = dis(gen);
-  std::uint64_t                   lo = dis(gen);
+  const std::uint64_t             hi = dis(gen);
+  const std::uint64_t             lo = dis(gen);
   for (std::size_t i = 0; i < 8; ++i) {
     bytes[i]     = static_cast<std::uint8_t>((hi >> (i * 8)) & 0xFF);
     bytes[i + 8] = static_cast<std::uint8_t>((lo >> (i * 8)) & 0xFF);
