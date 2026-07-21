@@ -1,0 +1,39 @@
+=== Gate 13: Manual Display Smoke (Clean Source Build) ===
+Date: Sun Jul 19 2026
+Verdict: PASS
+
+Command:
+  cd spikes/m0/rendering-accessibility
+  cmake -B build -G Ninja
+  cmake --build build
+  ./build/m0_spike --smoke --quit-after-ms 2000 \
+    --bravura-font build/bravura_font/Bravura.otf \
+    --text-font build/noto_font/NotoSans-Regular.ttf
+
+Stdout: (none)
+Stderr: (none)
+Exit code: 0
+
+Verification:
+- Clean source CMakeLists.txt: SDL_RENDER=ON (was OFF in prior broken config)
+- SDL_RENDER_METAL auto-detected ON via dep_option(SDL_RENDER_METAL ON "SDL_RENDER;APPLE" OFF)
+- SDL3 configured with Render: ON, Render drivers: metal
+- SDL_render.c and SDL_render_metal.m compiled from pinned SDL3 SHA 08b9c55393be5cb08fbec12ca431470faba3c8c9
+- SDL_GetWindowSurface + SDL_UpdateWindowSurface succeed (Metal-accelerated window framebuffer)
+- Window presented for ~2000ms then cleanly exited
+- macOS display session: WindowServer running, physical display attached
+- Cocoa window physically appeared on screen (display-attached, not headless)
+
+Build provenance:
+  This smoke test was run from a completely clean source build.  The CMakeLists.txt
+  was corrected to enable SDL_RENDER=ON (previously OFF), which auto-enables
+  SDL_RENDER_METAL on Apple platforms.  No generated build artifacts (headers,
+  object files, archives) were patched.  No libSDL3.a.bak or surgical binary
+  modifications were used.
+
+  The prior manual-gate log (historical/07-smoke.log) recorded a failed smoke due
+  to SDL_RENDER=OFF causing "Window framebuffer support not available".  A
+  subsequent worker patched the generated SDL_build_config.h, recompiled individual
+  .o files, and added them to libSDL3.a, then backed up the original as
+  libSDL3.a.bak.  That surgical artifact patch is REJECTED as invalid evidence.
+  This clean-source build supersedes it.

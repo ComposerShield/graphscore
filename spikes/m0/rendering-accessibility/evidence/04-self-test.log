@@ -1,0 +1,482 @@
+SemanticTree::AddNode: duplicate stableId 'id_uniq' rejected
+Rasterizer: invalid glyph cache index -1 (cache size 0)
+Rasterizer: invalid glyph cache index 999 (cache size 0)
+SemanticTree::AddNode: empty stableId rejected
+  [PASS] Vec2 addition
+  [PASS] Vec2 subtraction
+  [PASS] Vec2 scale
+  [PASS] Rect contains center
+  [PASS] Rect excludes out
+  [PASS] Rect excludes out2
+  [PASS] Rect intersect
+  [PASS] Rect no intersect
+  [PASS] Transform round-trip
+  [PASS] Hit test node center
+  [PASS] Hit test connector
+  [PASS] Hit test miss
+  [PASS] Rounded rect has commands — 9
+  [PASS] Orthogonal connector has commands — 3
+  [PASS] Ortho all segments axis-aligned
+  [PASS] Ortho trim dist matches CR+HW
+  [PASS] Ortho trim first endpoint horizontal
+  [PASS] Ortho trim second start vertical
+  [PASS] Ortho radius within segment bounds
+  [PASS] Ortho arc radius matches trim dist
+  [PASS] Clip rect set
+  [PASS] Clip pixel outside unrendered
+  [PASS] Clip pixel inside rendered red
+  [PASS] Unclipped pixel rendered blue
+  [PASS] Staff has 5 lines — 5
+  [PASS] Bravura font load
+  [PASS] SMuFL glyph rasterize
+  [PASS] HarfBuzz shape text — 5 glyphs
+  [PASS] SMuFL G clef codepoint
+  [PASS] SMuFL F clef codepoint
+  [PASS] SMuFL notehead black
+  [PASS] SMuFL notehead half
+  [PASS] Offscreen hash non-zero
+  [PASS] Offscreen hash deterministic
+  [PASS] Shape+Cache produces glyphs — 4 glyphs
+  [PASS] Shape+Cache valid rasterized glyphs
+  [PASS] HarfBuzz shape returns GID (valid)
+  [PASS] Glyph produces non-background output
+  [PASS] Glyph produces dark pixels (anti-aliased)
+  [PASS] Glyph rasterized by real GID produces valid index — GID=43
+  [PASS] Glyph hash differs with offset transform — 15678055294132611347 vs 2881085860491417307
+  [PASS] Glyph clipped outside remains white
+  [PASS] Glyph inside clip renders
+  [PASS] Ortho Left→Down produces commands — 3
+  [PASS] Ortho Right→Down produces commands — 3
+  [PASS] Ortho Right→Up produces commands — 3
+  [PASS] Ortho Left→Up produces commands — 3
+  [PASS] Ortho reversed traversal produces commands — 3
+  [PASS] Ortho reversed no diagonal segments
+  [PASS] Ortho short segment clamp succeeds — 3
+  [PASS] Ortho short segment arc radius clamped
+  [PASS] Ortho zero-length segment rejected (empty commands) — 0
+  [PASS] Ortho duplicate bend points rejected — 0
+  [PASS] Ortho non-axis diagonal rejected — 0
+  [PASS] Ortho arc continuity: h-trim at midline radius
+  [PASS] Ortho arc continuity: v-trim at midline radius
+  [PASS] Ortho arc continuity: outer radius correct
+  [PASS] Ortho arc continuity: inner radius correct
+  [PASS] Fillet Left→Down has arc cmd — 3
+  [PASS] Fillet Left→Down pixel output
+  [PASS] Fillet Left→Down arc midpoint filled — px=(97,102)
+  [PASS] Fillet Left→Down opposite quadrant blank — px=(82,117)
+  [PASS] Fillet Left→Down center (inside innerR) blank
+  [PASS] Fillet Right→Down has arc cmd — 3
+  [PASS] Fillet Right→Down pixel output
+  [PASS] Fillet Right→Down arc midpoint filled — px=(102,102)
+  [PASS] Fillet Right→Down opposite quadrant blank — px=(117,117)
+  [PASS] Fillet Right→Down center (inside innerR) blank
+  [PASS] Fillet Right→Up has arc cmd — 3
+  [PASS] Fillet Right→Up pixel output
+  [PASS] Fillet Right→Up arc midpoint filled — px=(102,197)
+  [PASS] Fillet Right→Up opposite quadrant blank — px=(117,182)
+  [PASS] Fillet Right→Up center (inside innerR) blank
+  [PASS] Fillet Left→Up has arc cmd — 3
+  [PASS] Fillet Left→Up pixel output
+  [PASS] Fillet Left→Up arc midpoint filled — px=(2,102)
+  [PASS] Fillet Left→Up opposite quadrant blank — px=(17,117)
+  [PASS] Fillet Left→Up center (inside innerR) blank
+  [PASS] Music glyph from music face valid
+  [PASS] Text face rasterize fails when not loaded
+  [PASS] Text face rasterize succeeds after load
+  [PASS] Text and music faces distinct cache entries — text=1 music=2
+  [PASS] A11y has graph nodes
+  [PASS] A11y has connectors
+  [PASS] A11y has measures
+  [PASS] A11y has notes
+  [PASS] A11y has controls
+  [PASS] A11y has selection
+  [PASS] A11y has action items
+  [PASS] A11y tree non-empty — nodes=23
+  [PASS] A11y all nodes have stable IDs
+  [PASS] A11y stable IDs are unique
+  [PASS] A11y FindByStableId(existing) — idx=1
+  [PASS] A11y FindByStableId(missing)
+  [PASS] A11y has root
+  [PASS] A11y root is Application — role=1
+  [PASS] A11y root has children — children=11
+  [PASS] A11y parent-child consistency
+  [PASS] A11y Node A has label — Node A
+  [PASS] A11y Note E4 has label
+  [PASS] A11y Zoom control has value
+  [PASS] A11y set selected
+  [PASS] A11y clear selected
+  [PASS] A11y set focused
+  [PASS] A11y set keyboard focus
+  [PASS] A11y Play button has actions — actions=1
+  [PASS] A11y Node A has select action
+  [PASS] A11y transformed bounds x — got=200.000000
+  [PASS] A11y transformed bounds y — got=150.000000
+  [PASS] A11y transformed bounds w — got=400.000000
+  [PASS] A11y transformed bounds h — got=200.000000
+  [PASS] A11y identity bounds match world — got=50.000000
+  [PASS] A11y hit node A
+  [PASS] A11y hit returns node A — gs_node_A
+  [PASS] A11y hit miss outside
+  [PASS] A11y hit note E4
+  [PASS] A11y hit returns note E4 — gs_note_m1E4
+  [PASS] A11y invoke action returns true
+  [PASS] A11y action callback fired
+  [PASS] A11y action changed state —  -> playing
+  [PASS] A11y valid SetParentChild
+  [PASS] A11y SetParentChild rejects OOB parent
+  [PASS] A11y SetParentChild rejects OOB child
+  [PASS] A11y SetParentChild rejects self-parent
+  [PASS] A11y SetParentChild rejects negative parent
+  [PASS] A11y SetParentChild rejects negative child
+  [PASS] A11y SetParentChild rejects cycle (b→a after a→b)
+  [PASS] A11y SetParentChild rejects long cycle (c→a after a→b→c)
+  [PASS] A11y SetParentChild rejects duplicate parent (b already parented)
+  [PASS] A11y generation increment on AddNode
+  [PASS] A11y generation increment on SetParentChild
+  [PASS] A11y generation increment on Clear
+  [PASS] A11y generation monotonic
+  [PASS] A11y valid action invoked
+  [PASS] A11y rejects undeclared action ID
+  [PASS] A11y rejects OOB action index
+  [PASS] A11y rejects negative action index
+  [PASS] A11y rejects action on node with no actions
+  [PASS] A11y initial tree non-empty
+  [PASS] A11y clear sets count to zero
+  [PASS] A11y root invalid after clear
+  [PASS] A11y rebuilt tree matches original count
+  [PASS] A11y node A exists after rebuild
+  [PASS] A11y reparent after DetachChild
+  [PASS] A11y reparent child has new parent
+  [PASS] A11y reparent rejects already-parented child
+  [PASS] First AddNode accepted
+  [PASS] Duplicate stableId rejected
+  [PASS] Tree count unchanged after duplicate reject
+  [PASS] Reparent succeeds
+  [PASS] Reparent child has new parent
+  [PASS] Reparent old parent no longer has child
+  [PASS] Reparent new parent has child
+  [PASS] Reparent rejects cycle
+  [PASS] DetachChild succeeds
+  [PASS] Detached child has no parent
+  [PASS] Old parent no longer lists child
+  [PASS] DetachChild rejects already-detached
+  [PASS] Reparent increments generation
+  [PASS] DetachChild increments generation
+  [PASS] Pan math dx correct
+  [PASS] Pan math dy correct
+  [PASS] Pan apply offset x
+  [PASS] Pan apply offset y
+  [PASS] Pinch scale correct
+  [PASS] Pinch transform offset x
+  [PASS] Pinch transform offset y
+  [PASS] Pinch transform scale
+  [PASS] Pinch centered on focal point
+  [PASS] Precise scroll dx subpixel
+  [PASS] Precise scroll dy subpixel
+  [PASS] Generic wheel deltas integral
+  [PASS] Trackpad vs wheel distinction
+  [PASS] Fidelity summary PASS scenario — PASS — all fidelity thresholds met
+  [PASS] Fidelity summary FAIL scenario — FAIL — total events below minimum (2 < 50); scroll events below minimum (0 < 30); capture too short; no subpixel deltas detected; no Finger or PinchGesture events; no viewport response; no pan outcome applied; no pinch outcome applied;
+  [PASS] Fidelity empty → TEMPLATE — TEMPLATE — no events captured (pending physical session)
+  [PASS] Fidelity empty totalEvents=0
+  [PASS] Fidelity min duration ≥ 0.1s
+  [PASS] Fidelity min event rate ≥ 0.1 Hz
+  [PASS] Fidelity physical minimum total events is 50
+  [PASS] Fidelity physical minimum scroll events is 30
+  [PASS] Fidelity finger events are diagnostic only
+  [PASS] Physical gate totalEvents 49 fails — FAIL — total events below minimum (49 < 50);
+  [PASS] Physical gate totalEvents 50 passes — PASS — all fidelity thresholds met
+  [PASS] Physical gate scrollEventCount 29 fails — FAIL — scroll events below minimum (29 < 30);
+  [PASS] Physical gate scrollEventCount 30 passes — PASS — all fidelity thresholds met
+  [PASS] Physical gate zero finger events pass via scroll plus pinch — PASS — all fidelity thresholds met
+  [PASS] Physical gate delivered finger events remain diagnostic — PASS — all fidelity thresholds met
+  [PASS] Fidelity duplicate timestamp counted as drop — drops=1
+  [PASS] Fidelity non-monotonic detected
+  [PASS] Pointer-only capture no gesture
+  [PASS] Pointer-only capture cannot pass — FAIL — total events below minimum (2 < 50); scroll events below minimum (0 < 30); capture too short; no subpixel deltas detected; no Finger or PinchGesture events; no viewport response; no pan outcome applied; no pinch outcome applied;
+  [PASS] Native handle null window: valid=false
+  [PASS] Native handle null window: has error — null window
+  [PASS] Native handle null window: handleNonNull=false
+  [PASS] Native handle unavailable: valid reflects nonNull
+  [PASS] Native handle unavailable: error populated — simulated: handle unavailable
+  [PASS] Native handle probe fails on null window — null window
+  [PASS] Rasterizer survives invalid glyph indices
+  [PASS] Empty stableId rejected
+  [PASS] Tree count unchanged after empty ID
+  [PASS] Normal ID accepted after empty rejection
+  [PASS] Tree count correct after normal add
+  [PASS] SetRoot valid index succeeds
+  [PASS] SetRoot valid increments generation
+  [PASS] SetRoot negative index rejected
+  [PASS] SetRoot invalid does not increment generation
+  [PASS] SetRoot OOB index rejected
+  [PASS] SetRoot OOB does not increment generation
+  [PASS] Root index preserved after invalid SetRoot
+  [PASS] Reparent exception-safe succeeds
+  [PASS] Reparent child has new parent
+  [PASS] Reparent old parent no longer has child
+  [PASS] Reparent new parent has child
+  [PASS] Reparent old parent still has its other children
+  [PASS] Reparent cycle rejected
+  [PASS] Hierarchy valid after cycle rejection
+  [PASS] Reparent to same parent succeeds as no-op
+  [PASS] Child still at same parent after same-parent reparent
+  [PASS] SetParentChild atom: parent capacity 0 before first attach — capacity=0
+  [PASS] SetParentChild atom: bad_alloc thrown
+  [PASS] SetParentChild atom: generation unchanged
+  [PASS] SetParentChild atom: root index unchanged
+  [PASS] SetParentChild atom: node count unchanged
+  [PASS] SetParentChild atom: all node fields + capacities identical
+  [PASS] SetParentChild atom: succeeds after hook cleared
+  [PASS] SetParentChild atom: generation incremented after success
+  [PASS] SetParentChild atom: child parented after success
+  [PASS] Spy pan: SyncGeometry called
+  [PASS] Spy pan: correct offset
+  [PASS] Spy zoom: SyncGeometry called
+  [PASS] Spy zoom: correct scale
+  [PASS] Spy reset: SyncGeometry called
+  [PASS] Spy reset: identity transform
+  [PASS] Spy keyboard up: SyncGeometry called
+  [PASS] Spy keyboard up: correct offset
+  [PASS] E2E mouse-move: no transform mutation
+  [PASS] E2E mouse-move: no SyncGeometry
+  [PASS] E2E mouse-move: logged as PointerMove
+  [PASS] E2E wheel: transform mutated (pan)
+  [PASS] E2E wheel: didPan set
+  [PASS] E2E wheel: didPinch NOT set
+  [PASS] E2E wheel: scale unchanged
+  [PASS] E2E wheel: offset changed
+  [PASS] E2E wheel: exactly 1 SyncGeometry
+  [PASS] E2E wheel: logged source Unknown
+  [PASS] E2E wheel: logged type Wheel
+  [PASS] E2E wheel declared trackpad: source Trackpad in log
+  [PASS] E2E finger-down: no transform mutation
+  [PASS] E2E finger-down: no SyncGeometry
+  [PASS] E2E finger-down: logged source Finger
+  [PASS] E2E finger-down: logged as FingerDown telemetry
+  [PASS] E2E finger2-down: no transform mutation
+  [PASS] E2E finger2-down: no SyncGeometry
+  [PASS] E2E finger-motion: transform mutated
+  [PASS] E2E finger-motion: didPan set
+  [PASS] E2E finger-motion: didPinch NOT set
+  [PASS] E2E finger-motion: offset changed
+  [PASS] E2E finger-motion: at least 1 SyncGeometry — syncCount=1
+  [PASS] E2E finger-motion: logged as FingerMotion telemetry
+  [PASS] E2E finger-canceled: ends only its finger without viewport motion
+  [PASS] E2E finger-canceled: logged as FingerCanceled telemetry
+  [PASS] E2E finger-up: no transform mutation or SyncGeometry
+  [PASS] E2E finger-up: logged as FingerUp telemetry
+  [PASS] E2E pinch-update: transform mutated
+  [PASS] E2E pinch-update: didPinch set
+  [PASS] E2E pinch-update: didPan NOT set
+  [PASS] E2E pinch-update: scale changed
+  [PASS] E2E pinch-update: exactly 1 SyncGeometry
+  [PASS] E2E pinch-update: logged source PinchGesture
+  [PASS] E2E key-left: transform mutated
+  [PASS] E2E key-left: didPan NOT set (keyboard never pan)
+  [PASS] E2E key-left: didPinch NOT set (keyboard never pinch)
+  [PASS] E2E key-left: offset.x decreased by 20
+  [PASS] E2E key-left: exactly 1 SyncGeometry
+  [PASS] E2E quit: no transform mutation
+  [PASS] E2E quit: quit flag set
+  [PASS] E2E quit: no SyncGeometry
+  [PASS] E2E acc: pan outcome accumulated
+  [PASS] E2E acc: pinch outcome accumulated
+  [PASS] E2E summary has gesture
+  [PASS] E2E summary counts all delivered finger telemetry
+  [PASS] E2E summary finger telemetry does not inflate scroll count
+  [PASS] E2E summary subpixel detected
+  [PASS] E2E summary nonzero viewport response
+  [PASS] E2E summary monotonic timestamps
+  [PASS] E2E droppedOrInvalid == 0 — drops=0
+  [PASS] E2E summary verdict exact PASS — PASS — all fidelity thresholds met
+  [PASS] WheelPan: viewportChanged
+  [PASS] WheelPan: didPan set
+  [PASS] WheelPan: didPinch NOT set
+  [PASS] WheelPan: scale unchanged
+  [PASS] WheelPan: offset changed
+  [PASS] WheelPan: logged as Wheel
+  [PASS] WheelPan: didPan on horizontal
+  [PASS] WheelPan: horizontal offset changed
+  [PASS] WheelPan: zero delta no viewportChanged
+  [PASS] WheelPan: zero delta didPan NOT set
+  [PASS] WheelPan: zero delta offset unchanged
+  [PASS] WheelPan: declared trackpad source in log
+  [PASS] FingerPanOnly: initial scale is 1.0
+  [PASS] FingerPanOnly: pan applied on finger1 move
+  [PASS] FingerPanOnly: scale unchanged on finger1 move
+  [PASS] FingerPanOnly: pan applied on finger2 catchup
+  [PASS] FingerPanOnly: scale unchanged on finger2 catchup
+  [PASS] FingerPanOnly: scale unchanged on tiny jitter
+  [PASS] FingerPanOnly: pan still applied on tiny jitter
+  [PASS] FingerPanOnly: scale unchanged on large separation change
+  [PASS] PinchFocal: initial scale is 1.0
+  [PASS] PinchFocal: viewportChanged
+  [PASS] PinchFocal: didPinch set
+  [PASS] PinchFocal: didPan NOT set (focal compensation offset)
+  [PASS] PinchFocal: scale increased
+  [PASS] PinchFocal: scale ~1.5x — scale=1.500000
+  [PASS] PinchFocal: focal-stable offset X — got=-200.000000 expected=-200.000000
+  [PASS] PinchFocal: focal-stable offset Y — got=-150.000000 expected=-150.000000
+  [PASS] PinchFocal: logged as PinchGesture
+  [PASS] PinchFocalOffCenter: scale ~2.0x — scale=2.000000
+  [PASS] PinchFocalOffCenter: focal world point preserved X — screen.x=200.000000
+  [PASS] PinchFocalOffCenter: focal world point preserved Y — screen.y=200.199997
+  [PASS] SameDirNoZoom: scale unchanged at step 0
+  [PASS] SameDirNoZoom: scale unchanged at step 1
+  [PASS] SameDirNoZoom: scale unchanged at step 2
+  [PASS] SameDirNoZoom: scale unchanged at step 3
+  [PASS] SameDirNoZoom: scale unchanged at step 4
+  [PASS] SameDirNoZoom: scale unchanged at step 5
+  [PASS] SameDirNoZoom: scale unchanged at step 6
+  [PASS] SameDirNoZoom: scale unchanged at step 7
+  [PASS] SameDirNoZoom: scale unchanged at step 8
+  [PASS] SameDirNoZoom: scale unchanged at step 9
+  [PASS] SameDirNoZoom: offset changed after all steps
+  [PASS] SameDirNoZoom: final scale still 1.0
+  [PASS] CombinedStream: offset changed after finger motion
+  [PASS] CombinedStream: scale unchanged after finger motion
+  [PASS] CombinedStream: scale changed by native pinch factor — scale=1.500000 expected=1.500000
+  [PASS] CombinedStream: scale unchanged after post-pinch finger motion
+  [PASS] FidelityPanPinch: both outcomes PASS — PASS — all fidelity thresholds met
+  [PASS] FidelityPanOnly: FAIL (no pinch outcome) — FAIL — no pinch outcome applied;
+  [PASS] FidelityPinchOnly: FAIL (no pan outcome) — FAIL — total events below minimum (20 < 50); scroll events below minimum (18 < 30); capture too short; no subpixel deltas detected; no pan outcome applied;
+  [PASS] FidelityWheelFinger: FAIL (no pinch outcome from wheel+finger-down) — FAIL — no pinch outcome applied;
+  [PASS] FidelityWheelFinger: has finger events
+  [PASS] Text 'Hello' at 32px produces 5 glyphs — got=5
+  [PASS] Text GID 0 matches golden — GID=43 expected=43
+  [PASS] Text GID 1 matches golden — GID=72 expected=72
+  [PASS] Text GID 2 matches golden — GID=79 expected=79
+  [PASS] Text GID 3 matches golden — GID=79 expected=79
+  [PASS] Text GID 4 matches golden — GID=82 expected=82
+  [PASS] Text all GIDs non-zero (no .notdef)
+  [PASS] Text advance 0 matches golden — got=23.712002 expected=23.712002
+  [PASS] Text advance 1 matches golden — got=18.048000 expected=18.048000
+  [PASS] Text advance 2 matches golden — got=8.256001 expected=8.256001
+  [PASS] Text advance 3 matches golden — got=8.256001 expected=8.256001
+  [PASS] Text advance 4 matches golden — got=19.360001 expected=19.360001
+  [PASS] Text total advance matches golden — got=77.632004 expected=77.632004
+  [PASS] Text cache entries valid — 5/5
+  [PASS] Text glyph 0 rasterized
+  [PASS] Text glyph 1 rasterized
+  [PASS] Text glyph 2 rasterized
+  [PASS] Text glyph 3 rasterized
+  [PASS] Text glyph 4 rasterized
+  [PASS] Text face produces non-background pixels
+  [PASS] Text pixel hash non-zero
+  [PASS] Text pixel hash deterministic (stable golden) — 0x14576508847911760399
+  [PASS] Text pixel hash matches golden — 0x14576508847911760399 vs 0x14576508847911760399
+  [PASS] Text horizontal placement matches shaped advance — right=85.000000 expected<107.632004
+  [PASS] Text hash differs with transform offset
+  [PASS] Text raster clipped outside remains white
+  [PASS] Text zero coverage (offscreen) confirms all white
+  [PASS] Music face: G clef rasterized
+  [PASS] Music face raster produces pixels
+  [PASS] Same GID different faces produce distinct cache entries
+  [PASS] Fillet geo Left→Down has arc
+  [PASS] Fillet geo Left→Down center X — got=92.000000 expected=92.000000
+  [PASS] Fillet geo Left→Down center Y — got=108.000000 expected=108.000000
+  [PASS] Fillet geo Left→Down outer radius — got=9.500000 expected=9.500000
+  [PASS] Fillet geo Left→Down inner radius — got=6.500000 expected=6.500000
+  [PASS] Fillet geo Left→Down sweep ±π/2 — start=4.712389 end=6.283185 sweep=1.570796
+  [PASS] Fillet geo Right→Down has arc
+  [PASS] Fillet geo Right→Down center X — got=108.000000 expected=108.000000
+  [PASS] Fillet geo Right→Down center Y — got=108.000000 expected=108.000000
+  [PASS] Fillet geo Right→Down outer radius — got=9.500000 expected=9.500000
+  [PASS] Fillet geo Right→Down inner radius — got=6.500000 expected=6.500000
+  [PASS] Fillet geo Right→Down sweep ±π/2 — start=4.712389 end=3.141593 sweep=-1.570796
+  [PASS] Fillet geo Right→Up has arc
+  [PASS] Fillet geo Right→Up center X — got=108.000000 expected=108.000000
+  [PASS] Fillet geo Right→Up center Y — got=192.000000 expected=192.000000
+  [PASS] Fillet geo Right→Up outer radius — got=9.500000 expected=9.500000
+  [PASS] Fillet geo Right→Up inner radius — got=6.500000 expected=6.500000
+  [PASS] Fillet geo Right→Up sweep ±π/2 — start=1.570796 end=3.141593 sweep=1.570796
+  [PASS] Fillet geo Left→Up has arc
+  [PASS] Fillet geo Left→Up center X — got=8.000000 expected=8.000000
+  [PASS] Fillet geo Left→Up center Y — got=108.000000 expected=108.000000
+  [PASS] Fillet geo Left→Up outer radius — got=9.500000 expected=9.500000
+  [PASS] Fillet geo Left→Up inner radius — got=6.500000 expected=6.500000
+  [PASS] Fillet geo Left→Up sweep ±π/2 — start=3.141593 end=4.712389 sweep=1.570796
+  [PASS] Cache stability: first shape ok — 5 glyphs
+  [PASS] Cache stability: glyph cache populated — glyphCache=4
+  [PASS] Cache stability: shape cache populated — shapeCache=1
+  [PASS] Cache stability: repeated hit same address — backing data identical across cache hits
+  [PASS] Cache stability: repeated hit same size
+  [PASS] Cache stability: glyph cache size stable after 1000 repeats — before=4 after=4
+  [PASS] Cache stability: shape cache size stable after 1000 repeats — before=1 after=1
+  [PASS] Cache stability: new text adds shape entry — shapeCache=2
+  [PASS] Cache stability: shape cache size grows by 1 for new text — from 1 to 2
+  [PASS] Cache stability: glyph cache stable after new text 1000 repeats — before=7 after=7
+  [PASS] Cache stability: shape cache stable after new text 1000 repeats — before=2 after=2
+  [PASS] Cache stability: new pixel size adds glyph entries — glyphCache=11
+  [PASS] Cache stability: new pixel size adds shape entry
+  [PASS] Cache stability: key alloc count tracked — keys=3
+  [PASS] Cache stability: miss count tracked — misses=3
+  [PASS] Cache stability: new label miss count +1
+  [PASS] Cache stability: new label key alloc +1
+  [PASS] Cache stability: 500 hits no extra miss
+  [PASS] Cache stability: 500 hits no extra key alloc
+  [PASS] Cache stability: long label miss +1
+  [PASS] Cache stability: long label key alloc +1
+  [PASS] Cache stability: long label 1000 hits same address
+  [PASS] Cache stability: long label 1000 hits no shape cache growth
+  [PASS] Cache stability: long label 1000 hits no extra alloc
+  [PASS] Cache stability: long label 1000 hits no extra miss
+  [PASS] Cache stability: invalid FontFace fails
+  [PASS] RealPathPanOnly: pan accumulated from typed result
+  [PASS] RealPathPinchOnly: pinch NOT accumulated
+  [PASS] RealPathPanOnly: fidelity FAIL (missing pinch) — FAIL — total events below minimum (33 < 50); scroll events below minimum (1 < 30); no subpixel deltas detected; no pinch outcome applied;
+  [PASS] RealPathPinchOnly: pinch accumulated from typed result
+  [PASS] RealPathPinchOnly: pan NOT accumulated (focal offset excluded)
+  [PASS] RealPathPinchOnly: fidelity FAIL (missing pan) — FAIL — total events below minimum (25 < 50); scroll events below minimum (23 < 30); capture too short; no subpixel deltas detected; no pan outcome applied;
+  [PASS] RealPathBoth: pan accumulated
+  [PASS] RealPathBoth: pinch accumulated
+  [PASS] RealPathBoth: fidelity PASS — PASS — all fidelity thresholds met
+  [PASS] RealPathKeyboard: pan NOT accumulated from keyboard
+  [PASS] RealPathKeyboard: pinch NOT accumulated from keyboard
+  [PASS] RealPathKeyboard: fidelity FAIL (no trackpad outcomes) — FAIL — scroll events below minimum (0 < 30); no subpixel deltas detected; no Finger or PinchGesture events; no pan outcome applied; no pinch outcome applied;
+  [PASS] RealPathWheelFinger: pan accumulated (from wheel)
+  [PASS] RealPathWheelFinger: pinch NOT accumulated
+  [PASS] RealPathWheelFinger: fidelity FAIL (no pinch outcome) — FAIL — no pinch outcome applied;
+  [PASS] PinchEventFocal: viewportChanged
+  [PASS] PinchEventFocal: didPinch set
+  [PASS] PinchEventFocal: didPan NOT set
+  [PASS] PinchEventFocal: event focal point preserved X — screen.x=250.000000
+  [PASS] PinchEventFocal: event focal point preserved Y — screen.y=200.000000
+  [PASS] PinchEventFocal: centroid NOT preserved (event focal was used) — screen=(550.000000,400.000000)
+  [PASS] PinchValidityNoChange: viewportChanged false
+  [PASS] PinchValidityNoChange: didPinch false
+  [PASS] PinchValidityNoChange: scale unchanged
+  [PASS] PinchValidityNoChange: no pinch accumulated
+  [PASS] PinchValidityEpsilon: viewportChanged false
+  [PASS] PinchValidityEpsilon: didPinch false
+  [PASS] PinchValidityEpsilon: scale unchanged
+  [PASS] PinchValidityEpsilon: no pinch accumulated
+  [PASS] PinchValidityClamped: viewportChanged false
+  [PASS] PinchValidityClamped: didPinch false
+  [PASS] PinchValidityClamped: scale unchanged (at max boundary)
+  [PASS] PinchValidityClamped: no pinch accumulated
+  [PASS] PinchValidityClampedMin: viewportChanged false
+  [PASS] PinchValidityClampedMin: didPinch false
+  [PASS] PinchValidityClampedMin: scale unchanged (at min boundary)
+  [PASS] PinchValidityClampedMin: no pinch accumulated
+  [PASS] PinchValidityNaN: viewportChanged false
+  [PASS] PinchValidityNaN: didPinch false
+  [PASS] PinchValidityNaN: scale unchanged
+  [PASS] PinchValidityInf: +inf viewportChanged false
+  [PASS] PinchValidityInf: +inf didPinch false
+  [PASS] PinchValidityInf: +inf scale unchanged
+  [PASS] PinchValidityInf: -inf viewportChanged false
+  [PASS] PinchValidityInf: -inf didPinch false
+  [PASS] PinchValidityZero: viewportChanged false
+  [PASS] PinchValidityZero: didPinch false
+  [PASS] PinchValidityZero: scale unchanged
+  [PASS] PinchValidityNeg: viewportChanged false
+  [PASS] PinchValidityNeg: didPinch false
+  [PASS] PinchValidityNeg: scale unchanged
+  [PASS] PinchValidityValid: viewportChanged true
+  [PASS] PinchValidityValid: didPinch true
+  [PASS] PinchValidityValid: scale changed
+  [PASS] PinchValidityValid: pinch accumulated
+
+Self-test: ALL PASSED (476 tests)

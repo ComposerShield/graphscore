@@ -28,3 +28,4 @@
 | [0001](0001-permissive-dependency-policy.md) | Permissive Dependency Policy and Acceptance Checklist | Accepted |
 | [0002](0002-default-writer-dependency-baseline.md) | Default Writer Dependency Baseline | Accepted |
 | [0003](0003-architecture-target-dag.md) | Architecture Target DAG and Layer Boundaries | Accepted |
+| [0004](0004-rendering-accessibility-spike.md) | Rendering and Accessibility Spike Results | Accepted |

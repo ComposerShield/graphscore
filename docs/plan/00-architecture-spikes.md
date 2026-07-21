@@ -33,11 +33,11 @@ The domain, scheduler, persistence, and C ABI must build without UI, audio-devic
 
 ### Rendering and accessibility spike
 
-- [ ] Open native windows on macOS, Windows, Wayland, and X11/XWayland.
-- [ ] Render a zoomable graph with several notation staves using a SMuFL-compatible font.
-- [ ] Demonstrate transforms, clipping, text shaping, hit testing, and rounded orthogonal paths.
-- [ ] Expose representative graph nodes, connectors, measures, notes, controls, selection, and actions through VoiceOver, Narrator, and a Linux screen reader.
-- [ ] Measure pointer/trackpad input fidelity and native-handle access needed for plugin editors.
+- [x] Open native windows on macOS, Windows, Wayland, and X11/XWayland.
+- [x] Render a zoomable graph with several notation staves using a SMuFL-compatible font.
+- [x] Demonstrate transforms, clipping, text shaping, hit testing, and rounded orthogonal paths.
+- [x] Expose representative graph nodes, connectors, measures, notes, controls, selection, and actions through VoiceOver, Narrator, and a Linux screen reader.
+- [x] Measure pointer/trackpad input fidelity and native-handle access needed for plugin editors.
 
 ### Engraving-engine spike
 

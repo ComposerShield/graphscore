@@ -342,6 +342,42 @@ https://raw.githubusercontent.com/freetype/freetype/f01dec5e676847267834b881b25f
 
 ---
 
+## 11. Bravura — SMuFL Music Font
+
+| Field | Detail |
+|-------|--------|
+| **Status** | POLICY-CLEARED — spike-only font asset (OFL 1.1). Not a default build dependency; included for Phase C rendering spike demonstration. Production may use the same or an alternative SMuFL font. |
+| **Repository** | https://github.com/steinbergmedia/bravura |
+| **Pinned SHA** | `02e8ed29a29115df35007d1178cebaeee26c20e1` |
+| **License** | SIL Open Font License 1.1 |
+| **License file at SHA** | https://raw.githubusercontent.com/steinbergmedia/bravura/02e8ed29a29115df35007d1178cebaeee26c20e1/LICENSE.txt |
+| **Committed license** | `docs/licenses/Bravura-OFL.txt` |
+| **SPDX** | OFL-1.1 |
+| **Patent grant** | None (OFL 1.1; copyright and trademark only) |
+| **Required notices** | Copyright © 2019, Steinberg Media Technologies GmbH, with Reserved Font Name "Bravura". The OFL 1.1 notice must be included. Condition 3 of the OFL restricts use of the Reserved Font Name "Bravura" in modified versions without written permission. |
+| **Used file** | `redist/otf/Bravura.otf` at pinned SHA |
+| **Distribution** | Redistributable in source and binary form under OFL 1.1. Must retain the copyright notice and license text. |
+
+---
+
+## 12. Noto Sans — Reproducible Latin Text Font (Spike)
+
+| Field | Detail |
+|-------|--------|
+| **Status** | POLICY-CLEARED — spike-only reproducible text font (OFL 1.1). Pinned at an immutable SHA for deterministic HarfBuzz text shaping and glyph rasterization in self-tests. No system-font fallback is permitted. |
+| **Repository** | https://github.com/notofonts/noto-fonts |
+| **Pinned SHA** | `ffebf8c1ee449e544955a7e813c54f9b73848eac` |
+| **License** | SIL Open Font License 1.1 |
+| **License file at SHA** | https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/LICENSE |
+| **Committed license** | `docs/licenses/NotoSans-OFL.txt` |
+| **SPDX** | OFL-1.1 |
+| **Patent grant** | None (OFL 1.1; copyright and trademark only) |
+| **Required notices** | Copyright 2018 The Noto Project Authors (github.com/googlei18n/noto-fonts). The OFL 1.1 notice must be included. "Noto" is a trademark of Google LLC. |
+| **Used file** | `archive/hinted/NotoSans/NotoSans-Regular.ttf` at pinned SHA |
+| **Distribution** | Redistributable in source and binary form under OFL 1.1. Must retain the copyright notice and license text. |
+
+---
+
 ## Standard Library and Compiler Runtime
 
 GraphScore links against the platform C++ standard library (libc++ on
@@ -365,3 +401,5 @@ vendored.
 | 8 | RtMidi | PROVISIONAL | `a3233c22949342f6697681e2cf2403e27fcf0c9e` | MIT |
 | 9 | VST3 SDK | DEFERRED | To be pinned | MIT |
 | 10 | MIDI encoding | Owned code | N/A | Apache-2.0 |
+| 11 | Bravura | POLICY-CLEARED (spike) | `02e8ed29a29115df35007d1178cebaeee26c20e1` | OFL-1.1 |
+| 12 | Noto Sans | POLICY-CLEARED (spike-only text font) | `ffebf8c1ee449e544955a7e813c54f9b73848eac` | OFL-1.1 |

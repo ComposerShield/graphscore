@@ -1,0 +1,55 @@
+# GraphScore Accessibility Report
+## Semantic Tree
+
+Format: [STATE] id=<stableId> role=<Role> name="<Name>" frame=(x,y wxh) [states] [desc="..."] [actions=[...]]
+
++- [ ] id=gs_app_root role=Application name="GraphScore Spike" frame=(0,0 0x0)
+  +- [ ] id=gs_node_A role=GraphNode name="Node A" frame=(50,50 200x100) desc="Graph notation node" actions=[select]
+  +- [ ] id=gs_node_B role=GraphNode name="Node B" frame=(350,30 200x80) desc="Graph notation node" actions=[select]
+  +- [ ] id=gs_node_C role=GraphNode name="Node C" frame=(350,160 200x80) desc="Graph notation node" actions=[select]
+  +- [ ] id=gs_node_D role=GraphNode name="Node D" frame=(620,60 180x100) desc="Graph notation node" actions=[select]
+  +- [ ] id=gs_conn_AB role=Connector name="A→B" frame=(250,85 105x20) desc="Connector from Node A to Node B"
+  +- [ ] id=gs_conn_BC role=Connector name="B→C" frame=(150,145 205x60) desc="Connector from Node B to Node C"
+  +- [ ] id=gs_conn_BD role=Connector name="B→D" frame=(550,60 70x55) desc="Connector from Node B to Node D"
+  +- [ ] id=gs_staffs role=Group name="Staves" frame=(10,280 780x180) desc="Notation staves"
+    +- [ ] id=gs_measure_1 role=Measure name="Measure 1" value="4/4" frame=(15,280 770x50) desc="First measure, treble clef"
+      +- [ ] id=gs_note_m1E4 role=Note name="E4" value="quarter" frame=(80,280 20x15) desc="Quarter note E4"
+      +- [ ] id=gs_note_m1F4 role=Note name="F4" value="quarter" frame=(110,280 20x15) desc="Quarter note F4"
+      +- [ ] id=gs_note_m1G4 role=Note name="G4" value="quarter" frame=(140,280 20x15) desc="Quarter note G4"
+      +- [ ] id=gs_note_m1A4 role=Note name="A4" value="quarter" frame=(170,280 20x15) desc="Quarter note A4"
+      +- [ ] id=gs_note_m1G4_2 role=Note name="G4" value="quarter" frame=(200,280 20x15) desc="Quarter note G4"
+    +- [ ] id=gs_measure_2 role=Measure name="Measure 2" value="4/4" frame=(15,342 770x50) desc="Second measure"
+      +- [ ] id=gs_note_m2B4 role=Note name="B♭" value="quarter" frame=(75,342 25x15) desc="Quarter note B-flat"
+      +- [ ] id=gs_note_m2F5 role=Note name="F♯5" value="quarter" frame=(115,342 25x15) desc="Quarter note F-sharp"
+    +- [ ] id=gs_measure_3 role=Measure name="Measure 3" value="4/4" frame=(15,404 770x50) desc="Third measure"
+      +- [ ] id=gs_note_m3C5h role=Note name="C5" value="half" frame=(80,404 20x15) desc="Half note C5"
+  +- [ ] id=gs_ctrl_zoom role=Control name="Zoom" value="1.0x" frame=(740,5 40x25) desc="Canvas zoom control" actions=[increment, decrement]
+  +- [ ] id=gs_selection role=Selection name="Current selection" value="none" frame=(0,0 0x0) desc="Current selection placeholder"
+  +- [ ] id=gs_action_play role=ActionItem name="Play" frame=(700,5 35x25) desc="Start playback" actions=[press]
+
+## Action Test
+
+Invoking 'select' on gs_node_A...
+  After: selected=1 focused=1 keyboardFocus=1
+  After deselect: selected=0 focused=0 keyboardFocus=0
+Invoking 'press' on gs_action_play...
+
+## Hit Test
+
+HitTest(150,100) -> gs_node_A (Node A)
+HitTest(400,70) -> gs_node_B (Node B)
+HitTest(300,110) -> (none)
+HitTest(700,15) -> gs_action_play (Play)
+HitTest(80,290) -> gs_note_m1E4 (E4)
+HitTest(85,287) -> gs_note_m1E4 (E4)
+
+## Transform Bounds Test
+
+gs_node_A (Node A): identity=(50,50 200x100) zoomed=(200,150 400x200)
+gs_node_B (Node B): identity=(350,30 200x80) zoomed=(800,110 400x160)
+gs_node_C (Node C): identity=(350,160 200x80) zoomed=(800,370 400x160)
+gs_node_D (Node D): identity=(620,60 180x100) zoomed=(1340,170 360x200)
+
+## Native macOS NSAccessibility Bridge Test
+
+macOS bridge test: PASSED

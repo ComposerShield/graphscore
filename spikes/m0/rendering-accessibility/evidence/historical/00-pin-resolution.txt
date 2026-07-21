@@ -1,0 +1,65 @@
+# SDL3 Pin Resolution — Authoritative
+
+## ADR 0002 Pin: 08b9c55393be5cb08fbec12ca431470faba3c8c9
+
+### Verification
+
+The ADR 0002 pin `08b9c55393be5cb08fbec12ca431470faba3c8c9` was verified
+reachable in the upstream libsdl-org/SDL repository on 2026-07-19:
+
+  $ git clone --bare https://github.com/libsdl-org/SDL.git
+  $ git cat-file -t 08b9c55393be5cb08fbec12ca431470faba3c8c9
+  commit
+
+### Previous Discrepancy
+
+The spike CMakeLists.txt previously claimed the ADR pin was "garbage-collected"
+and used `8319d69f7286f40b3cacdb2c8216c8a6dd6a239c` instead. This was
+incorrect. Both commits exist in the upstream repository; `08b9c553` is
+an ancestor of `8319d69f` with exactly 3 commits between them:
+
+  08b9c5539 Fixed error: cast from pointer to integer of different size
+          |
+          v (3 commits)
+  8319d69f7 Clear SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER when ANativeWindow is freed
+
+### Shallow Clone Issue
+
+FetchContent with `GIT_SHALLOW TRUE` fails to fetch `08b9c553` because
+this commit is behind the current default branch tip. The CMake
+`git clone --depth 1` only retrieves the branch HEAD. Removing
+`GIT_SHALLOW TRUE` for SDL3 (full clone) resolves this. The spike
+CMakeLists.txt now fetches SDL3 without the shallow restriction.
+
+### License
+
+SDL3 license at `08b9c553` is zlib License (identical to the license at
+the later commit):
+
+  Copyright (C) 1997-2026 Sam Lantinga
+  This software is provided 'as-is', without any express or implied warranty.
+  Permission is granted to anyone to use this software for any purpose...
+
+License file committed at: docs/licenses/SDL3-LICENSE.txt
+
+### Cross-Reference Consistency
+
+Before (broken): ADR 0002 = 08b9c553, NOTICES = 08b9c553, CMakeLists.txt = 8319d69f
+After  (fixed):  ADR 0002 = 08b9c553, NOTICES = 08b9c553, CMakeLists.txt = 08b9c553
+
+All three files now agree on the ADR 0002 pinned SHA.
+
+### Bravura Pin Validation
+
+Bravura pin `02e8ed29a29115df35007d1178cebaeee26c20e1` was independently
+verified reachable at steinbergmedia/bravura repository:
+
+  $ git cat-file -t 02e8ed29a29115df35007d1178cebaeee26c20e1
+  commit
+
+License: SIL Open Font License 1.1 (OFL-1.1)
+License file committed at: docs/licenses/Bravura-OFL.txt
+Source: redist/otf/Bravura.otf at pinned SHA
+
+Bravura pin is consistent across ADR 0002 §9, NOTICES.md §11, and
+CMakeLists.txt.

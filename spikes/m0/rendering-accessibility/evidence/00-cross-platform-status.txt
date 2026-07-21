@@ -1,0 +1,119 @@
+# Cross-Platform Evidence — DEFERRED per Adam's scope decision
+
+Adam's scope decision (2026-07-19): empirical GUI and screen-reader
+interaction is required now only on the physical Mac. Windows/Linux
+GUI and screen-reader interaction are deferred when ordinary GitHub CI
+cannot perform them.
+
+This file records the deferred status honestly. Never claim these
+tests passed.
+
+## macOS arm64 — COMPLETE (final-review pass 7, 2026-07-19)
+
+All evidence captured on Darwin 24.6.0 arm64, AppleClang 17.0.0:
+- [x] Tool versions (00-tool-versions.txt)
+- [x] Clean configure — HB-FT isolation, Bravura OTF copied, Noto Sans artifact integrity verified
+- [x] Clean build — zero owned warnings, -Weverything -Werror
+- [x] CTest — 6/6 passed (03-ctest.log; includes expected invalid PPM-output-path failure; headless negative forced deterministic via SDL_VIDEO_DRIVER)
+- [x] Self-test — 476/476 PASSED (04-self-test.log)
+- [x] Offscreen PPM — hash 0x16120cb8d680d0c6 asserted as golden (05-offscreen.log)
+- [x] Smoke — PASS from clean source build, exit 0, Metal-accelerated Cocoa presentation (07-smoke.log, 13-manual-display-smoke.log)
+- [x] Native Cocoa handle — NSWindow* non-null (06-native-handle.log)
+- [x] ASan+UBSan — 476/476 tests, zero findings (09-asan-*.log)
+- [x] ASan+UBSan offscreen hash matches normal build (deterministic)
+- [x] TSan — N/A (00-tsan-n-a.txt)
+- [x] Offline/disconnected build verified: FETCHCONTENT_FULLY_DISCONNECTED works
+- [x] HarfBuzz UPEM metrics: positions from hb_font_set_scale(upem,upem) are font units
+- [x] Signed arc raster: correct ±π/2 containment, quadrant-specific pixel assertions
+- [x] Real SDL event E2E test: ProcessViewportSDLEvent with spy bridge, honest source
+- [x] Text pixel proof: UPEM-scaled advances, non-background glyph raster, face distinctness
+- [x] Exact AppKit frame gate: ≤1.5pt tolerance on X/Y/W/H for identity and transformed
+- [x] NSAccessibility: PressAction (standard), CustomAction (select/zoom),
+      VoiceOver-compatible API invocation in automated report
+- [x] Semantic tree: duplicate ID rejection, Reparent/DetachChild atomic mutations
+- [x] Accessibility report mode — 23 elements, stable-ID mapping, actions/selection/zoom
+      verified, Reparent/DetachChild/duplicate-reject, frame conversion with Y-invert,
+      double-detach idempotent, 0 failures
+- VoiceOver physical gate — Adam accepted with his earlier “Looks good to me.
+      Proceed” approval. No individual speech/navigation transcript is claimed;
+      automated NSAccessibility API verification remains separate.
+- Trackpad capture — Adam's 2026-07-21 second capture PASS under the revised
+      criteria: 512 total, 488 scroll, 0 SDL_EVENT_FINGER_* telemetry, nonzero
+      viewport response, applied pan/pinch, zero invalid. Two-finger pan in all
+      directions and pinch zoom observed; three-finger behaviour not required.
+- [x] Interactive smoke on display — COMPLETE (clean source build, exit 0, Metal-accelerated; see 13-manual-display-smoke.log)
+
+## macOS x86-64 — DEFERRED
+
+Future evidence command:
+  cmake -B build -G Ninja
+  cmake --build build
+  cd build && ctest --output-on-failure
+
+No Rosetta/x86-64 macOS device available in this session.
+
+## Windows 11 x86-64 — DEFERRED
+
+Future build commands (Visual Studio 2025+):
+  cmake -B build -G "Visual Studio 17 2025" -A x64
+  cmake --build build --config Release
+
+GitHub-hosted Windows runners have no display. Self-test and offscreen
+should work; smoke mode will fail (nonzero exit, expected).
+
+## Windows 11 arm64 — DEFERRED (build-only)
+
+Same as Windows x86-64 with -A ARM64. Build-only target; no native test
+execution available.
+
+## Ubuntu 24.04 x86-64 (Wayland/X11) — DEFERRED
+
+Future build commands:
+  sudo apt-get install libxkbcommon-dev libwayland-dev libx11-dev \
+    libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev
+  cmake -B build -G Ninja
+  cmake --build build
+
+GitHub-hosted Linux runners have no display. Self-test/offscreen modes
+should work; smoke mode may work with Xvfb.
+
+## Ubuntu 24.04 arm64 — DEFERRED (build-only)
+
+Same as x86-64. Build-only target; no native test execution available.
+
+## macOS accessibility (VoiceOver) — ACCEPTED BY ADAM
+
+The macOS bridge infrastructure is fully implemented and verified
+in-process by the automated accessibility report (0 failures).
+Automated NSAccessibility API verification covers:
+- NSAccessibilityElement creation with correct roles/labels/frames
+- NSAccessibilityPressAction for press-type actions
+- NSAccessibilityCustomAction for select/zoom actions
+- Hierarchy, notifications, mutation, frame conversion, detach
+
+This is NOT a VoiceOver speech transcript. Adam accepted the physical gate via
+his earlier “Looks good to me. Proceed” approval; no individual announcements
+or actions are invented.
+
+## Trackpad/manual screenshot — PASS (trackpad); smoke COMPLETE
+
+Clean-source display smoke is verified COMPLETE (see 13-manual-display-smoke.log).
+Physical trackpad capture passed under Adam's 2026-07-21 revised acceptance;
+the telemetry waiver and factual metrics are in 15-manual-trackpad.log.
+
+Adam checklist (interactive, requires display + trackpad):
+1. Run: ./build/m0_spike --input-log --input-log-path /tmp/trackpad.csv
+    --bravura-font build/bravura_font/Bravura.otf
+    --text-font build/noto_font/NotoSans-Regular.ttf
+2. Perform: two-finger pan (horizontal, vertical), pinch zoom
+3. Close window (Esc or red button)
+4. Verify: CSV has scroll events with sub-pixel deltas; low-level finger-event
+   telemetry is diagnostic only on SDL/macOS.
+5. Observe: FidelitySummary printed to stdout with pass/fail verdict
+6. Screenshot: Cmd+Shift+4 — capture window with nodes, staves, connectors
+7. Verify hit-testing: click on nodes, connectors, staff areas;
+   observe [hit] lines in stdout
+
+--------------------------------------------------------------------
+Updated: 2026-07-21 | Architecture: arm64 | macOS 24.6.0
+Self-test count, offscreen hash, and ASan status: see 04-self-test.log, 05-offscreen.log, 09-asan-*.log

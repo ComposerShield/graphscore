@@ -1,0 +1,5 @@
+# Generated 2026-07-20T06:52:11Z
+macOS 15.7.7 (Darwin 24.6.0), arm64
+Apple clang version 17.0.0 (clang-1700.0.13.5)
+cmake version 4.4.0
+ninja 1.13.2

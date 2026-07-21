@@ -1,0 +1,59 @@
+=== Gate 15: Manual Trackpad Input Capture ===
+Initial attempt: Sun Jul 19 2026
+Second physical retest and revised evaluation: Tue Jul 21 2026
+Final verdict: PASS — Adam's revised physical acceptance
+
+Adam's first physical attempt (2026-07-19) failed honestly:
+  - Pinch worked, but same-direction two-finger movement also zoomed.
+  - Input-log mode did not visibly re-render during capture.
+
+The 2026-07-20 fix made wheel/scroll pan, made raw finger motion pan-only,
+reserved zoom for SDL_EVENT_PINCH_UPDATE, and re-rendered input-log mode.
+
+Adam's second macOS physical capture (2026-07-21) reported:
+  totalEvents: 512
+  scrollEventCount: 488
+  fingerEventCount: 0
+  hasNonzeroViewportResponse: true
+  hasAppliedPanOutcome: true
+  hasAppliedPinchOutcome: true
+  droppedOrInvalid: 0
+
+Adam's physical observation:
+  - Two fingers panned horizontally and vertically without unwanted zoom.
+  - Pinch zoom worked.
+  - Three-finger behaviour was tried, did nothing, and is not required.
+
+Revised acceptance (Adam's explicit waiver, 2026-07-21):
+  SDL/macOS may report correct two-finger trackpad pan/pinch through scroll and
+  pinch streams without SDL_EVENT_FINGER_* records. fingerEventCount remains
+  measured and reported diagnostic telemetry, but has no required minimum.
+  The meaningful requirements are robust event volume (>=50 total, >=30
+  scroll), subpixel deltas, zero invalid/dropped records, nonzero viewport
+  response, an applied pan outcome, and an applied pinch outcome, plus the
+  existing duration/rate/timestamp/gesture validity criteria. The capture above
+  satisfies the revised criteria and is PASS. No fake finger count was added.
+
+Saved-file re-evaluation:
+  The input-log executable records a live session but has no CSV re-evaluation
+  mode, so it cannot regenerate a summary for an existing CSV after the fact.
+  At this review, /tmp/trackpad_capture.csv.summary.txt is retained as a
+  separate older summary with 369 total events, 315 scroll events, 0 finger
+  events, 18.820916 s duration, 70.000 Hz peak rate, monotonic timestamps,
+  subpixel deltas, zero invalid records, and true viewport/pan/pinch outcomes.
+  Its recorded FAIL is solely the former finger threshold. Under the revised
+  rule those factual metrics also pass. The Adam-reported 512/488 capture above
+  is the physical gate record for this evidence item; the local CSV differs and
+  is not relabelled or altered as if it were that capture.
+
+Future capture command:
+  cd spikes/m0/rendering-accessibility/build
+  ./m0_spike --input-log --input-log-path /tmp/trackpad_capture.csv \
+      --input-device trackpad \
+      --bravura-font bravura_font/Bravura.otf \
+      --text-font noto_font/NotoSans-Regular.ttf
+
+Required physical actions:
+  1. Two-finger pan horizontally and vertically; it must not zoom.
+  2. Pinch zoom; it must apply a scale change.
+  3. Close with Escape.

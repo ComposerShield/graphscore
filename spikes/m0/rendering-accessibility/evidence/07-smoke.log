@@ -1,0 +1,26 @@
+=== Gate 07: Display Smoke (Clean Source Build) ===
+Date: Sun Jul 19 2026
+Verdict: PASS (clean source build, no artifact patches)
+
+Command:
+  cmake -B build -G Ninja
+  cmake --build build
+  ./build/m0_spike --smoke --quit-after-ms 2000 \
+    --bravura-font build/bravura_font/Bravura.otf \
+    --text-font build/noto_font/NotoSans-Regular.ttf
+
+Exit code: 0
+Stdout: (none — clean exit)
+Stderr: (none — no errors)
+
+SDL3 config:
+  Render: ON
+  SDL_RENDER_METAL: ON
+  Render drivers: metal
+
+This is the clean-source build output.  The previous "Window framebuffer support
+not available" error was caused by SDL_RENDER=OFF in CMakeLists.txt, which
+prevented SDL_GetWindowSurface from working on macOS Cocoa (the Cocoa video driver
+has no software CreateWindowFramebuffer — it relies on the Metal texture
+framebuffer path through the render API).  Enabling SDL_RENDER=ON auto-detects
+SDL_RENDER_METAL=ON on Apple platforms, which is sufficient.

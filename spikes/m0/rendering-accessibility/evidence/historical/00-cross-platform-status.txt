@@ -1,0 +1,90 @@
+# Cross-Platform Evidence — DEFERRED per Adam's scope decision
+
+Adam's scope decision (2026-07-19): empirical GUI and screen-reader
+interaction is required now only on the physical Mac. Windows/Linux
+GUI and screen-reader interaction are deferred when ordinary GitHub CI
+cannot perform them.
+
+This file records the deferred status honestly. Never claim these
+tests passed.
+
+## macOS arm64 — COMPLETE (corrective worker, 2026-07-19)
+
+All evidence captured on Darwin 24.6.0 arm64, AppleClang 17.0.0:
+- [x] Tool versions (00-tool-versions.txt)
+- [x] Clean configure — CMP0169 policy, SDL options documented
+- [x] Clean build — zero owned warnings, -Weverything -Werror
+- [x] CTest — 5/5 passed (03-ctest.log)
+- [x] Self-test — 88/88 PASSED (04-self-test.log)
+- [x] Offscreen PPM — hash 0x093c655b0372ed85 (05-offscreen.log)
+- [x] Real Cocoa smoke window — opens and exits (07-smoke.log)
+- [x] Native Cocoa handle — NSWindow* non-null (06-native-handle.log)
+- [x] ASan+UBSan — 88/88 tests, zero findings (09-asan-*.log)
+- [x] ASan+UBSan offscreen hash matches normal build (deterministic)
+- [x] TSan — N/A (00-tsan-n-a.txt)
+- [x] Offline build verified: FETCHCONTENT_FULLY_DISCONNECTED works
+- [x] Accessibility report mode — 23 elements, actions verified
+- [ ] VoiceOver manual navigation — PENDING (Adam)
+- [ ] Trackpad capture — PENDING (Adam)
+
+## macOS x86-64 — DEFERRED
+
+Future evidence command:
+  cmake -B build -G Ninja
+  cmake --build build
+  cd build && ctest --output-on-failure
+
+No Rosetta/x86-64 macOS device available in this session.
+
+## Windows 11 x86-64 — DEFERRED
+
+Future build commands (Visual Studio 2025+):
+  cmake -B build -G "Visual Studio 17 2025" -A x64
+  cmake --build build --config Release
+
+GitHub-hosted Windows runners have no display. Self-test and offscreen
+should work; smoke mode will fail to create a window.
+
+## Windows 11 arm64 — DEFERRED (build-only)
+
+Same as Windows x86-64 with -A ARM64. Build-only target; no native test
+execution available.
+
+## Ubuntu 24.04 x86-64 (Wayland/X11) — DEFERRED
+
+Future build commands:
+  sudo apt-get install libxkbcommon-dev libwayland-dev libx11-dev \
+    libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev
+  cmake -B build -G Ninja
+  cmake --build build
+
+GitHub-hosted Linux runners have no display. Self-test/offscreen modes
+should work; smoke mode may work with Xvfb.
+
+## Ubuntu 24.04 arm64 — DEFERRED (build-only)
+
+Same as x86-64. Build-only target; no native test execution available.
+
+## macOS accessibility (VoiceOver) — PENDING
+
+The macOS bridge infrastructure is fully implemented and verified
+in-process (accessibility report mode passes). Direct VoiceOver
+navigation requires manual test on Adam's physical Mac.
+
+## Trackpad/manual screenshot — PENDING
+
+No physical trackpad interaction occurred in this session. To capture:
+
+Adam checklist (interactive, requires display + trackpad):
+1. Run: ./build/m0_spike --input-log --input-log-path /tmp/trackpad.csv
+2. Perform: two-finger pan (horizontal, vertical), pinch zoom
+3. Close window (Esc or red button)
+4. Verify: csv file has scroll/tfinger events with sub-pixel deltas
+5. Observe: FidelitySummary printed to stdout with pass/fail verdict
+6. Run: ./build/m0_spike (interactive mode)
+7. Screenshot: Cmd+Shift+4 — capture window with nodes, staves, connectors
+8. Verify hit-testing: click on nodes, connectors, staff areas;
+   observe [hit] lines in stdout
+
+--------------------------------------------------------------------
+Generated: 2026-07-19 | Architecture: arm64 | macOS 24.6.0

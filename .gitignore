@@ -7,6 +7,10 @@ build/
 cmake-build-*/
 CMakeUserPresets.json
 
+# Spike quarantined build directories (generated, never commit)
+spikes/**/build*/
+spikes/**/build-*/
+
 # IDE / editor artifacts
 .idea/
 .vs/

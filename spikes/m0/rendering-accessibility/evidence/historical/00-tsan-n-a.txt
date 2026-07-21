@@ -1,0 +1,21 @@
+# TSan (ThreadSanitizer) — N/A for this spike
+
+TSan is not applicable to the M0 rendering-accessibility spike because
+the spike contains zero concurrency primitives:
+
+- No std::thread, std::mutex, std::atomic, pthread_create, or any other
+  threading API calls exist in the owned GraphScore spike sources.
+
+- SDL3 internally uses threads (timer, event loop), but these are
+  isolated within SDL3's static library which is fetched as a third-party
+  dependency and is excluded from sanitizer instrumentation by the spike's
+  build configuration (sanitizer flags apply only to the m0_spike target).
+
+- The spike's execution model is entirely single-threaded:
+  main thread handles SDL event loop and rasterization sequentially.
+
+- HarfBuzz and FreeType are also consumed as static libraries without
+  threading exercised by the spike.
+
+TSan will become relevant in M8 (writer audio engine) and M4 (runtime
+processing) where concurrent audio callback and UI threads interact.

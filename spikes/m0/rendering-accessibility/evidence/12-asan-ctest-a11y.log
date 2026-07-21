@@ -1,0 +1,17 @@
+Test project /Users/adamshield/dev/graphscore/spikes/m0/rendering-accessibility/build-asan
+    Start 1: spike_self_test
+1/6 Test #1: spike_self_test ..................   Passed    0.10 sec
+    Start 2: spike_offscreen
+2/6 Test #2: spike_offscreen ..................   Passed    0.10 sec
+    Start 3: spike_offscreen_invalid_output
+3/6 Test #3: spike_offscreen_invalid_output ...   Passed    0.09 sec
+    Start 4: spike_native_handle
+4/6 Test #4: spike_native_handle ..............   Passed    0.17 sec
+    Start 5: spike_accessibility_report
+5/6 Test #5: spike_accessibility_report .......   Passed    0.18 sec
+    Start 6: spike_smoke_headless_negative
+6/6 Test #6: spike_smoke_headless_negative ....   Passed    0.06 sec
+
+100% tests passed out of 6
+
+Total Test time (real) =   0.70 sec

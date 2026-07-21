@@ -1,0 +1,93 @@
+=== Gate 10: Clean-Build Provenance Transcript ===
+Generated: 2026-07-21T07:23:02Z
+Verdict: PASS — final source built cleanly with no artifact patches; automated gates green
+
+# Environment
+arch:         arm64
+ProductName:		macOS
+ProductVersion:		15.7.7
+BuildVersion:		24G720
+compiler:     Apple clang version 17.0.0 (clang-1700.0.13.5)
+Target: arm64-apple-darwin24.6.0
+Thread model: posix
+InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+cmake:        cmake version 4.4.0
+
+CMake suite maintained and supported by Kitware (kitware.com/cmake).
+ninja:        1.13.2
+
+# Source Manifest
+# SHA-256 of the sorted SHA-256 records for CMakeLists.txt and source files.
+manifest-digest: 92eea0c61b48562773323f4d84c929c945097e3ee4653028e555c152a4593fdd
+0ab07cf2130a7bcc7d618674a17aa02e4a2a12465dd79c1ce75208b0307fabb2  src/notation_renderer.cpp
+0ad62f78edb568fcf6e953c8c26cae9e1ec80d692d29a0faf037cc2a54cb38ae  src/graph_renderer.cpp
+0bfd8e1b18cc59667c709ab8bdb1c8d39b9923574d08e642b9896e67da01ec9d  src/self_test.hpp
+1a1f4afe8ee35d32f6173097f19986cb970f4aac5ad92cd31821947761e6f126  src/main.cpp
+1de84f3c5d10cc4e7ccc87c3fdc66d7dff4574489ba9c65dc6919e2c577e9c33  src/render_list.hpp
+21c9bae75e59346d44c39d5f5afaefc36d47ba7244fde2251e91bd008ad48932  src/types.hpp
+28e7592122ec09276d57dee1010da12f3fb71d6740f63614423e1396a03cd238  src/input_logger.hpp
+2cfc78d10f232e196ae2ab1e0e87da1f4158c92a190e8e6fce517d70e7c1cb65  CMakeLists.txt
+43dfb6af1d620275b8e232117e078fa7c7b2a598c28d4d384c70490e1e72ced5  src/accessibility_bridge.hpp
+54e31ee7a9be3c3cc4d9da9fd424717cae72cd65839a6131592ff1e386008b85  src/native_handle.cpp
+55b8e117f1c4110a2b2c6421e512bdccb03ef81a258a73ce69593dcfb73bda7d  src/font_manager.hpp
+5933df506fd0e9ee54a12fd859397f2c5a977df969c0408abbfa37e20613dcb3  src/app.hpp
+5b62a32c98ae01a0c751fde1a2945f9644108fd216cd1ec9c813c1302a003900  src/app.cpp
+5d28af04f963d66ec073cecd614e3621f6078720bdf7b13ccb3da9a4bd9eb709  src/rasterizer.hpp
+5fa83d85200682958ba3cac672d2e9dbc6d92942d53ee5265849684b8a2afc3a  src/self_test.cpp
+65f481c16f92316f96774b0260ce3ed4b9b2e2f4dcb3de35296d414261c93bd0  src/viewport_event_handler.hpp
+79a209fe7cf2f2152eca28a2086beec90cb99b9d8249346084bdee6918ce02b4  src/semantic_tree.cpp
+7b77e86d7e10c150022f202b7359d9b1b50dde86f0c11cd9b6a416c16a89ca19  src/input_logger.cpp
+8597e87d675cea160e1e4d52415dcf535e3fba7d9522b28ce8ac313809155248  src/accessibility_report.cpp
+85cae561971f5d6fd914dc2f91dafd36bac4e590098922e53a3efd70074c5dc1  src/accessibility_bridge_mac.mm
+8e9f18417e7f37f4c6772893a461db8fe318e0db593c599cf54939f7eb9f71a2  src/hit_test.cpp
+9bec0701d7992e2a15d0a3bbd49553527aff9cc196fe14a586360f4361ba2562  src/notation_renderer.hpp
+9d6230f14e74ef94507b0136b8ab6b7acab9e65c88960e5380c724532824dff0  src/semantic_tree.hpp
+a32a4e7872581eade350f3551c1daf41298d48b5981f2222fade2d0c2cc2c12b  src/viewport_event_handler.cpp
+b3c8f133ce48c1be8df0390b6789826ebeb6981563c77364a6b415ade08fccd1  src/hit_test.hpp
+c1a10a693d3cde6f660689c65e04314b1c46f65b47326ccc8a5ce6cfcb668485  src/font_manager.cpp
+cd60c7fdafd54923bb35043ceadba989641a39c84f655d5c30b3c4a8fcb4507f  src/rasterizer.cpp
+da685f19461f62843be8f6be2690d13a2e8c39cd2627be6c9bac0f87f64f95b6  src/render_list.cpp
+e52618151a0a8d0d29539c4d52257cc715665a931371d0046594fd961cca4dc5  src/graph_renderer.hpp
+ebd03b0bf13ccaf484d8c32bae99f748010c99f4ba979bf2dbc062d1c091ac53  src/native_handle.hpp
+
+# Commands and results
+rm -rf build build-asan
+cmake -S . -B build -G Ninja
+cmake --build build
+ctest --test-dir build --output-on-failure
+Result: normal build warning-clean; CTest 6/6 passed (100%), including the expected invalid PPM-output-path failure.
+
+./build/m0_spike --self-test --bravura-font build/bravura_font/Bravura.otf --text-font build/noto_font/NotoSans-Regular.ttf
+Result: Self-test: ALL PASSED (476 tests), exit 0.
+
+./build/m0_spike --offscreen --offscreen-output evidence/spike_output.ppm --bravura-font build/bravura_font/Bravura.otf --text-font build/noto_font/NotoSans-Regular.ttf
+Result: Pixel hash: 0x16120cb8d680d0c6, exit 0.
+
+./build/m0_spike --offscreen --offscreen-output build --bravura-font build/bravura_font/Bravura.otf --text-font build/noto_font/NotoSans-Regular.ttf
+Result: PPM creation failed and returned exit 1 before hash evaluation.
+
+./build/m0_spike --native-handle --native-handle-report /tmp/graphscore_spike_native_handle.txt
+Result: platform=macOS, type=NSWindow*, nonNull=yes, valid=yes, exit 0.
+
+./build/m0_spike --accessibility-report evidence/11-a11y-report-file.txt --bravura-font build/bravura_font/Bravura.otf --text-font build/noto_font/NotoSans-Regular.ttf
+Result: 23 NSAccessibilityElement objects, 0 failures, exit 0.
+
+cmake -S . -B build-asan -G Ninja -DSPIKE_ENABLE_ASAN=ON
+cmake --build build-asan
+ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build-asan --output-on-failure
+Result: ASan+UBSan build warning-clean; CTest 6/6 passed (100%), zero sanitizer findings.
+
+ASAN_OPTIONS=detect_leaks=0 ./build-asan/m0_spike --self-test --bravura-font build-asan/bravura_font/Bravura.otf --text-font build-asan/noto_font/NotoSans-Regular.ttf
+Result: Self-test: ALL PASSED (476 tests), exit 0, zero sanitizer findings.
+
+ASAN_OPTIONS=detect_leaks=0 ./build-asan/m0_spike --offscreen --offscreen-output /tmp/graphscore_spike_asan.ppm --bravura-font build-asan/bravura_font/Bravura.otf --text-font build-asan/noto_font/NotoSans-Regular.ttf
+Result: Pixel hash: 0x16120cb8d680d0c6, exit 0, zero sanitizer findings.
+
+ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build-asan --output-on-failure
+Result: repeated ASan+UBSan CTest including native handle and accessibility report: 6/6 passed (100%), zero sanitizer findings.
+
+# Manual gates
+Display smoke retains the prior clean-source physical PASS in 13-manual-display-smoke.log; no new physical-display claim is made here.
+VoiceOver is accepted by Adam’s earlier “Looks good to me. Proceed” approval without a fabricated transcript.
+Trackpad is PASS under Adam’s 2026-07-21 revised criteria; SDL_EVENT_FINGER_* telemetry is diagnostic only.
+Windows/Linux GUI and screen-reader gates remain deferred per the recorded scope decision.

@@ -800,6 +800,58 @@ GraphScore-owned code (M2). No third-party dependency.
 
 ---
 
+### 9. Bravura — SMuFL Music Font (Spike Asset)
+
+| Property | Value |
+|----------|-------|
+| Repository | https://github.com/steinbergmedia/bravura |
+| Pinned commit SHA | `02e8ed29a29115df35007d1178cebaeee26c20e1` |
+| License | SIL Open Font License 1.1 |
+| License URL at SHA | https://raw.githubusercontent.com/steinbergmedia/bravura/02e8ed29a29115df35007d1178cebaeee26c20e1/LICENSE.txt |
+| Committed license | `docs/licenses/Bravura-OFL.txt` |
+| License SPDX | OFL-1.1 |
+| Patent grant | None (OFL 1.1; copyright and trademark only) |
+| Notices | Copyright © 2019, Steinberg Media Technologies GmbH, with Reserved Font Name "Bravura". Condition 3 of the OFL restricts use of the Reserved Font Name "Bravura" in modified versions without written permission. |
+| Used file | `redist/otf/Bravura.otf` |
+| Build tool integration | `FetchContent` at pinned SHA; OTF file copied to build directory at configure time. Supports `FETCHCONTENT_SOURCE_DIR_BRAVURA` override for offline builds. |
+
+**Decision**: POLICY-CLEARED as a spike-only font asset. Bravura is the
+reference SMuFL font and is used for Phase C rendering/notation spike
+demonstrations. It is NOT a default build dependency — production may
+use the same or an alternative SMuFL-compatible font. The font file is
+fetched from the upstream repository at an immutable commit SHA; no
+binary is committed to the repository.
+
+**Font path**: `redist/otf/Bravura.otf` at pinned SHA (`02e8ed29...`).
+
+---
+
+### 10. Noto Sans — Reproducible Latin Text Font (Spike)
+
+| Property | Value |
+|----------|-------|
+| Repository | https://github.com/notofonts/noto-fonts |
+| Pinned commit SHA | `ffebf8c1ee449e544955a7e813c54f9b73848eac` (2023-01-25) |
+| License | SIL Open Font License 1.1 |
+| License URL at SHA | https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/LICENSE |
+| Committed license | `docs/licenses/NotoSans-OFL.txt` |
+| License SPDX | OFL-1.1 |
+| Patent grant | None (OFL 1.1; copyright and trademark only) |
+| Notices | Copyright 2018 The Noto Project Authors. "Noto" is a trademark of Google LLC. |
+| Used file | `archive/hinted/NotoSans/NotoSans-Regular.ttf` |
+| Build tool integration | `file(DOWNLOAD)` from pinned raw URL with `EXPECTED_HASH` (SHA-256 `d78a4640e19e06c128e2041d480d5ddfd8db4fdecb3d582ca12b26aef1548bf9`); TTF file copied to build directory at configure time. Supports `NOTO_SANS_SRC` FILEPATH cache variable for offline builds. Every acquisition path verified against the pinned SHA-256. |
+
+**Decision**: POLICY-CLEARED as a spike-only reproducible text font. Noto
+Sans Regular provides deterministic Latin text shaping and glyph rasterization
+for all self-tests. It is NOT a default build dependency — pixel-level text
+raster assertions are spike-only. The exact pinned artifact is required for
+all text-facing tests; no system-font fallback is permitted.
+
+**Font path**: `archive/hinted/NotoSans/NotoSans-Regular.ttf` at pinned SHA
+(`ffebf8c1...`).
+
+---
+
 ## Summary Matrix
 
 | Category | Candidate | Status | SHA |
@@ -814,6 +866,8 @@ GraphScore-owned code (M2). No third-party dependency.
 | MIDI I/O | RtMidi | PROVISIONAL | `a3233c22949342f6697681e2cf2403e27fcf0c9e` |
 | MIDI encoding | Owned code | POLICY-CLEARED | N/A |
 | VST3 | VST3 SDK | DEFERRED | To be pinned |
+| SMuFL font | Bravura | POLICY-CLEARED (spike) | `02e8ed29a29115df35007d1178cebaeee26c20e1` |
+| Text font | Noto Sans | POLICY-CLEARED (spike) | `ffebf8c1ee449e544955a7e813c54f9b73848eac` |
 
 ## CMake Adapters Required (M1 Implementation Gates)
 
@@ -831,6 +885,13 @@ GraphScore-owned code (M2). No third-party dependency.
 
 Recorded in `docs/NOTICES.md` with committed license files in
 `docs/licenses/`.
+
+- `docs/licenses/Bravura-OFL.txt` — SIL Open Font License 1.1
+  (source at pinned SHA `02e8ed29a29115df35007d1178cebaeee26c20e1`)
+- `docs/licenses/NotoSans-OFL.txt` — SIL Open Font License 1.1
+  (Noto Sans Regular source at pinned SHA
+  `ffebf8c1ee449e544955a7e813c54f9b73848eac`; artifact SHA-256
+  `d78a4640e19e06c128e2041d480d5ddfd8db4fdecb3d582ca12b26aef1548bf9`)
 
 ## Fallback Matrix
 

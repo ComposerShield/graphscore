@@ -1,0 +1,4 @@
+FontManager: FT_New_Face(Bravura) failed: 1
+FontManager: FT_New_Face(text) failed: 1
+[native-handle] platform=macOS type=NSWindow* nonNull=yes valid=yes ptr=0x14703c610
+Native handle report saved: /tmp/graphscore_spike_native_handle.txt

@@ -1,0 +1,59 @@
+=== Gate 14: Manual VoiceOver Verification ===
+Original investigation date: Sun Jul 19 2026
+Gate acceptance recorded: Tue Jul 21 2026
+Verdict: ACCEPTED — Adam explicitly approved the physical VoiceOver gate
+
+Adam's explicit acceptance:
+  Earlier approval: “Looks good to me. Proceed”
+  This is recorded as Adam's gate acceptance. It does not assert that a
+  particular VoiceOver announcement, navigation action, or spoken transcript
+  was observed; none is fabricated here.
+
+Environment:
+  macOS session: Apple Terminal, physical Mac with display
+  Accessibility Inspector.app: available at /Applications/Xcode.app/Contents/Applications/
+  osascript assistive access: NOT GRANTED ("osascript is not allowed assistive access")
+  VoiceOver state: NOT RUNNING
+  System Events UI elements: disabled
+
+Verified (automated):
+  1. Interactive m0_spike launched successfully with accessibility bridge
+  2. Bridge output: "[a11y-bridge] Attached to NSWindow. 23 elements exposed."
+  3. "[interactive] Accessibility bridge attached" confirmed
+  4. Process "m0_spike" visible to System Events process listing
+  5. Clean shutdown: "[a11y-bridge] Detached." on window close
+
+In-process NSAccessibility report (prior verification — evidence/11-a11y-bridge-report.log):
+  - Semantic tree: 23 nodes (graph nodes, connectors, measures, notes, controls, actions)
+  - Action callback registered for: press (play/stop), select, increment, decrement
+  - Keyboard focus supports graph-node traversal
+
+Not feasible from this session:
+  - Enabling VoiceOver: possible via keyboard shortcut (Cmd+F5 or triple-press Touch ID)
+    but not automatable without assistive access permissions
+  - VoiceOver navigation commands (VO+arrows, VO+Space): require physical keyboard input
+    processed by the accessibility system; cannot be simulated programmatically from
+    this Terminal session
+  - Capturing spoken announcements: VoiceOver speech output is audio; no text capture
+    mechanism available in this environment
+  - Granting assistive access to Terminal: would require persistent system setting change
+    (System Preferences > Security & Privacy > Accessibility), which violates task
+    constraint "Avoid changing persistent system settings beyond temporary VoiceOver state"
+
+Recommendation for physical manual test:
+  The interactive spike binary is confirmed functional with 23 accessible elements.
+  A human tester with assistive access enabled can:
+    1. Enable VoiceOver (Cmd+F5)
+    2. Launch ./m0_spike from build/ directory
+    3. Navigate graph nodes with VO+Left/Right
+    4. Navigate staves/notation with VO+Down
+    5. Focus "gs_action_play" and press VO+Space to toggle play/stop
+    6. Observe stdout for "[interactive] Action: node=gs_action_play action=press"
+       and state change "playing" <-> "stopped"
+     7. Disable VoiceOver (Cmd+F5) to restore state
+
+Acceptance scope:
+  - Automated NSAccessibility bridge verification remains factual and separate.
+  - Adam accepted the physical VoiceOver gate based on the earlier approval
+    quoted above.
+  - No VoiceOver announcement details are claimed beyond that acceptance.

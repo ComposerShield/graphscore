@@ -766,7 +766,7 @@ resolution does not alter the forbidden-edge matrix.
 | Item | Status | Resolution Milestone |
 |---|---|---|
 | ThorVG vs. owned render-list | PROVISIONAL (ThorVG requires Meson/Ninja pins and adapter; owned fallback explicitly adopted if ThorVG fails) | Phase C rendering spike |
-| AccessKit vs. platform-native accessibility bridge | M1 target is an owned zero-edge placeholder. Phase C selects the concrete bridge (AccessKit as EXCLUDED candidate, or native OS services). After Phase C, `graphscore_accessibility_platform` depends privately on exactly one bridge; native OS frameworks/services (NSAccessibility, UI Automation, AT-SPI2) are system-provided and are not vendored CMake targets — the machine audit must not reject them as undeclared external targets. | Phase C accessibility spike |
+| AccessKit vs. platform-native accessibility bridge | **Phase C resolved**: platform-native accessibility APIs selected (ADR 0004 §2). AccessKit remains EXCLUDED (ADR 0002 §2). `graphscore_accessibility_platform` depends privately on NSAccessibility (macOS), UI Automation (Windows, future), AT-SPI2 (Linux, future). Native OS frameworks are system-provided, not vendored CMake targets. macOS bridge implemented and tested; Windows/Linux mappings documented but deferred to physical-device testing. | Phase C accessibility spike |
 | VST3 SDK SHA and adapter | DEFERRED to M0 Phase D | M0 Phase D |
 | miniaudio confirmation (M1 compile gate + Phase C device gate) | PROVISIONAL | M1 build gate + Phase C device gate |
 | PortAudio activation if miniaudio fails | PROVISIONAL fallback | Phase C if needed |

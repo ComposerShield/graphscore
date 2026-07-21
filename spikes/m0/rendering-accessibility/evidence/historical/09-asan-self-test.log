@@ -1,0 +1,185 @@
+FontManager: FT_New_Face(text) failed: 1
+SemanticTree::AddNode: duplicate stableId 'id_uniq' rejected
+Rasterizer: invalid glyph cache index -1 (cache size 0)
+Rasterizer: invalid glyph cache index 999 (cache size 0)
+  [PASS] Vec2 addition
+  [PASS] Vec2 subtraction
+  [PASS] Vec2 scale
+  [PASS] Rect contains center
+  [PASS] Rect excludes out
+  [PASS] Rect excludes out2
+  [PASS] Rect intersect
+  [PASS] Rect no intersect
+  [PASS] Transform round-trip
+  [PASS] Hit test node center
+  [PASS] Hit test connector
+  [PASS] Hit test miss
+  [PASS] Rounded rect has commands — 9
+  [PASS] Orthogonal connector has commands — 3
+  [PASS] Ortho all segments axis-aligned
+  [PASS] Ortho trim dist matches CR+HW
+  [PASS] Ortho trim first endpoint horizontal
+  [PASS] Ortho trim second start vertical
+  [PASS] Ortho radius within segment bounds
+  [PASS] Ortho arc radius matches trim dist
+  [PASS] Clip rect set
+  [PASS] Clip pixel outside unrendered
+  [PASS] Clip pixel inside rendered red
+  [PASS] Unclipped pixel rendered blue
+  [PASS] Staff has 5 lines — 5
+  [PASS] Bravura font load
+  [PASS] SMuFL glyph rasterize
+  [PASS] HarfBuzz shape text — 5 glyphs
+  [PASS] SMuFL G clef codepoint
+  [PASS] SMuFL F clef codepoint
+  [PASS] SMuFL notehead black
+  [PASS] SMuFL notehead half
+  [PASS] Offscreen hash non-zero
+  [PASS] Offscreen hash deterministic
+  [PASS] Shape+Cache produces glyphs — 4 glyphs
+  [PASS] Shape+Cache valid rasterized glyphs
+  [PASS] HarfBuzz shape returns GID (valid)
+  [PASS] Glyph produces non-background output
+  [PASS] Glyph produces dark pixels (anti-aliased)
+  [PASS] Glyph rasterized by GID produces valid index
+  [PASS] Glyph hash differs with offset transform — 15678055294132611347 vs 2881085860491417307
+  [PASS] Glyph clipped outside remains white
+  [PASS] Glyph inside clip renders
+  [PASS] Ortho Left→Down produces commands — 3
+  [PASS] Ortho Right→Down produces commands — 3
+  [PASS] Ortho Right→Up produces commands — 3
+  [PASS] Ortho Left→Up produces commands — 3
+  [PASS] Ortho reversed traversal produces commands — 3
+  [PASS] Ortho reversed no diagonal segments
+  [PASS] Ortho short segment clamp succeeds — 3
+  [PASS] Ortho short segment arc radius clamped
+  [PASS] Ortho zero-length segment rejected (empty commands) — 0
+  [PASS] Ortho duplicate bend points rejected — 0
+  [PASS] Ortho non-axis diagonal rejected — 0
+  [PASS] Ortho arc continuity: h-trim at midline radius
+  [PASS] Ortho arc continuity: v-trim at midline radius
+  [PASS] Ortho arc continuity: outer radius correct
+  [PASS] Ortho arc continuity: inner radius correct
+  [PASS] Fillet Left→Down has arc cmd — 3
+  [PASS] Fillet Left→Down pixel output
+  [PASS] Fillet Right→Down has arc cmd — 3
+  [PASS] Fillet Right→Down pixel output
+  [PASS] Fillet Right→Up has arc cmd — 3
+  [PASS] Fillet Right→Up pixel output
+  [PASS] Fillet Left→Up has arc cmd — 3
+  [PASS] Fillet Left→Up pixel output
+  [PASS] Music glyph from music face valid
+  [PASS] Text face rasterize fails when not loaded
+  [PASS] Text face rasterize succeeds after load
+  [PASS] Text and music faces distinct cache entries — text=1 music=2
+  [PASS] A11y has graph nodes
+  [PASS] A11y has connectors
+  [PASS] A11y has measures
+  [PASS] A11y has notes
+  [PASS] A11y has controls
+  [PASS] A11y has selection
+  [PASS] A11y has action items
+  [PASS] A11y tree non-empty — nodes=23
+  [PASS] A11y all nodes have stable IDs
+  [PASS] A11y stable IDs are unique
+  [PASS] A11y FindByStableId(existing) — idx=1
+  [PASS] A11y FindByStableId(missing)
+  [PASS] A11y has root
+  [PASS] A11y root is Application — role=1
+  [PASS] A11y root has children — children=11
+  [PASS] A11y parent-child consistency
+  [PASS] A11y Node A has label — Node A
+  [PASS] A11y Note E4 has label
+  [PASS] A11y Zoom control has value
+  [PASS] A11y set selected
+  [PASS] A11y clear selected
+  [PASS] A11y set focused
+  [PASS] A11y set keyboard focus
+  [PASS] A11y Play button has actions — actions=1
+  [PASS] A11y Node A has select action
+  [PASS] A11y transformed bounds x — got=200.000000
+  [PASS] A11y transformed bounds y — got=150.000000
+  [PASS] A11y transformed bounds w — got=400.000000
+  [PASS] A11y transformed bounds h — got=200.000000
+  [PASS] A11y identity bounds match world — got=50.000000
+  [PASS] A11y hit node A
+  [PASS] A11y hit returns node A — gs_node_A
+  [PASS] A11y hit miss outside
+  [PASS] A11y hit note E4
+  [PASS] A11y hit returns note E4 — gs_note_m1E4
+  [PASS] A11y invoke action returns true
+  [PASS] A11y action callback fired
+  [PASS] A11y action changed state —  -> playing
+  [PASS] A11y valid SetParentChild
+  [PASS] A11y SetParentChild rejects OOB parent
+  [PASS] A11y SetParentChild rejects OOB child
+  [PASS] A11y SetParentChild rejects self-parent
+  [PASS] A11y SetParentChild rejects negative parent
+  [PASS] A11y SetParentChild rejects negative child
+  [PASS] A11y SetParentChild rejects cycle (b→a after a→b)
+  [PASS] A11y SetParentChild rejects long cycle (c→a after a→b→c)
+  [PASS] A11y SetParentChild rejects duplicate parent (b already parented)
+  [PASS] A11y generation increment on AddNode
+  [PASS] A11y generation increment on SetParentChild
+  [PASS] A11y generation increment on Clear
+  [PASS] A11y generation monotonic
+  [PASS] A11y valid action invoked
+  [PASS] A11y rejects undeclared action ID
+  [PASS] A11y rejects OOB action index
+  [PASS] A11y rejects negative action index
+  [PASS] A11y rejects action on node with no actions
+  [PASS] A11y initial tree non-empty
+  [PASS] A11y clear sets count to zero
+  [PASS] A11y root invalid after clear
+  [PASS] A11y rebuilt tree matches original count
+  [PASS] A11y node A exists after rebuild
+  [PASS] A11y reparent after DetachChild
+  [PASS] A11y reparent child has new parent
+  [PASS] A11y reparent rejects already-parented child
+  [PASS] First AddNode accepted
+  [PASS] Duplicate stableId rejected
+  [PASS] Tree count unchanged after duplicate reject
+  [PASS] Reparent succeeds
+  [PASS] Reparent child has new parent
+  [PASS] Reparent old parent no longer has child
+  [PASS] Reparent new parent has child
+  [PASS] Reparent rejects cycle
+  [PASS] DetachChild succeeds
+  [PASS] Detached child has no parent
+  [PASS] Old parent no longer lists child
+  [PASS] DetachChild rejects already-detached
+  [PASS] Reparent increments generation
+  [PASS] DetachChild increments generation
+  [PASS] Pan math dx correct
+  [PASS] Pan math dy correct
+  [PASS] Pan apply offset x
+  [PASS] Pan apply offset y
+  [PASS] Pinch scale correct
+  [PASS] Pinch transform offset x
+  [PASS] Pinch transform offset y
+  [PASS] Pinch transform scale
+  [PASS] Pinch centered on focal point
+  [PASS] Precise scroll dx subpixel
+  [PASS] Precise scroll dy subpixel
+  [PASS] Generic wheel deltas integral
+  [PASS] Trackpad vs wheel distinction
+  [PASS] Fidelity summary PASS scenario — PASS — all fidelity thresholds met
+  [PASS] Fidelity summary FAIL scenario — FAIL — capture too short;
+  [PASS] Fidelity empty → TEMPLATE — TEMPLATE — no events captured (pending physical session)
+  [PASS] Fidelity empty totalEvents=0
+  [PASS] Fidelity min duration ≥ 0.1s
+  [PASS] Fidelity min event rate ≥ 0.1 Hz
+  [PASS] Fidelity min event count ≥ 1
+  [PASS] Fidelity duplicate timestamp counted as drop — drops=1
+  [PASS] Fidelity non-monotonic detected
+  [PASS] Pointer-only capture no gesture
+  [PASS] Pointer-only capture cannot pass — FAIL — capture too short; dropped/invalid events;
+  [PASS] Native handle null window: valid=false
+  [PASS] Native handle null window: has error — null window
+  [PASS] Native handle null window: handleNonNull=false
+  [PASS] Native handle unavailable: valid reflects nonNull
+  [PASS] Native handle unavailable: error populated — simulated: handle unavailable
+  [PASS] Native handle probe fails on null window — null window
+  [PASS] Rasterizer survives invalid glyph indices
+
+Self-test: ALL PASSED (179 tests)
