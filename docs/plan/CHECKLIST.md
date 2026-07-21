@@ -16,7 +16,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [x] Cooked-format decision recorded (ADR 0006) — owned binary format
 - [x] VST3 SDK license confirmed from upstream — MIT across all core
       submodules, incl. `pluginterfaces`; VSTGUI BSD-3-style and not required
-- [ ] Direct VST3 hosting spike completed, macOS arm64 — 1 day box
+- [x] Direct VST3 hosting spike completed, macOS arm64 (ADR 0007)
 - [ ] Spike directories deleted or quarantined
 - [ ] Exit decision approved
 

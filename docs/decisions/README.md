@@ -31,3 +31,4 @@
 | [0004](0004-rendering-accessibility-spike.md) | Rendering and Accessibility Spike Results | Accepted |
 | [0005](0005-engraving-engine-spike.md) | Engraving-Engine Spike Direction | Accepted |
 | [0006](0006-cooked-format-direction.md) | Cooked Asset Format Direction | Accepted |
+| [0007](0007-direct-vst3-hosting.md) | Direct VST3 Hosting | Accepted |

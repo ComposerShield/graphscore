@@ -128,12 +128,13 @@ are real risks that cannot be resolved on paper.
       dual license. VSTGUI is BSD-3-clause-style and is not required — it must
       stay disabled so it never enters the dependency closure. Full record in
       `spikes/m0/vst3-hosting/README.md`.
-- [ ] Confirm FetchContent integration at a pinned immutable commit.
-- [ ] Instantiate one test instrument and one test effect on macOS arm64.
-- [ ] Process a MIDI/audio block, save and restore opaque state, query latency
+- [x] Confirm FetchContent integration at a pinned immutable commit.
+- [x] Instantiate one test instrument and one test effect on macOS arm64.
+- [x] Process a MIDI/audio block, save and restore opaque state, query latency
       and tail.
-- [ ] Attach, resize, and focus a native plugin editor.
-- [ ] Scan plugins in a helper process and survive a deliberately crashed or
+- [x] Attach, resize, and focus a native plugin editor. **Human-observed PASS
+      on all four criteria**; see `spikes/m0/vst3-hosting/EDITOR-GATE.md`.
+- [x] Scan plugins in a helper process and survive a deliberately crashed or
       hung scan with a timeout and a diagnostic.
 
 Scope notes:
@@ -147,17 +148,19 @@ Scope notes:
 - No test suite, no sanitizers, no evidence catalog. A working binary plus the
   ADR is the deliverable.
 
+Recorded in ADR 0007.
+
 ## Acceptance Criteria
 
-- [ ] Written decisions select a permissive UI/render/audio/MIDI baseline
+- [x] Written decisions select a permissive UI/render/audio/MIDI baseline
       (ADR 0002) and a cooked-format direction (ADR 0006).
-- [ ] A fallback is recorded for every rejected or not-yet-proven dependency.
-- [ ] The VST3 prototype completes instantiate → process → state → editor →
+- [x] A fallback is recorded for every rejected or not-yet-proven dependency.
+- [x] The VST3 prototype completes instantiate → process → state → editor →
       helper-process scan on macOS arm64, or its failure and fallback are
       recorded.
-- [ ] The target dependency graph prevents writer-only libraries from entering
+- [x] The target dependency graph prevents writer-only libraries from entering
       the runtime (ADR 0003).
-- [ ] No production milestone is blocked on an unresolved licensing assumption.
+- [x] No production milestone is blocked on an unresolved licensing assumption.
 - [ ] All spike directories under `spikes/m0/` are deleted or explicitly
       quarantined.
 
