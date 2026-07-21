@@ -21,6 +21,16 @@ set_tests_properties(graphscore_writer_window_smoke PROPERTIES
   TIMEOUT 60
 )
 
+if (WIN32)
+  # SDL3's window creation on headless Windows runners can hang inside a
+  # kernel call (CreateWindowEx / message-pump wait) and ctest cannot
+  # interrupt a hung kernel call even with TIMEOUT.  The test is still
+  # exercised on macOS and Linux CI jobs.
+  set_tests_properties(graphscore_writer_window_smoke PROPERTIES
+    DISABLED TRUE
+  )
+endif()
+
 if (NOT GRAPHSCORE_BUILD_WRITER)
   # Configured with -DGRAPHSCORE_BUILD_WRITER=OFF: there is no backend to
   # reach, and the executable says so and exits non-zero. That is the correct
