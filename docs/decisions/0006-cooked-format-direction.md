@@ -44,7 +44,7 @@ No schema-generation dependency enters the runtime closure.
 | Bounds/offset validation on hostile input | Explicit and auditable in one reviewable place, using our own error codes rather than a foreign verifier's success/failure bit. |
 | Load-time allocation count and host allocators | Zero allocation is the default rather than something engineered around a library's own allocation behavior. |
 | Compact representation of UUID/index maps, schedules, tempo curves, routing | Full control over packing. The compiler already resolves UUIDs to dense indices, so the format stores indices and side tables, not a general object graph. |
-| Debuggability and generated-code warning hygiene | No generated code, so no `-Weverything` suppression pressure. Introspection must be built. See Risks. |
+| Debuggability and generated-code warning hygiene | No generated code to keep warning-clean or isolate. **This is the weakest argument in favor** — the toolchain uses a targeted warning set rather than `-Weverything`, so generated code would have been a manageable irritation, not a running battle. Introspection must be built. See Risks. |
 
 ## Rejected Alternative: FlatBuffers
 
@@ -61,6 +61,9 @@ byte-determinism requires pinning down vtable deduplication, alignment, and
 padding; generated types in the persistence and runtime layers would carve an
 explicit exception into the no-third-party-types rule; and `flatc` adds a
 codegen step to the build graph for every consumer of the format.
+
+The first three reasons are load-bearing. Warning hygiene and build-graph
+complexity are secondary and would not on their own justify owning a format.
 
 Under different constraints — particularly if host-controlled allocation or
 strict byte-determinism were dropped — this decision would likely reverse.
