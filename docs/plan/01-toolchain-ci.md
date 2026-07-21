@@ -26,7 +26,7 @@ Create a reproducible, warning-clean C++23 repository foundation that continuous
 
 - [ ] Require C++23 and Clang/AppleClang with an actionable configure-time failure for unsupported compilers.
 - [ ] Use target-scoped warning, sanitizer, and analysis configuration.
-- [ ] Enable Clang `-Weverything` or the clang-cl equivalent, maintain a small commented/audited suppression list, and treat every remaining warning as an error for GraphScore-owned code.
+- [ ] Enable Clang `-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wold-style-cast -Wnon-virtual-dtor -Wcast-align -Wunused -Wnull-dereference -Wdouble-promotion -Wformat=2 -Wimplicit-fallthrough` or the clang-cl equivalent, and treat every remaining warning as an error for GraphScore-owned code.
 - [ ] Provide checked-in CMake presets for developer debug, release, ASan/UBSan, TSan, and CI builds.
 - [ ] Fetch GTest and accepted dependencies at immutable commit hashes.
 - [ ] Support `FETCHCONTENT_SOURCE_DIR_<NAME>` overrides and a documented offline cache workflow.

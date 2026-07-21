@@ -50,7 +50,7 @@ Writer-only data must never appear in a cooked runtime asset unless it is requir
 ### Toolchain and quality
 
 - C++23 and CMake, compiled with Clang or AppleClang on every platform.
-- Clang `-Weverything` (or the clang-cl equivalent) for GraphScore-owned code, with a small audited suppression list, treated as errors.
+- Clang `-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wold-style-cast -Wnon-virtual-dtor -Wcast-align -Wunused -Wnull-dereference -Wdouble-promotion -Wformat=2 -Wimplicit-fallthrough -Werror` (or the clang-cl equivalent) for GraphScore-owned code.
 - Prefer `constexpr`; otherwise use `const`; mutable state requires a demonstrated need.
 - GTest is the unit test framework and is used extensively in every milestone.
 - clang-format, clang-tidy, cpplint, ASan, UBSan, and TSan are required quality layers.
