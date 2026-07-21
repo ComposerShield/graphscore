@@ -1,0 +1,9 @@
+command: ctest --test-dir spikes/m0/engraving-engine/build --output-on-failure
+
+Test project /Users/adamshield/dev/graphscore/spikes/m0/engraving-engine/build
+    Start 1: engraving_layout_evaluation
+1/1 Test #1: engraving_layout_evaluation ......   Passed    0.20 sec
+
+100% tests passed out of 1
+
+Total Test time (real) =   0.20 sec

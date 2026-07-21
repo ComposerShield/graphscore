@@ -32,6 +32,24 @@ commit; this does not complete Milestone 00.**
 
 ---
 
+## Current Engraving-Engine Status (2026-07-21)
+
+**Reviewer APPROVED. The engraving-engine spike is completed by this commit;
+this does not complete Milestone 00.**
+
+- The fresh reviewer returned APPROVED with no findings for the owned
+  semantic-layout direction recorded in ADR 0005.
+- Current checked evidence records 18 GTests, evaluator 15/15, normal and
+  ASan+UBSan CTest 1/1, and no sanitizer diagnostics. The narrow changed-measure
+  measurement was 18,297us normal and 59,389us ASan; it is not a production
+  latency claim. `spikes/m0/engraving-engine/evidence/README.md` and its
+  provenance log are authoritative for the command sequence and source manifest.
+- Direct VST3 hosting and cooked-format remain later, unchecked M0 phases. The
+  M0 acceptance, test/evidence, exit, and milestone-complete boxes remain
+  unchecked.
+
+---
+
 ## Historical Emergency-Handoff Context
 
 ### 1. Session Stop Reason and Mandate (historical)
@@ -377,13 +395,14 @@ Then enable VoiceOver (Cmd+F5) and navigate per ADR 0004 checklist.
 
 ## 9. Later Spike Salvage Inventory
 
-These spike directories are **scaffolds only, unreviewed, and out of
-order**. Do NOT commit them, mark them complete, or check their
-checklist boxes until Phase C is fully closed and their turn comes.
+VST3 hosting and cooked-format remain **scaffolds only, unreviewed, and out of
+order**. Do NOT commit them, mark them complete, or check their checklist boxes
+until their phase is reviewed. The engraving-engine entry below supersedes the
+historical partial-scaffold references above.
 
 | Spike | Status | Contents |
 |-------|--------|----------|
-| `spikes/m0/engraving-engine/` | Partial evaluator + SMuFL fallback stub | CMake scaffold, capability queries return false for unimplemented features, test stubs report FAIL. Verovio/Guido NOT integrated. |
+| `spikes/m0/engraving-engine/` | Completed in this commit — reviewer APPROVED | Owned semantic-layout proof, 18 GTests, 15/15 evaluator, normal and ASan+UBSan CTest 1/1 with no sanitizer diagnostics; ADR 0005 selects the fallback. This does not complete M0. |
 | `spikes/m0/vst3-hosting/` | Self-validating stubs (PLACEHOLDER) | CMake fetches VST3 SDK (`9fad9770f2...`, MIT), but all C++ source is stubs returning safe defaults. No real scanning/processing/editor. |
 | `spikes/m0/cooked-format/` | FlatBuffers + owned-format stubs | CMake scaffold with empty tests. Round-trip not implemented. Evaluation criteria listed but not measured. |
 

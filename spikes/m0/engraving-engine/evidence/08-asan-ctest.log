@@ -1,0 +1,11 @@
+command: ASAN_OPTIONS=detect_leaks=0 ctest --test-dir spikes/m0/engraving-engine/build-asan --output-on-failure
+
+Test project /Users/adamshield/dev/graphscore/spikes/m0/engraving-engine/build-asan
+    Start 1: engraving_layout_evaluation
+1/1 Test #1: engraving_layout_evaluation ......   Passed    0.29 sec
+
+100% tests passed out of 1
+
+Total Test time (real) =   0.29 sec
+
+No AddressSanitizer or UndefinedBehaviorSanitizer diagnostics were emitted.

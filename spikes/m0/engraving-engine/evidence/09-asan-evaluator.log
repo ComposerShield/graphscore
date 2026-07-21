@@ -1,0 +1,22 @@
+command: ASAN_OPTIONS=detect_leaks=0 spikes/m0/engraving-engine/build-asan/engraving_spike_evaluator
+
+=== Evaluating: Owned SMuFL fallback 0.3.1-spike ===
+  [PASS] Owned SMuFL fallback: initialization — initialization call completed
+  [PASS] Owned SMuFL fallback: interactive model — requires direct measure layout without page serialization
+  [PASS] Owned SMuFL fallback: basic single voice — 16 semantic elements
+  [PASS] Owned SMuFL fallback: four voices — four same-onset noteheads use separate collision columns
+  [PASS] Owned SMuFL fallback: incremental layout — preceding identities/geometry unchanged; work only visits changed measure
+  [PASS] Owned SMuFL fallback: tuplets — 3:2 ratio is retained and changes normalized tuplet timing versus 3:3
+  [PASS] Owned SMuFL fallback: tuplet actual counts — 3:2 and 4:2 retain actual/normal fields and exact normalized tuplet timing
+  [PASS] Owned SMuFL fallback: grace notes — grace steals time after its anchor; an unanchored first event is rejected
+  [PASS] Owned SMuFL fallback: clef/key/time changes — bass clef, three flats, and 3/8 glyphs emitted in appended measure
+  [PASS] Owned SMuFL fallback: ties — tie is retained as its own curve span
+  [PASS] Owned SMuFL fallback: slurs — slur is retained separately from tie geometry
+  [PASS] Owned SMuFL fallback: hairpins — crescendo opens right and diminuendo opens left in retained line geometry
+  [PASS] Owned SMuFL fallback: articulation placement — three articulation glyphs stack above the note with disjoint bounds
+  [PASS] Owned SMuFL fallback: hit testing — notehead identity and repeated hit ordering are deterministic
+  [PASS] Owned SMuFL fallback: arbitrary staff width — 128 and 384 unit staff fixtures remain bounded and adapt spacing
+
+Evaluation: ALL PASSED (15 criteria)
+
+No AddressSanitizer or UndefinedBehaviorSanitizer diagnostics were emitted.

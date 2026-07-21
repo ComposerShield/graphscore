@@ -41,10 +41,10 @@ The domain, scheduler, persistence, and C ABI must build without UI, audio-devic
 
 ### Engraving-engine spike
 
-- [ ] Time-box evaluation of embeddable engraving/layout engines that satisfy licensing and interactive editing needs.
-- [ ] Test incremental layout, four voices, tuplets, grace notes, clef/key/time changes, ties/slurs, hairpins, articulation placement, hit testing, and arbitrary node widths.
-- [ ] Reject page-oriented or serialization-only engines that cannot support low-latency direct manipulation.
-- [ ] If no candidate fits, record the owned semantic-layout fallback using SMuFL glyphs and a toolkit-neutral render list.
+- [x] Time-box evaluation of embeddable engraving/layout engines that satisfy licensing and interactive editing needs.
+- [x] Test incremental layout, four voices, tuplets, grace notes, clef/key/time changes, ties/slurs, hairpins, articulation placement, hit testing, and arbitrary node widths.
+- [x] Reject page-oriented or serialization-only engines that cannot support low-latency direct manipulation.
+- [x] If no candidate fits, record the owned semantic-layout fallback using SMuFL glyphs and a toolkit-neutral render list.
 
 ### Direct VST3 hosting spike
 

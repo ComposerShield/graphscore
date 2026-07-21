@@ -1,0 +1,13 @@
+command: spikes/m0/engraving-engine/build/engraving_spike_evaluator --measure
+
+measurement.fixture=64 measures, 1 voice, 4 eighth notes, staffWidth=320
+measurement.incremental_iterations=1000
+measurement.elapsed_us=18297
+measurement.changed_measure_work.visited_notes=4
+measurement.changed_measure_work.emitted_elements=27
+measurement.width_adaptation=128..384 verified by evaluator fixture
+measurement.verdict=PASS
+
+Interpretation: the changed measure layout visited only its four notes in each
+iteration. 18297 microseconds is an observational total on the recorded M1 Pro,
+not a production performance threshold.

@@ -1,0 +1,13 @@
+command: cmake --build spikes/m0/engraving-engine/build-asan
+
+[1/11] Building CXX object CMakeFiles/engraving_spike_lib.dir/src/smuf_fallback.cpp.o
+[2/11] Building CXX object CMakeFiles/engraving_spike_evaluator.dir/src/main.cpp.o
+[3/11] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[4/11] Building CXX object CMakeFiles/engraving_spike_lib.dir/src/engraving_evaluator.cpp.o
+[5/11] Linking CXX static library libengraving_spike_lib.a
+[6/11] Linking CXX executable engraving_spike_evaluator
+[7/11] Building CXX object CMakeFiles/engraving_spike_test.dir/tests/test_layout.cpp.o
+[8/11] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[9/11] Linking CXX static library lib/libgtest.a
+[10/11] Linking CXX static library lib/libgtest_main.a
+[11/11] Linking CXX executable engraving_spike_test

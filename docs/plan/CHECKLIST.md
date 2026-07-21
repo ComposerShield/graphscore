@@ -9,7 +9,7 @@ This source-controlled checklist tracks the phases and major steps in the milest
 - [x] Permissive dependency policy completed
 - [x] Architectural boundaries recorded
 - [x] Rendering and accessibility spike completed
-- [ ] Engraving-engine spike completed
+- [x] Engraving-engine spike completed
 - [ ] Direct VST3 hosting spike completed
 - [ ] Cooked-format spike completed
 - [ ] Acceptance criteria passed

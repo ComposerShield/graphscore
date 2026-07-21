@@ -1,0 +1,28 @@
+command: cmake --version; ninja --version; /usr/bin/c++ --version; sw_vers; uname -a; sysctl -n machdep.cpu.brand_string; date -u +%Y-%m-%dT%H:%M:%SZ; git rev-parse HEAD
+
+cmake version 4.4.0
+
+CMake suite maintained and supported by Kitware (kitware.com/cmake).
+ninja 1.13.2
+Apple clang version 17.0.0 (clang-1700.0.13.5)
+Target: arm64-apple-darwin24.6.0
+Thread model: posix
+InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+ProductName: macOS
+ProductVersion: 15.7.7
+BuildVersion: 24G720
+Darwin MacBookPro.home 24.6.0 Darwin Kernel Version 24.6.0: Tue Apr 21 20:19:01 PDT 2026; root:xnu-11417.140.69.710.16~1/RELEASE_ARM64_T6000 arm64
+Apple M1 Pro
+source manifest refreshed: 2026-07-21T08:49:47Z
+base commit: 1b118d524d05bc6b52be0cfb49185fbda5b863c8
+
+source manifest (SHA-256, after final source changes; evidence files excluded):
+29de61ffeee83969c55c47310e38772f7e89d8cb8f2e525063a96ee1e72c9972  CMakeLists.txt
+104b60aaa0a750486c5538f232e8f4847804feb25f98a9e6e0661b542cf55992  README.md
+36e13b853b6cfd1db1c413e61869b5c354f2f3f555f3cc4878f3717c1a12d288  src/engraving_candidate.hpp
+fbe03fc2090ece2c48858dbe5405c5f562d92b4acd5a40b908f02075517c3a58  src/engraving_evaluator.hpp
+dd3bddd6fc351c4b49f17f12789580ef335401a69601df8641f48b492314efde  src/engraving_evaluator.cpp
+8002d3fcb5dd466e6aab46b4d3fab6135ce24a76a501756dd7234debf479544e  src/smuf_fallback.hpp
+e4fc1dc6f39e7b296161c1815bea7433ddcf517f370528fe9325dc2047211957  src/smuf_fallback.cpp
+c9f0286afdc1792ca324096d0c25630aa9a729b7ee8ed7c6156da4ab9989ca88  src/main.cpp
+7914806b123ef05ac479f65c4317195669dc25e1242d48c673687dfc913f2f7f  tests/test_layout.cpp

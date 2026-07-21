@@ -11,6 +11,9 @@ CMakeUserPresets.json
 spikes/**/build*/
 spikes/**/build-*/
 
+# Generated rendering-spike raster output; textual evidence remains trackable.
+spikes/m0/rendering-accessibility/evidence/spike_output.ppm
+
 # IDE / editor artifacts
 .idea/
 .vs/

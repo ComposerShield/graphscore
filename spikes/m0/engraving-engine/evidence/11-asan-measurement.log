@@ -1,0 +1,15 @@
+command: ASAN_OPTIONS=detect_leaks=0 spikes/m0/engraving-engine/build-asan/engraving_spike_evaluator --measure
+
+measurement.fixture=64 measures, 1 voice, 4 eighth notes, staffWidth=320
+measurement.incremental_iterations=1000
+measurement.elapsed_us=59389
+measurement.changed_measure_work.visited_notes=4
+measurement.changed_measure_work.emitted_elements=27
+measurement.width_adaptation=128..384 verified by evaluator fixture
+measurement.verdict=PASS
+
+No AddressSanitizer or UndefinedBehaviorSanitizer diagnostics were emitted.
+
+Interpretation: the sanitizer-instrumented run has greater wall time as
+expected; it remains an observational fixture measurement, not a production
+performance threshold.

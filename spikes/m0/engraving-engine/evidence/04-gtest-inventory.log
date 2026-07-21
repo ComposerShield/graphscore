@@ -1,0 +1,26 @@
+command: spikes/m0/engraving-engine/build/engraving_spike_test --gtest_list_tests
+
+Running main() from /Users/adamshield/dev/graphscore/spikes/m0/engraving-engine/build/_deps/googletest-src/googletest/src/gtest_main.cc
+SmuflFallbackTest.
+  EmitsToolkitNeutralSemanticGlyphsAndGeometry
+  SeparatesFourSimultaneousVoices
+  RepresentsTupletsAndGraceNotes
+  RetainsTupletRatioAndUsesItForTiming
+  RetainsTupletActualCountAndUsesItForTiming
+  GraceStealsTimeFromItsPrecedingAnchor
+  DistinguishesTieAndSlurCurves
+  EmitsClefKeyAndTimeChangeState
+  EmitsCrescendoDiminuendoAndArticulations
+  HitTestingReturnsStableSemanticIdentity
+  IncrementalRelayoutPreservesPriorLayoutAndBoundsWork
+  AdaptsToArbitraryWidthsWithoutOutOfBoundsGeometry
+  ReservesFourVoiceColumnsAtNarrowWidthAndAppends
+  RejectsMalformedMeasuresWithoutGeometry
+  RejectsHostilePriorLayoutGeometry
+SmuflFallbackLifecycleTest.
+  RejectsLayoutBeforeInitialization
+EngravingEvaluatorTest.
+  EvaluatesOwnedFallbackAgainstEveryCriterion
+  RejectsMutatedOutputDespiteCapabilityFlags
+
+18 GTests total; all execute through the single CTest registration.
