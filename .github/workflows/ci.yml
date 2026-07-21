@@ -188,7 +188,7 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} --target audit_architecture
 
       - name: Test
-        run: ctest --preset ${{ matrix.preset }} --output-junit test-results.xml
+        run: ctest --preset ${{ matrix.preset }} --output-junit test-results.xml --timeout 180
 
       - name: Upload test report
         if: always()
@@ -290,7 +290,7 @@ jobs:
           ASAN_OPTIONS: abort_on_error=1:halt_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
           TSAN_OPTIONS: halt_on_error=1
-        run: ctest --preset ${{ matrix.preset }}
+        run: ctest --preset ${{ matrix.preset }} --timeout 180
 
       - name: Upload failure diagnostics
         if: failure()
@@ -334,4 +334,4 @@ jobs:
           echo "No writer dependency present."
 
       - name: Test
-        run: ctest --preset ci
+        run: ctest --preset ci --timeout 180
