@@ -120,8 +120,12 @@ jobs:
           - name: macOS arm64 (Release)
             runner: macos-14
             preset: ci
-          - name: macOS x86-64 (Release)
-            runner: macos-13
+          # Intel macOS retired by GitHub; M1 dropped it.
+          # - name: macOS x86-64 (Release)
+          #   runner: macos-13
+          #   preset: ci
+          - name: macOS arm64 (RelWithDebInfo, latest)
+            runner: macos-latest
             preset: ci
           - name: Linux x86-64 (Debug)
             runner: ubuntu-latest
