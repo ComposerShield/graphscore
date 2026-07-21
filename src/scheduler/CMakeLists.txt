@@ -6,6 +6,7 @@ add_library(graphscore_scheduler STATIC
 
 target_compile_features(graphscore_scheduler PRIVATE cxx_std_23)
 graphscore_apply_warnings(graphscore_scheduler)
+graphscore_apply_const_correctness(graphscore_scheduler)
 
 target_include_directories(graphscore_scheduler
   PUBLIC

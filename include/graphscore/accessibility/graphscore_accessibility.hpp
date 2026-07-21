@@ -8,7 +8,7 @@
 namespace graphscore {
 
 class AccessibilityTree {
-public:
+ public:
   AccessibilityTree() = default;
 };
 

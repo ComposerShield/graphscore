@@ -7,5 +7,7 @@ namespace {
 constexpr int kAccessibilityVersion = 1;
 }  // namespace
 
-int accessibility_version() { return kAccessibilityVersion; }
+int accessibility_version() {
+  return kAccessibilityVersion;
+}
 }  // namespace graphscore

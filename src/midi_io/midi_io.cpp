@@ -7,5 +7,7 @@ namespace {
 constexpr int kMidiIOVersion = 1;
 }  // namespace
 
-int midi_io_version() { return kMidiIOVersion; }
+int midi_io_version() {
+  return kMidiIOVersion;
+}
 }  // namespace graphscore

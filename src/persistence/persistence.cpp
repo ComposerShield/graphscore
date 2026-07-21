@@ -7,5 +7,7 @@ namespace {
 constexpr int kPersistenceVersion = 1;
 }  // namespace
 
-int persistence_version() { return kPersistenceVersion; }
+int persistence_version() {
+  return kPersistenceVersion;
+}
 }  // namespace graphscore

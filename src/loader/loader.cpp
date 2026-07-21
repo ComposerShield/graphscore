@@ -7,5 +7,7 @@ namespace {
 constexpr int kLoaderVersion = 1;
 }  // namespace
 
-int loader_version() { return kLoaderVersion; }
+int loader_version() {
+  return kLoaderVersion;
+}
 }  // namespace graphscore

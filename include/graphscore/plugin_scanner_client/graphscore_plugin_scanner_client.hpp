@@ -7,7 +7,7 @@
 namespace graphscore {
 
 class PluginScannerClient {
-public:
+ public:
   PluginScannerClient() = default;
 };
 

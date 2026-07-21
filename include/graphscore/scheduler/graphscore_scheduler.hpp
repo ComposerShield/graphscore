@@ -2,13 +2,13 @@
 
 #pragma once
 
-#include <graphscore/core/graphscore_core.hpp>
 #include <graphscore/cooked_format/graphscore_cooked_format.hpp>
+#include <graphscore/core/graphscore_core.hpp>
 
 namespace graphscore {
 
 class Scheduler {
-public:
+ public:
   Scheduler() = default;
 };
 

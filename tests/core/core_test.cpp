@@ -12,10 +12,11 @@ TEST(CoreTest, UuidDefaultIsZero) {
 }
 
 TEST(CoreTest, UuidGenerateIsNonZero) {
-  graphscore::Uuid u = graphscore::Uuid::generate();
-  bool any_nonzero = false;
+  graphscore::Uuid u           = graphscore::Uuid::generate();
+  bool             any_nonzero = false;
   for (auto b : u.bytes()) {
-    if (b != 0) any_nonzero = true;
+    if (b != 0)
+      any_nonzero = true;
   }
   EXPECT_TRUE(any_nonzero);
 }

@@ -6,6 +6,7 @@ add_executable(graphscore_writer_app
 
 target_compile_features(graphscore_writer_app PRIVATE cxx_std_23)
 graphscore_apply_warnings(graphscore_writer_app)
+graphscore_apply_const_correctness(graphscore_writer_app)
 
 target_include_directories(graphscore_writer_app
   PRIVATE
@@ -38,6 +39,7 @@ add_executable(graphscore_plugin_scanner
 
 target_compile_features(graphscore_plugin_scanner PRIVATE cxx_std_23)
 graphscore_apply_warnings(graphscore_plugin_scanner)
+graphscore_apply_const_correctness(graphscore_plugin_scanner)
 
 target_include_directories(graphscore_plugin_scanner
   PRIVATE

@@ -2,13 +2,13 @@
 
 #pragma once
 
-#include <graphscore/domain/graphscore_domain.hpp>
 #include <graphscore/audio_device/graphscore_audio_device.hpp>
+#include <graphscore/domain/graphscore_domain.hpp>
 
 namespace graphscore {
 
 class Vst3Host {
-public:
+ public:
   Vst3Host() = default;
 };
 

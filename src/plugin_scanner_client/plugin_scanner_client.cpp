@@ -7,5 +7,7 @@ namespace {
 constexpr int kPluginScannerClientVersion = 1;
 }  // namespace
 
-int plugin_scanner_client_version() { return kPluginScannerClientVersion; }
+int plugin_scanner_client_version() {
+  return kPluginScannerClientVersion;
+}
 }  // namespace graphscore

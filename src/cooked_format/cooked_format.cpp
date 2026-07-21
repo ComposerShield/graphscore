@@ -7,5 +7,7 @@ namespace {
 constexpr int kFormatVersion = 1;
 }  // namespace
 
-int format_version() { return kFormatVersion; }
+int format_version() {
+  return kFormatVersion;
+}
 }  // namespace graphscore::cooked_format

@@ -7,7 +7,7 @@
 namespace graphscore {
 
 class AudioDevice {
-public:
+ public:
   AudioDevice() = default;
 };
 

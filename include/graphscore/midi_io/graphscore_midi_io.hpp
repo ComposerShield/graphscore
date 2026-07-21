@@ -7,7 +7,7 @@
 namespace graphscore {
 
 class MidiIO {
-public:
+ public:
   MidiIO() = default;
 };
 

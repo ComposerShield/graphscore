@@ -2,6 +2,6 @@
 
 #pragma once
 
-#include <graphscore/core/uuid.hpp>
 #include <graphscore/core/rational.hpp>
 #include <graphscore/core/result.hpp>
+#include <graphscore/core/uuid.hpp>

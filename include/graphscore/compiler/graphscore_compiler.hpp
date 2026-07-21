@@ -2,13 +2,13 @@
 
 #pragma once
 
-#include <graphscore/domain/graphscore_domain.hpp>
 #include <graphscore/cooked_format/graphscore_cooked_format.hpp>
+#include <graphscore/domain/graphscore_domain.hpp>
 
 namespace graphscore {
 
 class Compiler {
-public:
+ public:
   Compiler() = default;
 };
 

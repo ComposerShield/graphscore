@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# GraphScore formatting. Google style is the base; the deviations below
+# match the conventions already present in the tree (aligned initializer
+# runs in the C ABI shims, 80-column limit, sorted include blocks).
+#
+# Verified by `cmake --build --preset debug --target lint` and by the
+# tracked .githooks/pre-commit hook. CI runs the same check independently.
+
+Language: Cpp
+BasedOnStyle: Google
+
+ColumnLimit: 80
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+AccessModifierOffset: -1
+DerivePointerAlignment: false
+PointerAlignment: Left
+
+# The C ABI shim bodies and the C ABI header rely on aligned runs; keeping
+# these on means clang-format preserves that layout instead of collapsing it.
+AlignConsecutiveAssignments: Consecutive
+AlignConsecutiveDeclarations: Consecutive
+
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve
+
+SeparateDefinitionBlocks: Always
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+
+InsertNewlineAtEOF: true

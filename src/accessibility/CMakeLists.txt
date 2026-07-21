@@ -6,6 +6,7 @@ add_library(graphscore_accessibility STATIC
 
 target_compile_features(graphscore_accessibility PRIVATE cxx_std_23)
 graphscore_apply_warnings(graphscore_accessibility)
+graphscore_apply_const_correctness(graphscore_accessibility)
 
 target_include_directories(graphscore_accessibility
   PUBLIC

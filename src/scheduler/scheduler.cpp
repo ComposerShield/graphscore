@@ -7,5 +7,7 @@ namespace {
 constexpr int kSchedulerVersion = 1;
 }  // namespace
 
-int scheduler_version() { return kSchedulerVersion; }
+int scheduler_version() {
+  return kSchedulerVersion;
+}
 }  // namespace graphscore

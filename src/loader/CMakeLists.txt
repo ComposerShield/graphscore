@@ -6,6 +6,7 @@ add_library(graphscore_loader STATIC
 
 target_compile_features(graphscore_loader PRIVATE cxx_std_23)
 graphscore_apply_warnings(graphscore_loader)
+graphscore_apply_const_correctness(graphscore_loader)
 
 target_include_directories(graphscore_loader
   PUBLIC

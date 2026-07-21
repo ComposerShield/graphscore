@@ -7,5 +7,7 @@ namespace {
 constexpr int kCompilerVersion = 1;
 }  // namespace
 
-int compiler_version() { return kCompilerVersion; }
+int compiler_version() {
+  return kCompilerVersion;
+}
 }  // namespace graphscore

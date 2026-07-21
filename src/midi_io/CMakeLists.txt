@@ -6,6 +6,7 @@ add_library(graphscore_midi_io STATIC
 
 target_compile_features(graphscore_midi_io PRIVATE cxx_std_23)
 graphscore_apply_warnings(graphscore_midi_io)
+graphscore_apply_const_correctness(graphscore_midi_io)
 
 target_include_directories(graphscore_midi_io
   PUBLIC

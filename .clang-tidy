@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# GraphScore clang-tidy configuration. The check selection implements the
+# const-correctness policy in AGENTS.md ("C++23 and const-correctness") and
+# docs/plan/01-toolchain-ci.md: prefer constexpr, otherwise const, narrow
+# scopes, immutable data flow, const member functions.
+#
+# Documented exceptions live in cmake/ConstCorrectness.cmake alongside the
+# CMake wiring; the NOLINT vocabulary for them is listed there.
+#
+# Third-party sources are excluded via HeaderFilterRegex plus the
+# `.clang-tidy` that each FetchContent dependency ships (or the absence of
+# any GraphScore include path in its translation units).
+
+Checks: >
+  -*,
+
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+
+  cppcoreguidelines-avoid-non-const-global-variables,
+  cppcoreguidelines-init-variables,
+  cppcoreguidelines-prefer-member-initializer,
+  cppcoreguidelines-pro-type-const-cast,
+
+  misc-const-correctness,
+  misc-unused-parameters,
+  misc-unused-using-decls,
+
+  modernize-use-constraints,
+  modernize-use-nodiscard,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-using,
+
+  performance-*,
+  -performance-avoid-endl,
+
+  readability-const-return-type,
+  readability-implicit-bool-conversion,
+  readability-make-member-function-const,
+  readability-non-const-parameter,
+  readability-qualified-auto,
+  readability-static-accessed-through-instance,
+  readability-avoid-const-params-in-decls
+
+WarningsAsErrors: '*'
+
+# Only diagnose GraphScore-owned headers. FetchContent dependency headers are
+# consumed with -isystem and must never fail a GraphScore build (ADR 0001,
+# "Warning isolation").
+HeaderFilterRegex: '.*/(src|include|apps|tools|tests)/.*'
+
+FormatStyle: file
+
+CheckOptions:
+  # `misc-const-correctness` only transforms locals; it must not rewrite
+  # pointee constness, which would change realtime buffer handoff semantics.
+  - key: misc-const-correctness.AnalyzeValues
+    value: 'true'
+  - key: misc-const-correctness.AnalyzeReferences
+    value: 'true'
+  - key: misc-const-correctness.WarnPointersAsValues
+    value: 'false'
+  - key: misc-const-correctness.TransformPointersAsValues
+    value: 'false'
+
+  # Meaningless `const` on returned values and on by-value declaration
+  # parameters adds friction without safety; both checks below flag it so it
+  # never enters the codebase (AGENTS.md, "Do not add const to interfaces or
+  # return values where it does not increase safety").
+  - key: readability-const-return-type.IgnoreMacros
+    value: 'false'
+
+  - key: readability-implicit-bool-conversion.AllowPointerConditions
+    value: 'true'
+
+  - key: misc-unused-parameters.StrictMode
+    value: 'true'

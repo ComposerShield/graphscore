@@ -7,7 +7,7 @@
 namespace graphscore {
 
 class AccessibilityPlatform {
-public:
+ public:
   AccessibilityPlatform() = default;
 };
 

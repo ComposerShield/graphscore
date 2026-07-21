@@ -113,10 +113,9 @@ GS_API gs_result_t gs_player_reset(gs_player_t* /*player*/) {
   return r;
 }
 
-GS_API gs_result_t gs_player_query_capacity(const gs_player_t* /*player*/,
-                                            uint32_t /*max_block_size*/,
-                                            uint32_t /*max_input_events*/,
-                                            uint32_t* out_required_output_capacity) {
+GS_API gs_result_t gs_player_query_capacity(
+    const gs_player_t* /*player*/, uint32_t /*max_block_size*/,
+    uint32_t /*max_input_events*/, uint32_t* out_required_output_capacity) {
   if (out_required_output_capacity != nullptr) {
     *out_required_output_capacity = 0;
   }
@@ -142,9 +141,9 @@ GS_API gs_result_t gs_player_process(gs_player_t* /*player*/,
 GS_API gs_result_t gs_player_poll_diagnostics(const gs_player_t* /*player*/,
                                               gs_diagnostics_t* out_diag) {
   if (out_diag != nullptr) {
-    out_diag->size    = sizeof(*out_diag);
-    out_diag->version = 1;
-    out_diag->dropped_fifo_events    = 0;
+    out_diag->size                      = sizeof(*out_diag);
+    out_diag->version                   = 1;
+    out_diag->dropped_fifo_events       = 0;
     out_diag->undersized_output_retries = 0;
   }
   gs_result_t r{};

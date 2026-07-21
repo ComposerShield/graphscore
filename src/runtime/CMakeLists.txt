@@ -6,6 +6,7 @@ add_library(graphscore_runtime SHARED
 
 target_compile_features(graphscore_runtime PRIVATE cxx_std_23)
 graphscore_apply_warnings(graphscore_runtime)
+graphscore_apply_const_correctness(graphscore_runtime)
 
 target_compile_definitions(graphscore_runtime PRIVATE GS_BUILDING_RUNTIME)
 

@@ -7,5 +7,7 @@ namespace {
 constexpr int kCanvasVersion = 1;
 }  // namespace
 
-int canvas_version() { return kCanvasVersion; }
+int canvas_version() {
+  return kCanvasVersion;
+}
 }  // namespace graphscore

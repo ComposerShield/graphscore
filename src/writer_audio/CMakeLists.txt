@@ -6,6 +6,7 @@ add_library(graphscore_writer_audio STATIC
 
 target_compile_features(graphscore_writer_audio PRIVATE cxx_std_23)
 graphscore_apply_warnings(graphscore_writer_audio)
+graphscore_apply_const_correctness(graphscore_writer_audio)
 
 target_include_directories(graphscore_writer_audio
   PUBLIC

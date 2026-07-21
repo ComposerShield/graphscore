@@ -7,7 +7,7 @@
 namespace graphscore {
 
 class Rendering {
-public:
+ public:
   Rendering() = default;
 };
 

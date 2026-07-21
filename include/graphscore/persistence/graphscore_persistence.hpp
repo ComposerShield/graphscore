@@ -2,14 +2,14 @@
 
 #pragma once
 
-#include <graphscore/domain/graphscore_domain.hpp>
-#include <graphscore/cooked_format/graphscore_cooked_format.hpp>
 #include <graphscore/compiler/graphscore_compiler.hpp>
+#include <graphscore/cooked_format/graphscore_cooked_format.hpp>
+#include <graphscore/domain/graphscore_domain.hpp>
 
 namespace graphscore {
 
 class Persistence {
-public:
+ public:
   Persistence() = default;
 };
 

@@ -6,6 +6,7 @@ add_library(graphscore_vst3_host STATIC
 
 target_compile_features(graphscore_vst3_host PRIVATE cxx_std_23)
 graphscore_apply_warnings(graphscore_vst3_host)
+graphscore_apply_const_correctness(graphscore_vst3_host)
 
 target_include_directories(graphscore_vst3_host
   PUBLIC

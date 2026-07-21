@@ -7,7 +7,7 @@
 namespace graphscore {
 
 class NotationLayout {
-public:
+ public:
   NotationLayout() = default;
 };
 

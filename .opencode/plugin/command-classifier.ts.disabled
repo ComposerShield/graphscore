@@ -1,0 +1,141 @@
+import type { Plugin } from "@opencode-ai/plugin"
+import OpenAI from "openai"
+import { z } from "zod"
+
+// Replicates Claude Code's "auto" permission mode for the bash tool:
+// a classifier decides per-command whether to auto-approve, fall back to the
+// normal permission prompt, or hard-block. Requires `permission.bash: "ask"`
+// in opencode.json so every bash command routes through the permission.ask hook.
+//
+// Auth: uses DEEPSEEK_API_KEY from the environment opencode runs in (DeepSeek's
+// OpenAI-compatible endpoint). If no credentials are available, classification
+// fails closed and every command simply prompts as usual.
+
+const MODEL = process.env["OPENCODE_CLASSIFIER_MODEL"] ?? "deepseek-v4-flash"
+// DeepSeek has no reasoning-effort levels; the analog is thinking on/off.
+// Defaults to "disabled" for latency — DeepSeek's own default is enabled.
+const THINKING = process.env["OPENCODE_CLASSIFIER_THINKING"] ?? "disabled"
+const CLASSIFY_TIMEOUT_MS = 8_000
+
+const Verdict = z.object({
+  verdict: z.enum(["safe", "unsafe"]),
+  reason: z.string(),
+})
+
+const SYSTEM = `You are a command-safety classifier for a coding agent's shell tool.
+Given a shell command about to run in a developer's project directory, decide if it is safe to run without asking the user.
+
+Classify as "safe" only when the command is read-only or trivially reversible and scoped to the project: inspecting files, searching, listing, git reads, running tests or linters, building, writing files inside the working directory.
+
+Classify as "unsafe" when the command could: delete or overwrite data outside the working directory, modify system or shell configuration, install or uninstall software globally, change permissions or ownership broadly, push/publish/deploy to remote services, send network requests that mutate remote state, expose secrets, run obfuscated or encoded payloads, or when you cannot confidently determine what it does.
+
+When uncertain, answer "unsafe" — that only means the user will be asked, not that the command is rejected.
+
+Respond with a JSON object of exactly this shape: {"verdict": "safe" | "unsafe", "reason": "<one short sentence>"}`
+
+// Fast path: simple read-only commands approved without an API round-trip.
+// Only applies when the command has no shell control operators.
+const SHELL_OPERATORS = /[;&|><`]|\$\(/
+const SAFE_PATTERNS: RegExp[] = [
+  /^(ls|pwd|cat|head|tail|wc|file|stat|which|whoami|date|env|printenv|du|df|uname)(\s|$)/,
+  /^git\s+(status|log|diff|show|branch|remote|blame|describe|rev-parse|stash\s+list)(\s|$)/,
+  /^(grep|rg|fd)\s/,
+  /^find\s(?!.*(-delete|-exec))/,
+  /^(node|python3?|ruby)\s+--version$/,
+  /^(npm|yarn|pnpm|bun)\s+(ls|list|outdated|why|view|info)(\s|$)/,
+]
+
+// Hard block: never auto-approved, and blocked in tool.execute.before even if
+// a permission rule would have allowed it.
+const DENY_PATTERNS: RegExp[] = [
+  /\brm\s+(-[^\s]*\s+)*(\/|~\/?|\.\.)(\s|$)/, // rm targeting /, ~, or ..
+  /\bgit\s+push\b.*(--force|-f)\b/,
+  /\b(mkfs|shutdown|reboot)\b/,
+  /\bdd\s+.*of=\/dev\//,
+  /\bchmod\s+(-R\s+)?777\s+\//,
+  /(curl|wget)\b[^|]*\|\s*(ba)?sh\b/, // pipe-to-shell installers
+]
+
+const isFastSafe = (cmd: string) =>
+  !SHELL_OPERATORS.test(cmd) && SAFE_PATTERNS.some((re) => re.test(cmd.trim()))
+
+const isDenied = (cmd: string) => DENY_PATTERNS.some((re) => re.test(cmd))
+
+export const CommandClassifier: Plugin = async ({ directory }) => {
+  // Constructed lazily: the constructor throws if the API key is unset, and
+  // that must fail a single classification (→ prompt), not plugin loading.
+  let deepseek: OpenAI | undefined
+  const cache = new Map<string, "safe" | "unsafe">()
+
+  async function classify(command: string): Promise<"safe" | "unsafe"> {
+    const cached = cache.get(command)
+    if (cached) return cached
+    let verdict: "safe" | "unsafe" = "unsafe" // fail closed → user is prompted
+    try {
+      deepseek ??= new OpenAI({
+        apiKey: process.env["DEEPSEEK_API_KEY"],
+        baseURL: "https://api.deepseek.com",
+      })
+      const response = await deepseek.chat.completions.create(
+        {
+          model: MODEL,
+          max_tokens: 512,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: SYSTEM },
+            {
+              role: "user",
+              content: `Working directory: ${directory}\nCommand:\n${command}`,
+            },
+          ],
+          // DeepSeek extension, not in the OpenAI types; the SDK passes
+          // unknown body fields through.
+          ...({ thinking: { type: THINKING } } as object),
+        },
+        { timeout: CLASSIFY_TIMEOUT_MS, maxRetries: 0 },
+      )
+      const text = response.choices[0]?.message?.content ?? "{}"
+      const parsed = Verdict.safeParse(JSON.parse(text))
+      verdict = parsed.success ? parsed.data.verdict : "unsafe"
+    } catch {
+      // API unreachable, no credentials, timeout — leave as "unsafe" (prompt)
+    }
+    cache.set(command, verdict)
+    return verdict
+  }
+
+  return {
+    "permission.ask": async (input, output) => {
+      if (input.type !== "bash") return
+      const command =
+        typeof input.metadata?.["command"] === "string"
+          ? (input.metadata["command"] as string)
+          : input.title
+      if (!command) return
+
+      if (isDenied(command)) {
+        output.status = "deny"
+        return
+      }
+      if (isFastSafe(command) || (await classify(command)) === "safe") {
+        output.status = "allow"
+        return
+      }
+      // leave output.status as "ask" — the user decides
+    },
+
+    // Backstop: even if a permission rule (or a prior "always allow") lets the
+    // call through, hard-denied commands never execute. Throwing here blocks
+    // the tool call and returns the message to the model.
+    "tool.execute.before": async (input, output) => {
+      if (input.tool !== "bash") return
+      const command = output.args?.command
+      if (typeof command === "string" && isDenied(command)) {
+        throw new Error(
+          `Blocked by command-classifier plugin: "${command}" matches a hard-deny pattern. ` +
+            `Rephrase the command or ask the user to run it manually.`,
+        )
+      }
+    },
+  }
+}

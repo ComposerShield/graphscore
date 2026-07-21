@@ -7,5 +7,7 @@ namespace {
 constexpr int kDomainVersion = 1;
 }  // namespace
 
-int domain_version() { return kDomainVersion; }
+int domain_version() {
+  return kDomainVersion;
+}
 }  // namespace graphscore

@@ -6,6 +6,7 @@ add_library(graphscore_audio_device STATIC
 
 target_compile_features(graphscore_audio_device PRIVATE cxx_std_23)
 graphscore_apply_warnings(graphscore_audio_device)
+graphscore_apply_const_correctness(graphscore_audio_device)
 
 target_include_directories(graphscore_audio_device
   PUBLIC

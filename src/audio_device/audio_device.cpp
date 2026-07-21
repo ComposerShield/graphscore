@@ -7,5 +7,7 @@ namespace {
 constexpr int kAudioDeviceVersion = 1;
 }  // namespace
 
-int audio_device_version() { return kAudioDeviceVersion; }
+int audio_device_version() {
+  return kAudioDeviceVersion;
+}
 }  // namespace graphscore

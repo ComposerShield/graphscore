@@ -7,5 +7,7 @@ namespace {
 constexpr int kWriterAudioVersion = 1;
 }  // namespace
 
-int writer_audio_version() { return kWriterAudioVersion; }
+int writer_audio_version() {
+  return kWriterAudioVersion;
+}
 }  // namespace graphscore

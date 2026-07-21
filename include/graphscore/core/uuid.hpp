@@ -9,24 +9,31 @@
 namespace graphscore {
 
 class Uuid {
-public:
+ public:
   static constexpr std::size_t kSize = 16;
 
   Uuid() = default;
+
   explicit Uuid(const std::array<std::uint8_t, kSize>& bytes) : bytes_(bytes) {}
 
-  [[nodiscard]] constexpr const std::array<std::uint8_t, kSize>& bytes() const noexcept {
+  [[nodiscard]] constexpr const std::array<std::uint8_t, kSize>& bytes()
+      const noexcept {
     return bytes_;
   }
 
-  [[nodiscard]] bool operator==(const Uuid& other) const noexcept { return bytes_ == other.bytes_; }
-  [[nodiscard]] bool operator!=(const Uuid& other) const noexcept { return !(*this == other); }
+  [[nodiscard]] bool operator==(const Uuid& other) const noexcept {
+    return bytes_ == other.bytes_;
+  }
+
+  [[nodiscard]] bool operator!=(const Uuid& other) const noexcept {
+    return !(*this == other);
+  }
 
   [[nodiscard]] std::string to_string() const;
 
   static Uuid generate();
 
-private:
+ private:
   std::array<std::uint8_t, kSize> bytes_{};
 };
 

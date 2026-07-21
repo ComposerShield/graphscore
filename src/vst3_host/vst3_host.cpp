@@ -7,5 +7,7 @@ namespace {
 constexpr int kVst3HostVersion = 1;
 }  // namespace
 
-int vst3_host_version() { return kVst3HostVersion; }
+int vst3_host_version() {
+  return kVst3HostVersion;
+}
 }  // namespace graphscore

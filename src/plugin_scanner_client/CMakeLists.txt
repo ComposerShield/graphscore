@@ -6,6 +6,7 @@ add_library(graphscore_plugin_scanner_client STATIC
 
 target_compile_features(graphscore_plugin_scanner_client PRIVATE cxx_std_23)
 graphscore_apply_warnings(graphscore_plugin_scanner_client)
+graphscore_apply_const_correctness(graphscore_plugin_scanner_client)
 
 target_include_directories(graphscore_plugin_scanner_client
   PUBLIC

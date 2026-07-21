@@ -7,5 +7,7 @@ namespace {
 constexpr int kRuntimeImplVersion = 1;
 }  // namespace
 
-int runtime_impl_version() { return kRuntimeImplVersion; }
+int runtime_impl_version() {
+  return kRuntimeImplVersion;
+}
 }  // namespace graphscore

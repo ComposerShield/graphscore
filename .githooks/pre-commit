@@ -1,0 +1,70 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# GraphScore pre-commit hook. Runs cpplint and a clang-format verification
+# pass over the staged GraphScore-owned sources only, using the same
+# CPPLINT.cfg and .clang-format that the `lint` CMake target and CI use.
+#
+# Install with:  ./scripts/bootstrap.sh
+#
+# CI runs the same two checks over the whole tree independently of this hook,
+# so a contributor who has not installed it — or who bypasses it with
+# `git commit --no-verify` — still cannot merge unformatted code.
+#
+# POSIX sh, no bashisms: Git invokes hooks with /bin/sh.
+
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+# Staged files that are added/copied/modified/renamed (never deleted), under
+# the GraphScore-owned source directories, with a C/C++ extension.
+staged=$(git diff --cached --name-only --diff-filter=ACMR -z \
+  | tr '\0' '\n' \
+  | grep -E '^(src|include|apps|tools|tests)/.*\.(c|h|cpp|hpp)$' || true)
+
+if [ -z "$staged" ]; then
+  exit 0
+fi
+
+status=0
+
+# --- cpplint --------------------------------------------------------------
+
+if command -v cpplint >/dev/null 2>&1; then
+  # shellcheck disable=SC2086
+  if ! echo "$staged" | xargs cpplint --quiet; then
+    echo "pre-commit: cpplint reported violations." >&2
+    status=1
+  fi
+else
+  echo "pre-commit: cpplint not found, skipping (install: pip install cpplint)." >&2
+fi
+
+# --- clang-format ---------------------------------------------------------
+
+clang_format=""
+if command -v clang-format >/dev/null 2>&1; then
+  clang_format=clang-format
+elif [ -x /Library/Developer/CommandLineTools/usr/bin/clang-format ]; then
+  # Apple Command Line Tools ship clang-format but do not put it on PATH.
+  clang_format=/Library/Developer/CommandLineTools/usr/bin/clang-format
+fi
+
+if [ -n "$clang_format" ]; then
+  # shellcheck disable=SC2086
+  if ! echo "$staged" | xargs "$clang_format" --dry-run -Werror; then
+    echo "pre-commit: unformatted files. Fix with: $clang_format -i <file>" >&2
+    status=1
+  fi
+else
+  echo "pre-commit: clang-format not found, skipping (install LLVM)." >&2
+fi
+
+if [ "$status" -ne 0 ]; then
+  echo "pre-commit: commit rejected. Re-run after fixing, or use" >&2
+  echo "            'git commit --no-verify' to defer to CI." >&2
+fi
+
+exit "$status"

@@ -7,5 +7,7 @@ namespace {
 constexpr int kNotationVersion = 1;
 }  // namespace
 
-int notation_version() { return kNotationVersion; }
+int notation_version() {
+  return kNotationVersion;
+}
 }  // namespace graphscore
