@@ -54,8 +54,11 @@ cmake --build --preset debug
 # Run tests.
 ctest --preset debug --output-on-failure
 
-# Other presets: release, asan-ubsan, tsan, ci.
+# Other presets: release, asan-ubsan, tsan, ci (macOS/Linux, Clang).
 cmake --preset asan-ubsan && cmake --build --preset asan-ubsan && ctest --preset asan-ubsan
+
+# Windows uses clang-cl via the *-windows presets: debug-windows,
+# release-windows, ci-windows. ASan/TSan are not provided on Windows.
 
 # Lint (also runs in the pre-commit hook and in CI).
 cmake --build --preset debug --target lint

@@ -852,6 +852,36 @@ all text-facing tests; no system-font fallback is permitted.
 
 ---
 
+### 11. GoogleTest — Unit Test Framework (Production, M1)
+
+| Property | Value |
+|----------|-------|
+| Repository | https://github.com/google/googletest |
+| Pinned commit SHA | `6910c9d9165801d8827d628cb72eb7ea9dd538c5` (release 1.16.0) |
+| License | BSD 3-Clause |
+| License URL at SHA | https://raw.githubusercontent.com/google/googletest/6910c9d9165801d8827d628cb72eb7ea9dd538c5/LICENSE |
+| Committed license | `docs/licenses/GoogleTest-BSD-3-Clause.txt` (verified byte-identical to the pinned-SHA license at M1 promotion) |
+| License SPDX | BSD-3-Clause |
+| Patent grant | None stated in BSD 3-Clause |
+| Notices | Copyright 2008, Google Inc. Retain the BSD 3-Clause copyright, conditions, and disclaimer when a binary distribution embeds compiled test binaries (test executables are development-only artifacts and are not shipped in `0.1.0` product archives). |
+| Build tool integration | `FetchContent_Declare(googletest GIT_TAG 6910c9d9165801d8827d628cb72eb7ea9dd538c5)` in `cmake/dependencies.cmake`. `BUILD_GMOCK=OFF` (GraphScore does not use gMock). `INSTALL_GTEST=OFF`. `gtest_force_shared_crt` set `ON` on Windows to match the writer/runtime MSVC runtime selection. Supports `FETCHCONTENT_SOURCE_DIR_GOOGLETEST` override for offline builds. |
+| Transitive closure | None. Only `GTest::gtest` and `GTest::gtest_main` targets are consumed; gMock is disabled at the source. |
+
+**Decision**: **POLICY-CLEARED.** This entry supersedes the prior spike-only
+GoogleTest note (`docs/NOTICES.md` #13): GoogleTest is promoted from
+spike-only to the production unit test framework required by every
+milestone's Definition Of Done, per ADR 0003 §2.3. Test executables link
+`GTest::gtest_main` and are development/CI-only artifacts — they are never
+part of a shipped writer or runtime binary distribution, so the BSD 3-Clause
+notice obligation applies only to development/CI environments, not `0.1.0`
+release archives.
+
+Named test-executable targets (`graphscore_<component>_test` per production
+CMake target) and their permitted edges are defined in ADR 0003 §2.1/§2.2 as
+amended alongside the M1 target-DAG implementation.
+
+---
+
 ## Summary Matrix
 
 | Category | Candidate | Status | SHA |
@@ -868,6 +898,7 @@ all text-facing tests; no system-font fallback is permitted.
 | VST3 | VST3 SDK | DEFERRED | To be pinned |
 | SMuFL font | Bravura | POLICY-CLEARED (spike) | `02e8ed29a29115df35007d1178cebaeee26c20e1` |
 | Text font | Noto Sans | POLICY-CLEARED (spike) | `ffebf8c1ee449e544955a7e813c54f9b73848eac` |
+| Test framework | GoogleTest | POLICY-CLEARED | `6910c9d9165801d8827d628cb72eb7ea9dd538c5` |
 
 ## CMake Adapters Required (M1 Implementation Gates)
 
@@ -880,6 +911,7 @@ all text-facing tests; no system-font fallback is permitted.
 | PortAudio | `cmake/PortAudio.cmake` — sets all options explicitly per platform | PROVISIONAL |
 | RtMidi | `cmake/RtMidi.cmake` — sets all API flags explicitly per platform | PROVISIONAL |
 | ThorVG, accesskit-c | Adapter required (excluded from default closure) | PROVISIONAL (excluded) |
+| GoogleTest | `cmake/dependencies.cmake` — `BUILD_GMOCK=OFF`, `INSTALL_GTEST=OFF`, `gtest_force_shared_crt` on Windows | POLICY-CLEARED |
 
 ## License Inventory
 

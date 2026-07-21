@@ -23,7 +23,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 ## Milestone 01: Toolchain And CI Foundation
 
 - [ ] [Milestone 01 complete](01-toolchain-ci.md)
-- [ ] Dependencies completed
+- [x] Dependencies completed
 - [ ] Repository structure created
 - [ ] Git source control initialized and required project/planning files tracked
 - [x] Root `AGENTS.md` created and validated

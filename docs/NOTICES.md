@@ -378,19 +378,19 @@ https://raw.githubusercontent.com/freetype/freetype/f01dec5e676847267834b881b25f
 
 ---
 
-## 13. GoogleTest — Engraving Spike Test Framework
+## 13. GoogleTest — Production Unit Test Framework
 
 | Field | Detail |
 |-------|--------|
-| **Status** | Spike-only test dependency. Not in the default writer/runtime closure. |
+| **Status** | **POLICY-CLEARED.** Promoted in Milestone 01 (ADR 0002 §11, ADR 0003 §2.3) from the earlier M0 spike-only note to the production test framework used by every GraphScore-owned target's test suite. |
 | **Repository** | https://github.com/google/googletest |
 | **Pinned SHA** | `6910c9d9165801d8827d628cb72eb7ea9dd538c5` (1.16.0) |
 | **License** | BSD 3-Clause |
 | **License file at SHA** | https://raw.githubusercontent.com/google/googletest/6910c9d9165801d8827d628cb72eb7ea9dd538c5/LICENSE |
 | **Committed license** | `docs/licenses/GoogleTest-BSD-3-Clause.txt` |
 | **Patent grant** | None stated in the BSD 3-Clause license. |
-| **Required notices** | Copyright 2008, Google Inc. Retain the BSD 3-Clause copyright, conditions, and disclaimer when distributing a binary that includes it. This is not active for GraphScore product artifacts because the dependency is quarantined to the M0 spike. |
-| **Transitive closure** | None enabled by the spike: `BUILD_GMOCK=OFF`, and only `GTest::gtest_main` is linked by the standalone test executable. |
+| **Required notices** | Copyright 2008, Google Inc. Retain the BSD 3-Clause copyright, conditions, and disclaimer wherever a compiled test binary is distributed. Test executables are development/CI artifacts only and are never included in a shipped writer or runtime binary distribution, so this obligation does not extend to `0.1.0` release archives. |
+| **Transitive closure** | None: `BUILD_GMOCK=OFF`, `INSTALL_GTEST=OFF`. Every `graphscore_<component>_test` target links only `GTest::gtest` and `GTest::gtest_main`. |
 
 ---
 
@@ -419,4 +419,4 @@ vendored.
 | 10 | MIDI encoding | Owned code | N/A | Apache-2.0 |
 | 11 | Bravura | POLICY-CLEARED (spike) | `02e8ed29a29115df35007d1178cebaeee26c20e1` | OFL-1.1 |
 | 12 | Noto Sans | POLICY-CLEARED (spike-only text font) | `ffebf8c1ee449e544955a7e813c54f9b73848eac` | OFL-1.1 |
-| 13 | GoogleTest | Spike-only test dependency | `6910c9d9165801d8827d628cb72eb7ea9dd538c5` | BSD 3-Clause |
+| 13 | GoogleTest | POLICY-CLEARED (production test framework) | `6910c9d9165801d8827d628cb72eb7ea9dd538c5` | BSD 3-Clause |
