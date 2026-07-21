@@ -68,28 +68,15 @@ _EDGE_RE = re.compile(r'^\s*"(node\d+)"\s*->\s*"(node\d+)"')
 def generate_graphviz(source_dir, binary_dir):
     """Ask CMake to render the generated buildsystem as a Graphviz graph.
 
-    Uses a scratch binary directory so the graphviz generation never writes
-    into the real build tree. On Windows, Ninja holds a file lock on
-    ``.ninja_log`` while the build is running (or shortly after it completes),
-    and ``cmake --graphviz -B <real-dir>`` would fail with ``failed
-    recompaction: Permission denied``. A scratch directory avoids that lock.
+    Passes only the existing binary directory — no ``-S`` / ``-B`` pair — so
+    CMake reads the already-resolved CMakeCache.txt and never regenerates the
+    build system. On Windows, this avoids a Ninja ``failed recompaction:
+    Permission denied`` error that a full ``cmake -S ... -B ...`` would
+    trigger while the build is running (or shortly after it finishes).
     """
-    scratch = binary_dir / "graphscore_graphviz_scratch"
-    dot_path = scratch / "graphscore_dependencies.dot"
-
-    try:
-        scratch.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        print(
-            "audit_cycles: could not create scratch directory "
-            f"{scratch}: {e}",
-            file=sys.stderr)
-        return None
-
+    dot_path = binary_dir / "graphscore_dependencies.dot"
     result = subprocess.run(
-        ["cmake", f"--graphviz={dot_path}", "-S", str(source_dir),
-         "-B", str(scratch), "-DGRAPHSCORE_BUILD_WRITER=OFF",
-         "-DGRAPHSCORE_BUILD_TESTS=ON"],
+        ["cmake", f"--graphviz={dot_path}", str(binary_dir)],
         capture_output=True, text=True, check=False)
 
     if result.returncode != 0:
