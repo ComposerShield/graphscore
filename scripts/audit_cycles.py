@@ -115,6 +115,8 @@ def parse_graphviz(dot_path):
         edge_match = _EDGE_RE.match(line)
         if edge_match:
             source_id, target_id = edge_match.group(1), edge_match.group(2)
+            if source_id == target_id:
+                continue  # self-edge is a CMake version artefact, not a cycle
             id_graph.setdefault(source_id, set()).add(target_id)
             id_graph.setdefault(target_id, set())
 
