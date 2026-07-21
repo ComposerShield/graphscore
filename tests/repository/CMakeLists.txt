@@ -17,6 +17,9 @@ add_test(NAME graphscore_offline_dependencies
     -D "GRAPHSCORE_GENERATOR=${CMAKE_GENERATOR}"
     -D "GRAPHSCORE_C_COMPILER=${CMAKE_C_COMPILER}"
     -D "GRAPHSCORE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+    # The scratch tree must be configured the same way as this one, or it
+    # would need dependencies this build never fetched.
+    -D "GRAPHSCORE_BUILD_WRITER=${GRAPHSCORE_BUILD_WRITER}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/check_offline_dependencies.cmake"
 )
 

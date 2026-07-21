@@ -75,6 +75,7 @@ execute_process(
     "-DCMAKE_BUILD_TYPE=Debug"
     "-DCMAKE_C_COMPILER=${GRAPHSCORE_C_COMPILER}"
     "-DCMAKE_CXX_COMPILER=${GRAPHSCORE_CXX_COMPILER}"
+    "-DGRAPHSCORE_BUILD_WRITER=${GRAPHSCORE_BUILD_WRITER}"
     # The overrides under test, one per fetched dependency.
     ${overrides}
     # Any network access at all is a failure, not a slow success.

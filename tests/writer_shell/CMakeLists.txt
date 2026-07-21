@@ -23,10 +23,13 @@ set_tests_properties(graphscore_writer_window_smoke PROPERTIES
 
 if (NOT GRAPHSCORE_BUILD_WRITER)
   # Configured with -DGRAPHSCORE_BUILD_WRITER=OFF: there is no backend to
-  # reach, and the executable says so and fails. That is the correct
+  # reach, and the executable says so and exits non-zero. That is the correct
   # behaviour, so the test asserts it rather than being skipped.
+  #
+  # PASS_REGULAR_EXPRESSION alone decides the result here — when it is set,
+  # ctest ignores the exit status, so the expected non-zero exit needs no
+  # WILL_FAIL (which would invert this and fail the test on a match).
   set_tests_properties(graphscore_writer_window_smoke PROPERTIES
     PASS_REGULAR_EXPRESSION "GRAPHSCORE_BUILD_WRITER=OFF"
-    WILL_FAIL TRUE
   )
 endif()

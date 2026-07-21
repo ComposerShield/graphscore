@@ -29,11 +29,12 @@ satisfy).
 |---|---|
 | `src/<target>/` | Implementation source for each `graphscore_<target>` library/executable, plus that target's `CMakeLists.txt`. |
 | `include/graphscore/<target>/` | Public headers for targets that expose one (writer-only leaf targets and executables do not). |
-| `tests/<target>/` | GTest sources for `graphscore_<target>_test`, plus `tests/abi/` (pure-C ABI consumer) and `tests/cmake/` (external consumer project). |
+| `tests/<target>/` | GTest sources for `graphscore_<target>_test`, plus `tests/c_abi/` (pure-C ABI consumer), `tests/cmake/` (out-of-tree consumer projects driven against a real install tree), and `tests/repository/` (checkout and build-system properties). |
 | `apps/` | Application entry points (`graphscore_writer_app`, `graphscore_plugin_scanner`). |
 | `tools/` | Developer-facing helper executables that are not part of the shipped product. |
-| `cmake/` | CMake modules: compiler/warning setup, dependency adapters (one file per third-party dependency), and the architecture audit scripts (`audit_link_closure.cmake`, `audit_permitted_edges.cmake`, `audit_transitive_closure.cmake`). |
-| `scripts/` | Non-CMake tooling: Python audit scripts (`audit_includes.py`, `audit_runtime_symbols.py`, `audit_cycles.py`, `audit_third_party_types.py`), lint wrappers, bootstrap scripts. |
+| `cmake/` | CMake modules: compiler/warning setup, dependency adapters (one file per third-party dependency, e.g. `SDL3.cmake`), the runtime install/export package (`RuntimePackage.cmake`), and the architecture audit (`architecture_contract.cmake` — the machine-readable ADR 0003 contract — plus `audit_permitted_edges.cmake`, `audit_link_closure.cmake`, `audit_transitive_closure.cmake`). |
+| `scripts/` | Non-CMake tooling: Python audit scripts (`audit_includes.py`, `audit_runtime_symbols.py`, `audit_cycles.py`, `audit_third_party_types.py`, sharing `graphscore_audit.py`) and `bootstrap.sh`. |
+| `.githooks/` | Tracked Git hooks. Installed by `scripts/bootstrap.sh`; never installed automatically. |
 | `docs/plan/` | The milestone plan and the source-controlled execution checklist. |
 | `docs/decisions/` | Accepted ADRs. |
 | `docs/licenses/`, `NOTICES.md` | Third-party license inventory. |
@@ -51,6 +52,10 @@ All commands run from the repository root unless noted.
 cmake --preset debug
 cmake --build --preset debug
 
+# Runtime-only build: fetches no writer dependency at all. This is the
+# configuration an engine integrator uses.
+cmake --preset debug -DGRAPHSCORE_BUILD_WRITER=OFF
+
 # Run tests.
 ctest --preset debug --output-on-failure
 
@@ -60,8 +65,14 @@ cmake --preset asan-ubsan && cmake --build --preset asan-ubsan && ctest --preset
 # Windows uses clang-cl via the *-windows presets: debug-windows,
 # release-windows, ci-windows. ASan/TSan are not provided on Windows.
 
-# Lint (also runs in the pre-commit hook and in CI).
+# Lint: cpplint + clang-format verification (also run by the pre-commit
+# hook on staged files, and by CI over the whole tree).
 cmake --build --preset debug --target lint
+
+# Const-correctness analysis. Off by default because clang-tidy roughly
+# triples compile time; CI runs it as its own job.
+cmake --preset debug -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON
+cmake --build --preset debug
 
 # Architecture boundary audit (ADR 0003 §7).
 cmake --build --preset debug --target audit_architecture
@@ -70,15 +81,20 @@ cmake --build --preset debug --target audit_architecture
 `FETCHCONTENT_SOURCE_DIR_<NAME>` (e.g. `FETCHCONTENT_SOURCE_DIR_SDL3`) points
 a dependency at a local checkout instead of fetching over the network, for
 offline/air-gapped builds. See `cmake/` for the exact `<NAME>` per dependency.
+Combine with `-DFETCHCONTENT_FULLY_DISCONNECTED=ON` to forbid network access
+outright; the `graphscore_offline_dependencies` test exercises exactly this
+across every fetched dependency.
 
 ## C++23 and const-correctness
 
 - The project requires C++23 and Clang or AppleClang; other compilers fail
   configure with an actionable message.
 - Prefer `constexpr`; otherwise `const`; mutable state requires a
-  demonstrated need (realtime state, atomics, caches, platform handles are
-  the accepted exceptions — see `cmake/ConstCorrectness.cmake` for the exact
-  clang-tidy configuration).
+  demonstrated need. The five accepted exception categories — realtime state,
+  atomics, caches, platform handles, move-from sources and out-parameters —
+  are enumerated in `cmake/ConstCorrectness.cmake`; the check selection is in
+  the root `.clang-tidy`. A `NOLINT` must name both the check it suppresses
+  and the category that justifies it; a bare `NOLINT` is a review defect.
 - Do not add `const` to interfaces or return values where it does not
   increase safety and only adds friction.
 
@@ -108,10 +124,14 @@ This is a mechanically enforced contract, not a convention:
   RtMidi, VST3 SDK, accesskit-c) are private to `.cpp` files of the one
   target that owns them (ADR 0003 §2.2) and must never appear in a public
   header.
-- Running `cmake --build --preset debug --target audit_architecture` runs
-  the full set of link-closure, permitted-edge, transitive-closure, and
-  no-cycle checks. CI runs the same target plus the Python include/symbol/
-  type-leakage audits in `scripts/`.
+- `cmake/architecture_contract.cmake` is the machine-readable form of the
+  ADR 0003 tables. Changing it without amending the ADR is itself a boundary
+  violation.
+- `cmake --build --preset debug --target audit_architecture` runs all seven
+  audits: permitted edges, link closure, transitive closure, include
+  boundaries, third-party type leakage, cycles and layer ordering, and the
+  runtime's exported symbols. CI runs the same target on every platform in
+  the matrix.
 
 ## Dependencies and licensing
 
@@ -142,11 +162,34 @@ the model, assistant, or vendor used to produce the change — including names
 such as Claude, ChatGPT, GPT, Copilot, Anthropic, or OpenAI — and must never
 add an AI-generated attribution trailer (e.g. `Co-Authored-By: <assistant>`).
 
+## Runtime packaging
+
+`graphscore_runtime` installs and exports as the `GraphScoreRuntime` CMake
+package. Only the ADR 0003 §3.1 runtime closure and the public C ABI header
+are installed — no writer library, no writer header, and no C++ header of the
+closure's internal targets. A consumer needs:
+
+```cmake
+find_package(GraphScoreRuntime REQUIRED)
+target_link_libraries(my_app PRIVATE graphscore::runtime)
+```
+
+The `graphscore_cmake_consumer` test installs the package to a scratch
+prefix, builds C and C++ consumers against it out of tree, and asserts that a
+writer target cannot be linked from it.
+
 ## Platform caveats
 
 - Windows arm64 and Linux arm64 are build-only in CI; native test execution
   is not required there. macOS arm64/x86-64 and Windows/Linux x86-64 build
   and run tests natively.
+- The sanitizer and clang-tidy CI jobs configure with
+  `-DGRAPHSCORE_BUILD_WRITER=OFF`. Instrumenting or analysing SDL3 costs most
+  of those jobs' time on third-party code GraphScore does not own.
+- Linux needs X11, Wayland, and xkbcommon development packages for the SDL3
+  build; see `.github/workflows/ci.yml` for the exact list.
+- SDL3 at the pinned SHA needs three macOS frameworks linked that it does not
+  link itself; `cmake/SDL3.cmake` documents why. Revisit when the pin moves.
 - The VST3 SDK requires an explicit build type at configure time (its
   `fdebug.h` errors on an empty `CMAKE_BUILD_TYPE`) and both `ENV{XCODE_VERSION}`
   and the plain `XCODE_VERSION` CMake variable set, even on a Command Line

@@ -198,21 +198,49 @@ appear in any GraphScore-owned public header. Every edge is PRIVATE (confined to
 No external type is ever PUBLIC in a GraphScore target. The type-leakage audit
 in §7.3 mechanically enforces this.
 
-#### 2.3 Test Framework Edge (DEFERRED to M1)
+#### 2.3 Test Framework Edge (RESOLVED in M1)
 
-ADR 0002 does not contain a GTest pin or evaluation. No current production
-GraphScore target has a `GTest` edge. M1 must:
+GTest was DEFERRED when this ADR was accepted, pending a pin, a licence
+evaluation, and named test targets. All three are complete:
 
-1. Pin an exact GTest SHA, evaluate its license under the ADR 0001 checklist,
-   and record the decision in a dependency ADR or ADR 0002 amendment.
-2. Define exact named test-executable CMake targets (e.g. `graphscore_core_test`,
-   `graphscore_domain_test`, etc.) with their precise permitted edges.
-3. Amend §2.1 and §2.2 of this ADR to add each test target's internal and
-   external permitted edges, then regenerate the machine audit allowlists.
+1. **Pin and licence.** GoogleTest is pinned at
+   `6910c9d9165801d8827d628cb72eb7ea9dd538c5` (release-1.16.0), BSD 3-Clause,
+   POLICY-CLEARED — recorded in ADR 0002 §11 and `docs/NOTICES.md` #13, with
+   the licence text committed at `docs/licenses/GoogleTest-BSD-3-Clause.txt`.
+   `BUILD_GMOCK=OFF` and `INSTALL_GTEST=OFF`, so the enabled closure is empty.
+2. **Named test targets**, one per target under test:
 
-Until M1 completes these steps, GTest is **DEFERRED** and no test target is in
-the produced DAG. The machine audit scripts (§7) must reject any undeclared
-`GTest` linkage as a violation.
+   | Test target | Internal edge | External edge |
+   |---|---|---|
+   | `graphscore_core_test` | `graphscore_core` | `GTest::gtest_main` |
+   | `graphscore_domain_test` | `graphscore_domain` | `GTest::gtest_main` |
+   | `graphscore_cooked_format_test` | `graphscore_cooked_format` | `GTest::gtest_main` |
+   | `graphscore_compiler_test` | `graphscore_compiler` | `GTest::gtest_main` |
+   | `graphscore_persistence_test` | `graphscore_persistence` | `GTest::gtest_main` |
+   | `graphscore_scheduler_test` | `graphscore_scheduler` | `GTest::gtest_main` |
+   | `graphscore_loader_test` | `graphscore_loader` | `GTest::gtest_main` |
+   | `graphscore_runtime_test` | `graphscore_runtime` | `GTest::gtest_main` |
+   | `gs_c_consumer` | `graphscore_runtime` | _(none — pure C, §7.4)_ |
+
+   A test target links exactly one GraphScore target — the one it tests —
+   plus the test framework. It inherits that target's own permitted edges
+   transitively and may add none of its own, so a test can never be the route
+   by which a boundary is crossed.
+
+3. **Audit allowlists** are regenerated from this table in
+   `cmake/architecture_contract.cmake`
+   (`GRAPHSCORE_TEST_TARGETS`, `GRAPHSCORE_TEST_FRAMEWORK_TARGETS`, and the
+   per-test `GRAPHSCORE_PUBLIC_EDGES_*` entries).
+
+GTest edges are permitted **for these test targets only**. The machine audits
+(§7.1) reject a `GTest` edge on any production target, and reject any test
+target not named above.
+
+Two further test executables exist and are deliberately outside the target
+DAG, because they are configured as separate CMake projects rather than as
+targets of this build: the out-of-tree consumer projects under `tests/cmake/`
+(§7.8). They import the runtime through its installed package, which is
+exactly the property they test.
 
 ---
 
@@ -601,9 +629,24 @@ rendering, or any writer-only target.
 
 ### 7. Mechanically Checkable Architecture Enforcement (M1 Implementation)
 
-The following enforcement mechanisms are specified now. File paths and scripts
-are M1 implementation work — they do not exist yet and must be created during
-M1. All paths are relative to the repository root.
+**Implemented in M1.** All paths are relative to the repository root. Every
+audit below exists, runs from the single `audit_architecture` CMake target,
+and runs in CI on every platform in the matrix:
+
+```sh
+cmake --build --preset debug --target audit_architecture
+```
+
+The audits read a target-graph dump that `cmake/ArchitectureAudit.cmake`
+writes at configure time (CMake script mode cannot query targets), and share
+the contract data in `cmake/architecture_contract.cmake` — the
+machine-readable form of §2.1, §2.2, §2.3, §3.2, and §3.3. Editing that file
+without a corresponding amendment to this ADR is itself a boundary violation.
+
+Two implementation paths differ from what was specified below, both noted at
+the relevant subsection: the pure-C consumer lives at `tests/c_abi/` rather
+than `tests/abi/c_consumer/`, and the CMake consumer test at
+`tests/cmake/consumer/` rather than `tests/cmake/consumer_test/`.
 
 #### 7.1 Recursive CMake Link-Closure Audit
 
@@ -685,7 +728,7 @@ Run as a CI step and optionally as a pre-commit hook.
 
 #### 7.4 Pure-C ABI Consumer Compile
 
-`tests/abi/c_consumer/CMakeLists.txt` — a standalone CMake subdirectory that:
+`tests/c_abi/CMakeLists.txt` — a CMake subdirectory that:
 
 1. Defines a C executable target with:
    ```cmake
@@ -747,7 +790,8 @@ Run as a CI step.
 
 #### 7.8 CMake Consumer Test
 
-`tests/cmake/consumer_test/` — a standalone CMake project that:
+`tests/cmake/consumer/` — a standalone CMake project, driven by
+`tests/cmake/run_consumer_test.cmake`, that:
 
 1. Uses `find_package(graphscore_runtime)` or `add_subdirectory` to import
    only the runtime target.

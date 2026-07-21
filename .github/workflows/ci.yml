@@ -1,0 +1,319 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# GraphScore continuous integration.
+#
+# CI is authoritative. Every check here runs independently of any local Git
+# hook, so a contributor who has not run scripts/bootstrap.sh — or who
+# committed with --no-verify — still cannot merge code that fails them.
+#
+# Job layout (docs/plan/01-toolchain-ci.md, "GitHub Actions"):
+#
+#   lint            cpplint + clang-format verification, whole tree
+#   clang-tidy      const-correctness analysis, one Clang runner
+#   test            build + GTest on the four natively-tested platforms
+#   cross-build     Windows arm64 and Linux arm64, compile only
+#   sanitizers      ASan/UBSan and TSan on Linux Clang
+#   runtime-only    proves the runtime builds with no writer dependency
+#
+# Debug and optimized configurations are both exercised across `test`, but
+# not every platform runs both: macOS arm64 and Linux x86-64 carry the Debug
+# matrix, the rest run the optimized CI preset.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Keep FetchContent from consulting the network when a cache hit already
+  # populated the source tree.
+  CMAKE_GENERATOR: Ninja
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Lint and format. Fast, so it runs first and fails the run early.
+  # ---------------------------------------------------------------------
+  lint:
+    name: Lint (cpplint, clang-format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install lint tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install cpplint
+          sudo apt-get update
+          sudo apt-get install -y clang-format ninja-build
+
+      - name: Configure
+        run: cmake --preset ci -DGRAPHSCORE_BUILD_WRITER=OFF
+
+      - name: Lint
+        run: cmake --build --preset ci --target lint
+
+  # ---------------------------------------------------------------------
+  # Const-correctness analysis. clang-tidy is slow, so it is its own job on
+  # one runner rather than a property of every build.
+  # ---------------------------------------------------------------------
+  clang-tidy:
+    name: clang-tidy (const-correctness)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang clang-tidy ninja-build
+
+      - name: Configure
+        run: |
+          cmake --preset debug \
+            -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON \
+            -DGRAPHSCORE_BUILD_WRITER=OFF
+
+      - name: Build with clang-tidy
+        run: cmake --build --preset debug
+
+  # ---------------------------------------------------------------------
+  # Native build and test.
+  # ---------------------------------------------------------------------
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64 (Debug)
+            runner: macos-14
+            preset: debug
+          - name: macOS arm64 (Release)
+            runner: macos-14
+            preset: ci
+          - name: macOS x86-64 (Release)
+            runner: macos-13
+            preset: ci
+          - name: Linux x86-64 (Debug)
+            runner: ubuntu-latest
+            preset: debug
+          - name: Linux x86-64 (Release)
+            runner: ubuntu-latest
+            preset: ci
+          - name: Windows x86-64 (Release)
+            runner: windows-latest
+            preset: ci-windows
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The CLAUDE.md symlink-mode test reads Git index metadata.
+          fetch-depth: 1
+
+      - name: Enable symlinks (Windows)
+        if: runner.os == 'Windows'
+        run: git config --local core.symlinks true
+
+      - name: Install Linux toolchain and SDL3 build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang ninja-build \
+            libx11-dev libxext-dev libxcursor-dev libxi-dev \
+            libxfixes-dev libxrandr-dev \
+            libwayland-dev wayland-protocols libxkbcommon-dev
+
+      - name: Install macOS toolchain
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Install Windows toolchain
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Immutable FetchContent sources are safe to cache indefinitely: every
+      # dependency is pinned to a commit SHA, so the key can be the hash of
+      # the files that carry those pins. A cache miss costs time, never
+      # correctness, so no job requires a hit.
+      - name: Cache FetchContent sources
+        uses: actions/cache@v4
+        with:
+          path: build/${{ matrix.preset }}/_deps
+          key: deps-${{ matrix.runner }}-${{ hashFiles('cmake/dependencies.cmake', 'cmake/SDL3.cmake') }}
+          restore-keys: deps-${{ matrix.runner }}-
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Architecture audit
+        run: cmake --build --preset ${{ matrix.preset }} --target audit_architecture
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }} --output-junit test-results.xml
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.runner }}-${{ matrix.preset }}
+          path: build/${{ matrix.preset }}/test-results.xml
+          if-no-files-found: warn
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-${{ matrix.runner }}-${{ matrix.preset }}
+          path: |
+            build/${{ matrix.preset }}/Testing/**/*.log
+            build/${{ matrix.preset }}/CMakeFiles/CMakeConfigureLog.yaml
+            build/${{ matrix.preset }}/sdl3_option_evidence.txt
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------
+  # arm64 platforms where native test execution is not yet claimed
+  # (AGENTS.md, "Platform caveats"). These jobs compile only.
+  # ---------------------------------------------------------------------
+  cross-build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux arm64 (build only)
+            runner: ubuntu-24.04-arm
+            preset: ci
+          - name: Windows arm64 (build only)
+            runner: windows-11-arm
+            preset: ci-windows
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux toolchain and SDL3 build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang ninja-build \
+            libx11-dev libxext-dev libxcursor-dev libxi-dev \
+            libxfixes-dev libxrandr-dev \
+            libwayland-dev wayland-protocols libxkbcommon-dev
+
+      - name: Install Windows toolchain
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+  # ---------------------------------------------------------------------
+  # Sanitizers. Linux Clang only: ASan/UBSan and TSan are not provided on
+  # the Windows presets (AGENTS.md, "Canonical commands").
+  # ---------------------------------------------------------------------
+  sanitizers:
+    name: ${{ matrix.preset }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [asan-ubsan, tsan]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang ninja-build
+
+      # A sanitizer only gives correct results when every translation unit in
+      # the binary is instrumented, so cmake/Sanitizers.cmake instruments
+      # dependencies too. Building SDL3 under ASan/TSan would cost most of
+      # the job's time to instrument third-party code that GraphScore does
+      # not own and cannot fix, so the writer backend is left out and these
+      # jobs cover GraphScore code.
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -DGRAPHSCORE_BUILD_WRITER=OFF
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        env:
+          # Report the first error and exit non-zero rather than continuing.
+          ASAN_OPTIONS: abort_on_error=1:halt_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1
+        run: ctest --preset ${{ matrix.preset }}
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-${{ matrix.preset }}
+          path: build/${{ matrix.preset }}/Testing/**/*.log
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------
+  # A runtime-only build fetches no writer dependency at all. This is the
+  # configuration an engine integrator uses, and it is the cheapest
+  # continuous proof that the runtime has not grown a writer dependency.
+  # ---------------------------------------------------------------------
+  runtime-only:
+    name: Runtime-only build (no writer dependency)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang ninja-build
+
+      - name: Configure without the writer
+        run: cmake --preset ci -DGRAPHSCORE_BUILD_WRITER=OFF
+
+      - name: Build
+        run: cmake --build --preset ci
+
+      - name: Architecture audit
+        run: cmake --build --preset ci --target audit_architecture
+
+      - name: Assert no writer dependency was fetched
+        run: |
+          if [ -d build/ci/_deps/sdl3-src ]; then
+            echo "A runtime-only build fetched SDL3." >&2
+            exit 1
+          fi
+          echo "No writer dependency present."
+
+      - name: Test
+        run: ctest --preset ci

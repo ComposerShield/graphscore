@@ -241,17 +241,45 @@ guard. On Linux this option defaults to ON regardless of whether
 `SDL_AUDIO` is ON or OFF. The adapter blueprint explicitly sets it to OFF,
 but this must be confirmed via a configure-cache evidence report in M1.
 
-##### M1 Verification Gate
+##### M1 Verification Gate — SATISFIED
 
-A `cmake/SDL3.cmake` adapter must be implemented in M1. The M1
-deliverable must include:
-- A complete configure-cache file proving every option in the reviewed
-  tables above resolves to the declared value.
-- Explicit decisions and cache evidence for every remaining unaudited
-  default listed in §Remaining Unaudited Defaults.
-- Explicit verification that `SDL_PIPEWIRE=OFF` takes effect on Linux
-  (the option defaults ON and has no `SDL_AUDIO` guard).
-SDL3 remains PROVISIONAL until this full audit is completed.
+`cmake/SDL3.cmake` implements the adapter. The gate is enforced on every
+configure rather than by a snapshot taken once: after
+`FetchContent_MakeAvailable`, the adapter reads every option in the reviewed
+tables back out of the cache and fails configure on any mismatch, writing the
+full evidence to `<build>/sdl3_option_evidence.txt`. `SDL_PIPEWIRE=OFF` is
+covered by that pass on Linux like every other option, so the residual risk
+recorded above cannot regress silently.
+
+The check also requires each declared option name to appear in SDL's own
+`CMakeLists.txt` at the pinned SHA. Without this, an option renamed upstream —
+or misspelled here — would be created in the cache by the adapter itself,
+read back unchanged, and "verified" while having no effect on the build. The
+check found exactly that case during M1 implementation.
+
+##### Upstream Defect at the Pinned SHA — macOS Link Failure
+
+At `08b9c55393be5cb08fbec12ca431470faba3c8c9`, SDL's Cocoa video-driver
+source glob compiles `src/video/cocoa/SDL_cocoanotification.m`
+unconditionally, and `SDL_cocoamouse.m` references GameController's `GCMouse`
+unconditionally — but the corresponding `-framework` link dependencies are
+added only when `SDL_NOTIFICATION` and `SDL_JOYSTICK` are ON. Under the
+reviewed option set both are OFF, so those objects are present in
+`libSDL3.a` with no framework to resolve against, and the writer fails to
+link on macOS.
+
+`cmake/SDL3.cmake` links `UserNotifications`, `Security`, and
+`GameController` on Apple platforms to resolve them. This changes nothing
+about which SDL code is compiled or which licences are engaged — the objects
+are in the archive either way — and it is narrower than the alternative of
+turning the two subsystems ON, which would enable code paths this section
+deliberately excluded. These are OS frameworks, which are system-provided
+services rather than vendored dependencies (ADR 0003 §2.2). The workaround is
+scoped to this pin and is to be removed when the pin moves to a SHA where
+those sources are conditional.
+
+SDL3 remains PROVISIONAL pending the Phase C rendering/GPU decisions; the M1
+build gate itself is satisfied.
 
 ---
 

@@ -29,13 +29,15 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [x] Root `AGENTS.md` created and validated
 - [x] Commit-message model/vendor attribution prohibition documented in `AGENTS.md`
 - [x] Tracked `CLAUDE.md` symlink to `AGENTS.md` created and validated
-- [ ] CMake and FetchContent foundation completed
-- [ ] Const-correctness policy implemented
-- [ ] Local quality gates and `.githooks/pre-commit` completed
-- [ ] GitHub Actions platform matrix completed
-- [ ] Skeleton writer/runtime artifacts completed
-- [ ] Acceptance criteria passed
-- [ ] Test focus completed
+- [x] CMake and FetchContent foundation completed
+- [x] Const-correctness policy implemented
+- [x] Local quality gates and `.githooks/pre-commit` completed
+- [x] GitHub Actions platform matrix completed
+- [x] Skeleton writer/runtime artifacts completed
+- [ ] Acceptance criteria passed — blocked only on a first green CI
+      run across the platform matrix; every criterion is verified
+      locally on macOS arm64 and the workflow is committed
+- [x] Test focus completed
 
 ## Milestone 02: Domain And Command Model
 
