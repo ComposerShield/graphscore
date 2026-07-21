@@ -19,6 +19,17 @@ Persist editable projects safely and export deterministic, validated, editor-fre
 - [ ] Use atomic replace-on-save and preserve the previous valid file until replacement succeeds.
 - [ ] Detect malformed archives, duplicate entries, path traversal, excessive sizes, unsupported schema versions, and truncated plugin blobs.
 
+**Carried from M0 — plugin state is not byte-deterministic.** ADR 0007
+observed Kontakt 8 save 3897 bytes, restore, then save 3913 bytes over an
+identical cycle. Plugin state blobs are opaque and unstable.
+
+- [ ] Never hash, diff, or content-compare plugin state blobs for dirty/change
+      detection. Track modification by identity and explicit edit events.
+- [ ] Exclude plugin state from semantic equality and from any determinism
+      assertion.
+- [ ] Ensure autosave and undo/redo do not treat a re-saved identical plugin
+      state as a document change.
+
 ### Autosave and recovery
 
 - [ ] Journal or snapshot unsaved command state without corrupting the primary project.

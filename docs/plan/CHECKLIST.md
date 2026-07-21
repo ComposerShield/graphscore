@@ -127,6 +127,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [ ] Audio devices and engine completed
 - [ ] Track plugin chains completed
 - [ ] Plugin scanning and compatibility completed
+- [ ] In-process hosting question resolved (carried from ADR 0007)
 - [ ] Plugin editors and parameters completed
 - [ ] Audition mixer completed
 - [ ] Transport and preview completed

@@ -34,6 +34,8 @@ Make composition audible through a permissively implemented cross-platform audio
 - [ ] Discover standard and user-configured VST3 locations.
 - [ ] Scan one candidate at a time in a helper process with timeout, crash/hang detection, metadata normalization, and blacklist/rescan controls.
 - [ ] Never let a scan crash take down the writer or corrupt the project.
+- [ ] Use a per-plugin scan timeout well above 5 seconds. ADR 0007 measured
+      Kontakt 8 at 3.07 s for a bare out-of-process scan.
 - [ ] Include redistributable GraphScore test instrument/effect fixtures built from the SDK for CI.
 - [ ] Document platform/architecture compatibility and present clear diagnostics for wrong-architecture plugins.
 
@@ -41,8 +43,35 @@ Make composition audible through a permissively implemented cross-platform audio
 
 - [ ] Open, resize, focus, close, and reopen native plugin editors using platform-native parent handles.
 - [ ] Handle keyboard focus without breaking writer shortcuts outside the plugin editor.
+
+**Carried from M0 (ADR 0007), verified on macOS arm64:**
+
+- [ ] Treat `canResize()` as the authoritative resize gate. `checkSizeConstraint()`
+      returned accepted for a plugin reporting `canResize -> no`.
+- [ ] Do not treat a non-ok `IPlugView::onFocus()` return as a focus failure. It
+      is advisory; keyboard focus worked correctly while it returned fail.
+- [ ] Make the host frame fully functional *before* `attached()`. `getSize()`
+      before attach is unreliable, and `IPlugFrame::resizeView` is called
+      re-entrantly from inside `attached()`.
+- [ ] Prefer `setComponentState`; `IEditController::getState` is frequently
+      `kNotImplemented`.
+- [ ] Do not treat `getTailSamples()` as bounded. `kInfiniteTail` (0xFFFFFFFF)
+      was returned by both commercial plugins tested.
 - [ ] Provide an accessible generic parameter view where the VST3 exposes usable parameter metadata.
 - [ ] Do not author or export parameter automation in `0.1.0`.
+
+### Open question carried from M0: in-process hosting
+
+**ADR 0007 finding.** AutoTune installs its own process-wide SIGSEGV, SIGABRT,
+SIGFPE, and SIGBUS handlers into the host process on load. The current plan
+scans out-of-process but hosts in-process for playback, which means third-party
+plugin code takes over host crash handling for the whole writer.
+
+- [ ] Decide explicitly whether playback hosting stays in-process. Record the
+      decision and its crash-containment story as an ADR before building the
+      plugin chain.
+- [ ] If hosting stays in-process, document what happens to autosave and
+      recovery when a plugin handler intercepts a fatal signal.
 
 ### Audition mixer
 

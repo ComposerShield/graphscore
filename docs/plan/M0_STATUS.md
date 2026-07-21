@@ -23,13 +23,28 @@ are recorded in ADR 0004 and the rendering spike's evidence directory. Windows
 and Linux screen-reader and physical-GUI verification are deferred to
 Milestone 10 by recorded scope decision.
 
+| Direct VST3 hosting | Viable on macOS arm64 with no licensed framework; native editor gate observed by Adam on render, resize, and keyboard focus | ADR 0007 |
+
 ## Remaining
 
-1. Run the direct VST3 hosting spike on macOS arm64. One working day.
-   The native editor attach/resize/focus step is a physical gate requiring
-   Adam at the machine, like the VoiceOver gate before it.
-2. Delete or quarantine `spikes/m0/vst3-hosting/` once its ADR lands.
-3. Approve the M0 exit decision.
+1. Approve the M0 exit decision.
+2. Delete `spikes/m0/vst3-hosting/` once Milestone 01 has the VST3 SDK
+   building in CI. Retained deliberately: the CMake workarounds in ADR 0007
+   are fiddly enough that working code is worth more than a clean tree.
+
+## Findings Carried Forward
+
+Recorded where the owning milestone will read them, not in a separate tracker.
+
+| Finding | Owner | Location |
+|---|---|---|
+| Plugin state is not byte-deterministic (Kontakt 3897 -> 3913 bytes over an identical save/restore/save cycle). Never hash or diff it for change detection. | M03 | `03-persistence-export.md`, Editable project bundle |
+| Commercial plugins install process-wide signal handlers into the host (AutoTune takes SIGSEGV/SIGABRT/SIGFPE/SIGBUS). Open question against the planned in-process playback hosting. | M08 | `08-audio-vst.md`, Open question carried from M0 |
+| VST3 editor API quirks: `canResize` authoritative, `onFocus` advisory, re-entrant `resizeView` during `attached()`, `kInfiniteTail` common. | M08 | `08-audio-vst.md`, Plugin editors and parameters |
+| Scan timeouts must exceed 5s per plugin. | M08 | `08-audio-vst.md`, Plugin scanning |
+| SDK build workarounds: `fdebug.h` build-type `#error`, `XCODE_VERSION` double-set, incomplete `sdk_hosting`. | M01 | ADR 0007, Build Integration Notes |
+| Commercial plugins were pre-authorized on the test machine; fresh-machine and CI behaviour unknown. | M08 | ADR 0007, Open Risks |
+| Windows, Linux/Wayland, x86-64 VST3 untested. Wayland editor embedding is the highest residual platform risk. | M08 | ADR 0007, Open Risks |
 
 ## Repository Notes
 
