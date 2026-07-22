@@ -3,18 +3,24 @@
 #pragma once
 
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include <graphscore/core/graphscore_core.hpp>
 #include <graphscore/domain/notation_event.hpp>
+#include <graphscore/domain/notation_markings.hpp>
 
 namespace graphscore {
 
 // One voice's ordered, contiguous-time content: a sequence of notes,
-// chords, and rests. VoiceContent does not itself know the node's total
-// musical length; normalize() and check_complete() take that length as an
-// explicit Rational parameter (typically NodeTimeline::node_end()) so this
-// type never duplicates timeline state.
+// chords, and rests, plus the dynamics/hairpins/slurs/beam overrides/grace
+// groups attached within it. VoiceContent does not itself know the node's
+// total musical length; normalize() and check_complete() take that length
+// as an explicit Rational parameter (typically NodeTimeline::node_end())
+// so this type never duplicates timeline state. Markings are appended
+// without validating their entity-id references; validate_voice_references
+// (notation_validation.hpp) is the focused referential check that runs
+// after edits.
 class VoiceContent {
  public:
   VoiceContent() = default;
@@ -28,6 +34,43 @@ class VoiceContent {
   [[nodiscard]] Result append(VoiceEvent event);
 
   void clear() noexcept { events_.clear(); }
+
+  [[nodiscard]] const std::vector<DynamicMarking>& dynamics() const noexcept {
+    return dynamics_;
+  }
+
+  void add_dynamic(DynamicMarking marking) {
+    dynamics_.push_back(std::move(marking));
+  }
+
+  [[nodiscard]] const std::vector<Hairpin>& hairpins() const noexcept {
+    return hairpins_;
+  }
+
+  void add_hairpin(Hairpin hairpin) { hairpins_.push_back(std::move(hairpin)); }
+
+  [[nodiscard]] const std::vector<Slur>& slurs() const noexcept {
+    return slurs_;
+  }
+
+  void add_slur(Slur slur) { slurs_.push_back(std::move(slur)); }
+
+  [[nodiscard]] const std::vector<BeamOverride>& beam_overrides()
+      const noexcept {
+    return beam_overrides_;
+  }
+
+  void add_beam_override(BeamOverride override) {
+    beam_overrides_.push_back(std::move(override));
+  }
+
+  [[nodiscard]] const std::vector<GraceGroup>& grace_groups() const noexcept {
+    return grace_groups_;
+  }
+
+  void add_grace_group(GraceGroup group) {
+    grace_groups_.push_back(std::move(group));
+  }
 
   // The exact whole-note sum of every event's resolved duration.
   [[nodiscard]] Rational total_length() const;
@@ -53,7 +96,12 @@ class VoiceContent {
   [[nodiscard]] bool operator==(const VoiceContent&) const = default;
 
  private:
-  std::vector<VoiceEvent> events_;
+  std::vector<VoiceEvent>     events_;
+  std::vector<DynamicMarking> dynamics_;
+  std::vector<Hairpin>        hairpins_;
+  std::vector<Slur>           slurs_;
+  std::vector<BeamOverride>   beam_overrides_;
+  std::vector<GraceGroup>     grace_groups_;
 };
 
 // Decomposes a strictly positive whole-note `length` into the fewest plain

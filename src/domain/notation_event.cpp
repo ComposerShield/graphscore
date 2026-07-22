@@ -3,18 +3,23 @@
 #include <graphscore/domain/notation_event.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <utility>
 #include <variant>
 #include <vector>
 
 namespace graphscore {
 
-Note make_note(SpelledPitch pitch, Duration duration, bool tied_to_next) {
-  return Note{NotationEntityId::generate(), pitch, duration, tied_to_next};
+Note make_note(SpelledPitch pitch, Duration duration, bool tied_to_next,
+               std::vector<Articulation> articulations, StemDirection stem) {
+  return Note{NotationEntityId::generate(), pitch, duration, tied_to_next,
+              std::move(articulations),     stem};
 }
 
-Chord make_chord(Duration duration, std::vector<ChordNote> notes) {
-  return Chord{NotationEntityId::generate(), duration, std::move(notes)};
+Chord make_chord(Duration duration, std::vector<ChordNote> notes,
+                 std::vector<Articulation> articulations, StemDirection stem) {
+  return Chord{NotationEntityId::generate(), duration, std::move(notes),
+               std::move(articulations), stem};
 }
 
 Rest make_rest(Duration duration) {
@@ -43,6 +48,29 @@ bool event_sounds_pitch(const VoiceEvent& event, const SpelledPitch& pitch) {
   }
 
   return false;
+}
+
+const std::vector<Articulation>* event_articulations(const VoiceEvent& event) {
+  if (const auto* note = std::get_if<Note>(&event))
+    return &note->articulations;
+  if (const auto* chord = std::get_if<Chord>(&event))
+    return &chord->articulations;
+  return nullptr;
+}
+
+StemDirection event_stem(const VoiceEvent& event) {
+  if (const auto* note = std::get_if<Note>(&event))
+    return note->stem;
+  if (const auto* chord = std::get_if<Chord>(&event))
+    return chord->stem;
+  return StemDirection::kAuto;
+}
+
+bool event_is_beamable(const VoiceEvent& event) {
+  if (std::holds_alternative<Rest>(event))
+    return false;
+  return static_cast<std::uint8_t>(event_duration(event).base()) >=
+         static_cast<std::uint8_t>(NoteValue::kEighth);
 }
 
 namespace {

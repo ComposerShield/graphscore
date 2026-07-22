@@ -3,6 +3,7 @@
 #pragma once
 
 #include <graphscore/core/graphscore_core.hpp>
+#include <graphscore/domain/articulation.hpp>
 #include <graphscore/domain/clef_lane.hpp>
 #include <graphscore/domain/dynamic.hpp>
 #include <graphscore/domain/event_registry.hpp>
@@ -11,6 +12,8 @@
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/node_timeline.hpp>
 #include <graphscore/domain/notation_event.hpp>
+#include <graphscore/domain/notation_markings.hpp>
+#include <graphscore/domain/notation_validation.hpp>
 #include <graphscore/domain/project.hpp>
 #include <graphscore/domain/staff_layout.hpp>
 #include <graphscore/domain/tempo_lane.hpp>

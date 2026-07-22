@@ -7,8 +7,10 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <graphscore/core/graphscore_core.hpp>
+#include <graphscore/domain/notation_markings.hpp>
 #include <graphscore/domain/staff_layout.hpp>
 #include <graphscore/domain/voice_content.hpp>
 
@@ -63,10 +65,24 @@ class TrackLane {
     return staves_.size();
   }
 
+  // Every stave id currently holding a StaveVoices entry, in unspecified
+  // order. Used to enumerate a lane's staves, e.g. for referential
+  // validation across every stave/voice.
+  [[nodiscard]] std::vector<StaveId> stave_ids() const;
+
+  // Sustain-pedal spans for `stave_id`, or nullptr if none have been added.
+  // Pedal is scoped per stave, not per voice: it applies to everything
+  // sounding on that staff (see PedalSpan in notation_markings.hpp).
+  [[nodiscard]] const std::vector<PedalSpan>* pedal_spans(
+      StaveId stave_id) const;
+
+  void add_pedal_span(StaveId stave_id, PedalSpan span);
+
   [[nodiscard]] bool operator==(const TrackLane&) const = default;
 
  private:
-  std::unordered_map<StaveId, StaveVoices> staves_;
+  std::unordered_map<StaveId, StaveVoices>            staves_;
+  std::unordered_map<StaveId, std::vector<PedalSpan>> pedal_spans_;
 };
 
 // One of up to 64 globally active track definitions: a stable identity, a

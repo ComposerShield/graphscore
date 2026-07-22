@@ -7,6 +7,8 @@ add_library(graphscore_domain STATIC
   node.cpp
   node_timeline.cpp
   notation_event.cpp
+  notation_markings.cpp
+  notation_validation.cpp
   project.cpp
   staff_layout.cpp
   tempo_lane.cpp

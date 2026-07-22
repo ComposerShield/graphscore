@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 add_executable(graphscore_domain_test
+  articulation_test.cpp
   clef_lane_test.cpp
   event_registry_test.cpp
   lane_alignment_test.cpp
   measure_map_test.cpp
   node_timeline_test.cpp
   notation_event_test.cpp
+  notation_markings_test.cpp
+  notation_validation_test.cpp
   project_track_test.cpp
   tempo_lane_test.cpp
   track_test.cpp

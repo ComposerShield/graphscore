@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <graphscore/core/graphscore_core.hpp>
+#include <graphscore/domain/articulation.hpp>
 
 namespace graphscore {
 
@@ -14,12 +15,17 @@ namespace graphscore {
 // stores an explicit target reference: voice content is an ordered
 // sequence occupying contiguous time, so "the following event" is always
 // unambiguous. validate_ties() below checks that a tied note's pitch
-// actually matches something in that event.
+// actually matches something in that event. `articulations` may hold
+// several markings at once (e.g. accent + staccato); mutually-exclusive
+// duration articulations are flagged by the referential validator, not
+// prevented here. `stem` is a manual auto/up/down override.
 struct Note {
-  NotationEntityId id;
-  SpelledPitch     pitch;
-  Duration         duration;
-  bool             tied_to_next = false;
+  NotationEntityId          id;
+  SpelledPitch              pitch;
+  Duration                  duration;
+  bool                      tied_to_next = false;
+  std::vector<Articulation> articulations;
+  StemDirection             stem = StemDirection::kAuto;
 
   [[nodiscard]] bool operator==(const Note&) const = default;
 };
@@ -34,11 +40,15 @@ struct ChordNote {
   [[nodiscard]] bool operator==(const ChordNote&) const = default;
 };
 
-// Two or more simultaneous noteheads sharing one duration.
+// Two or more simultaneous noteheads sharing one duration. Articulations
+// and the stem override apply to the whole chord, matching how they are
+// notated: one marking/stem per chord column, not per notehead.
 struct Chord {
-  NotationEntityId       id;
-  Duration               duration;
-  std::vector<ChordNote> notes;
+  NotationEntityId          id;
+  Duration                  duration;
+  std::vector<ChordNote>    notes;
+  std::vector<Articulation> articulations;
+  StemDirection             stem = StemDirection::kAuto;
 
   [[nodiscard]] bool operator==(const Chord&) const = default;
 };
@@ -54,13 +64,17 @@ struct Rest {
 using VoiceEvent = std::variant<Note, Chord, Rest>;
 
 [[nodiscard]] Note make_note(SpelledPitch pitch, Duration duration,
-                             bool tied_to_next = false);
+                             bool                      tied_to_next  = false,
+                             std::vector<Articulation> articulations = {},
+                             StemDirection stem = StemDirection::kAuto);
 
 // Precondition: notes.size() >= 2. Chord's own invariant ("2+ noteheads")
 // is enforced where a Chord is added to a VoiceContent, not at this plain
 // aggregate's construction, so it can still be freely copied/mutated like
 // the other event kinds.
-[[nodiscard]] Chord make_chord(Duration duration, std::vector<ChordNote> notes);
+[[nodiscard]] Chord make_chord(Duration duration, std::vector<ChordNote> notes,
+                               std::vector<Articulation> articulations = {},
+                               StemDirection stem = StemDirection::kAuto);
 
 [[nodiscard]] Rest make_rest(Duration duration);
 
@@ -72,6 +86,20 @@ using VoiceEvent = std::variant<Note, Chord, Rest>;
 // with a matching notehead. Always false for a Rest.
 [[nodiscard]] bool event_sounds_pitch(const VoiceEvent&   event,
                                       const SpelledPitch& pitch);
+
+// The event's articulation set: a Note's or Chord's `articulations`, or
+// nullptr for a Rest (which carries none).
+[[nodiscard]] const std::vector<Articulation>* event_articulations(
+    const VoiceEvent& event);
+
+// The event's stem override: a Note's or Chord's `stem`, or
+// StemDirection::kAuto for a Rest (which has no stem to override).
+[[nodiscard]] StemDirection event_stem(const VoiceEvent& event);
+
+// True if `event` is a Note or Chord whose Duration base value is eighth
+// note or shorter. Rests are never considered beamable here: this model
+// scopes manual beam overrides to sounding events only.
+[[nodiscard]] bool event_is_beamable(const VoiceEvent& event);
 
 // Structural, intra-voice tie check: every event whose tied_to_next flag
 // (Note) or per-notehead tied_to_next flag (Chord) is set must be

@@ -39,12 +39,12 @@ Implement the toolkit-independent source of truth for notation, graph structure,
 
 ### Notation model
 
-- [ ] Four explicit voices per staff, each rhythmically complete through normalized rests.
-- [ ] Notes, chords, rests, ties, whole through sixty-fourth durations, single/double dots, and arbitrary single-level `N:M` tuplets.
-- [ ] Grace-note groups attached to principal events with playback time stolen from the preceding note.
-- [ ] Dynamics, hairpins, slurs, accent, marcato, staccato, staccatissimo, tenuto, beam overrides, stem overrides, and pedal spans.
-- [ ] Individual note spelling through double-flat and double-sharp.
-- [ ] Referential validation for ties, slurs, hairpins, tuplets, beams, and spans after edits.
+- [x] Four explicit voices per staff, each rhythmically complete through normalized rests.
+- [x] Notes, chords, rests, ties, whole through sixty-fourth durations, single/double dots, and arbitrary single-level `N:M` tuplets.
+- [x] Grace-note groups attached to principal events with playback time stolen from the preceding note.
+- [x] Dynamics, hairpins, slurs, accent, marcato, staccato, staccatissimo, tenuto, beam overrides, stem overrides, and pedal spans.
+- [x] Individual note spelling through double-flat and double-sharp.
+- [x] Referential validation for ties, slurs, hairpins, tuplets, beams, and spans after edits.
 
 ### Graph model
 
