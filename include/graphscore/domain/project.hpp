@@ -100,6 +100,8 @@ class Project {
 
   [[nodiscard]] const Node* find_node(NodeId node_id) const;
 
+  // Prefer Graph::remove_event (graph.hpp) over events().remove_event()
+  // directly -- the latter does not cascade to bound outputs/listeners.
   [[nodiscard]] EventRegistry& events() noexcept { return events_; }
 
   [[nodiscard]] const EventRegistry& events() const noexcept { return events_; }

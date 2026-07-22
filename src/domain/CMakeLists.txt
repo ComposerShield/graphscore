@@ -2,7 +2,9 @@
 
 add_library(graphscore_domain STATIC
   clef_lane.cpp
+  connector.cpp
   event_registry.cpp
+  graph.cpp
   measure_map.cpp
   node.cpp
   node_timeline.cpp
@@ -10,6 +12,7 @@ add_library(graphscore_domain STATIC
   notation_markings.cpp
   notation_validation.cpp
   project.cpp
+  route_geometry.cpp
   staff_layout.cpp
   tempo_lane.cpp
   track.cpp

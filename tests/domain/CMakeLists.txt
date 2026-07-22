@@ -3,7 +3,9 @@
 add_executable(graphscore_domain_test
   articulation_test.cpp
   clef_lane_test.cpp
+  connector_test.cpp
   event_registry_test.cpp
+  graph_test.cpp
   lane_alignment_test.cpp
   measure_map_test.cpp
   node_timeline_test.cpp
@@ -11,6 +13,7 @@ add_executable(graphscore_domain_test
   notation_markings_test.cpp
   notation_validation_test.cpp
   project_track_test.cpp
+  route_geometry_test.cpp
   tempo_lane_test.cpp
   track_test.cpp
   voice_content_test.cpp

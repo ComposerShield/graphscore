@@ -34,6 +34,8 @@ class EventRegistry {
   // event's name.
   [[nodiscard]] Result rename_event(EventId id, std::string new_name);
 
+  // Raw removal: does not unbind outputs or prune listeners referencing
+  // `id`. Prefer Graph::remove_event (graph.hpp), which cascades first.
   [[nodiscard]] Result remove_event(EventId id);
 
   [[nodiscard]] const EventDefinition* find_by_id(EventId id) const;
