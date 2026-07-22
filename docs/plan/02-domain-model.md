@@ -6,18 +6,18 @@ Implement the toolkit-independent source of truth for notation, graph structure,
 
 ## Dependencies
 
-- [ ] Milestone 01 foundation.
-- [ ] Milestone 00 architecture decisions.
+- [x] Milestone 01 foundation.
+- [x] Milestone 00 architecture decisions.
 
 ## Deliverables
 
 ### Identity and value types
 
-- [ ] Strong UUID wrappers for projects, tracks, staves, nodes, connectors, events, and notation entities.
-- [ ] Stable project-order indexes generated separately from persistent identity.
-- [ ] Exact rational musical positions and durations; avoid floating-point equality for score structure.
-- [ ] Validated MIDI pitch, channel, velocity, accidental, clef, key signature, time signature, voice, and tempo value types.
-- [ ] Explicit conversions at API/serialization boundaries and no implicit unit mixing.
+- [x] Strong UUID wrappers for projects, tracks, staves, nodes, connectors, events, and notation entities.
+- [x] Stable project-order indexes generated separately from persistent identity.
+- [x] Exact rational musical positions and durations; avoid floating-point equality for score structure.
+- [x] Validated MIDI pitch, channel, velocity, accidental, clef, key signature, time signature, voice, and tempo value types.
+- [x] Explicit conversions at API/serialization boundaries and no implicit unit mixing.
 
 ### Project and track model
 

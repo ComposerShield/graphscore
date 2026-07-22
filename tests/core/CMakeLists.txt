@@ -2,6 +2,10 @@
 
 add_executable(graphscore_core_test
   core_test.cpp
+  midi_test.cpp
+  notation_value_test.cpp
+  rational_test.cpp
+  strong_id_test.cpp
 )
 
 target_compile_features(graphscore_core_test PRIVATE cxx_std_23)

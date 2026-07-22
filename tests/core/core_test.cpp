@@ -38,7 +38,7 @@ TEST(CoreTest, RationalDefaults) {
 }
 
 TEST(CoreTest, RationalValues) {
-  const graphscore::Rational r(3, 4);
+  const graphscore::Rational r = graphscore::Rational::create(3, 4).value();
   EXPECT_EQ(r.numerator(), 3);
   EXPECT_EQ(r.denominator(), 4);
   EXPECT_DOUBLE_EQ(r.to_double(), 0.75);
