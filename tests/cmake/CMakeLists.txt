@@ -34,6 +34,6 @@ set_tests_properties(graphscore_cmake_consumer PROPERTIES
   # Configuring and building two projects from scratch is slower than a unit
   # test; the default 1500s ctest timeout is generous but this makes the
   # expectation explicit.
-  TIMEOUT 600
+  TIMEOUT 300
   LABELS "integration"
 )

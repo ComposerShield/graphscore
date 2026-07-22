@@ -68,3 +68,13 @@ endforeach()
 enable_testing()
 add_test(NAME consumer_cxx COMMAND consumer_cxx)
 add_test(NAME consumer_c COMMAND consumer_c)
+
+# On Windows the shared library must be on PATH at test time (there is
+# no rpath).  graphscore::runtime is an imported target whose location
+# the installed GraphScoreRuntimeConfig.cmake already knows.
+if (WIN32)
+  set_tests_properties(consumer_cxx consumer_c PROPERTIES
+    ENVIRONMENT_MODIFICATION
+      "PATH=path_list_prepend:$<TARGET_FILE_DIR:graphscore::runtime>"
+  )
+endif()
