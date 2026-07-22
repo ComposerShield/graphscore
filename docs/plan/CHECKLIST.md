@@ -22,7 +22,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 
 ## Milestone 01: Toolchain And CI Foundation
 
-- [ ] [Milestone 01 complete](01-toolchain-ci.md)
+- [x] [Milestone 01 complete](01-toolchain-ci.md)
 - [x] Dependencies completed
 - [x] Repository structure created
 - [x] Git source control initialized and required project/planning files tracked
@@ -34,9 +34,9 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [x] Local quality gates and `.githooks/pre-commit` completed
 - [x] GitHub Actions platform matrix completed
 - [x] Skeleton writer/runtime artifacts completed
-- [ ] Acceptance criteria passed — blocked only on a first green CI
-      run across the platform matrix; every criterion is verified
-      locally on macOS arm64 and the workflow is committed
+- [x] Acceptance criteria passed — first green CI run across the platform
+      matrix; every criterion verified locally on macOS arm64 and the
+      workflow committed
 - [x] Test focus completed
 
 ## Milestone 02: Domain And Command Model
