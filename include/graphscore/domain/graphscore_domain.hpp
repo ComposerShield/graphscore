@@ -3,12 +3,16 @@
 #pragma once
 
 #include <graphscore/core/graphscore_core.hpp>
+#include <graphscore/domain/dynamic.hpp>
+#include <graphscore/domain/event_registry.hpp>
+#include <graphscore/domain/graph_position.hpp>
+#include <graphscore/domain/node.hpp>
+#include <graphscore/domain/project.hpp>
+#include <graphscore/domain/staff_layout.hpp>
+#include <graphscore/domain/track.hpp>
 
 namespace graphscore {
 
-class Project;
-class Track;
-class Node;
 class Graph;
 class Command;
 class Selection;

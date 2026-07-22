@@ -44,7 +44,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [ ] [Milestone 02 complete](02-domain-model.md)
 - [x] Dependencies completed
 - [x] Identity and value types completed
-- [ ] Project and track model completed
+- [x] Project and track model completed
 - [ ] Node timeline completed
 - [ ] Notation model completed
 - [ ] Graph model completed

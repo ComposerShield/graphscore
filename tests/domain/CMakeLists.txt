@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 add_executable(graphscore_domain_test
-  domain_test.cpp
+  event_registry_test.cpp
+  lane_alignment_test.cpp
+  project_track_test.cpp
+  track_test.cpp
 )
 
 target_compile_features(graphscore_domain_test PRIVATE cxx_std_23)

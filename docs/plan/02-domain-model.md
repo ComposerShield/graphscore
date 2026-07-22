@@ -21,11 +21,11 @@ Implement the toolkit-independent source of truth for notation, graph structure,
 
 ### Project and track model
 
-- [ ] Project metadata, designated start node, project tempo/dynamic defaults, and event registry.
-- [ ] Up to 64 globally active track definitions with fixed one-or-more-staff layouts and MIDI channels.
-- [ ] Standard pitched and grand-staff configurations.
-- [ ] Archived removed tracks retain recoverable notation but are excluded from active playback/export.
-- [ ] Adding a track creates an empty aligned track lane in every node.
+- [x] Project metadata, designated start node, project tempo/dynamic defaults, and event registry.
+- [x] Up to 64 globally active track definitions with fixed one-or-more-staff layouts and MIDI channels.
+- [x] Standard pitched and grand-staff configurations.
+- [x] Archived removed tracks retain recoverable notation but are excluded from active playback/export.
+- [x] Adding a track creates an empty aligned track lane in every node.
 
 ### Node timeline
 
