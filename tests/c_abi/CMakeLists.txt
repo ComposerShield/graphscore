@@ -20,3 +20,12 @@ target_link_libraries(gs_c_consumer PRIVATE graphscore_runtime)
 
 add_test(NAME gs_c_consumer_compile_smoke
   COMMAND gs_c_consumer)
+
+# On Windows the shared library must be on PATH at test time.
+if (WIN32)
+  set_tests_properties(gs_c_consumer_compile_smoke PROPERTIES
+    ENVIRONMENT_MODIFICATION
+      "PATH=path_list_prepend:$<TARGET_FILE_DIR:graphscore_runtime>"
+    TIMEOUT 10
+  )
+endif()
