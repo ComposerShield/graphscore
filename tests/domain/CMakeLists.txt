@@ -6,9 +6,12 @@ add_executable(graphscore_domain_test
   lane_alignment_test.cpp
   measure_map_test.cpp
   node_timeline_test.cpp
+  notation_event_test.cpp
   project_track_test.cpp
   tempo_lane_test.cpp
   track_test.cpp
+  voice_content_test.cpp
+  voice_normalization_test.cpp
 )
 
 target_compile_features(graphscore_domain_test PRIVATE cxx_std_23)

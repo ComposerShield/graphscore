@@ -6,9 +6,12 @@ add_library(graphscore_domain STATIC
   measure_map.cpp
   node.cpp
   node_timeline.cpp
+  notation_event.cpp
   project.cpp
   staff_layout.cpp
   tempo_lane.cpp
+  track.cpp
+  voice_content.cpp
 )
 
 target_compile_features(graphscore_domain PRIVATE cxx_std_23)
