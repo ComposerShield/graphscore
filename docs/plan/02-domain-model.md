@@ -29,13 +29,13 @@ Implement the toolkit-independent source of truth for notation, graph structure,
 
 ### Node timeline
 
-- [ ] A common ordered measure map shared by every active track in a node.
-- [ ] Per-measure time and standard key signatures.
-- [ ] Clef changes at exact musical positions.
-- [ ] At least one complete main-region measure plus an optional explicit final pickdown duration greater than zero and shorter than one measure under the boundary's active meter.
-- [ ] Tempo curves cover the main region and pickdown; crossing notes/ties identify their main and tail ownership at the boundary.
-- [ ] No opening partial measure in the `0.1.0` model.
-- [ ] A node name, stable UUID, custom color, freeform notes, and graph position.
+- [x] A common ordered measure map shared by every active track in a node.
+- [x] Per-measure time and standard key signatures.
+- [x] Clef changes at exact musical positions.
+- [x] At least one complete main-region measure plus an optional explicit final pickdown duration greater than zero and shorter than one measure under the boundary's active meter.
+- [x] Tempo curves cover the main region and pickdown; crossing notes/ties identify their main and tail ownership at the boundary.
+- [x] No opening partial measure in the `0.1.0` model.
+- [x] A node name, stable UUID, custom color, freeform notes, and graph position.
 
 ### Notation model
 

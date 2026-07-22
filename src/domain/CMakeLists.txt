@@ -1,10 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 add_library(graphscore_domain STATIC
+  clef_lane.cpp
   event_registry.cpp
+  measure_map.cpp
   node.cpp
+  node_timeline.cpp
   project.cpp
   staff_layout.cpp
+  tempo_lane.cpp
 )
 
 target_compile_features(graphscore_domain PRIVATE cxx_std_23)
