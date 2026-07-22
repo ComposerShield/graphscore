@@ -2,6 +2,7 @@
 
 add_executable(graphscore_core_test
   core_test.cpp
+  deterministic_prng_test.cpp
   duration_test.cpp
   midi_test.cpp
   notation_value_test.cpp

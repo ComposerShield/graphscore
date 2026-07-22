@@ -4,6 +4,7 @@
 
 #include <graphscore/core/accidental.hpp>
 #include <graphscore/core/clef.hpp>
+#include <graphscore/core/deterministic_prng.hpp>
 #include <graphscore/core/duration.hpp>
 #include <graphscore/core/key_signature.hpp>
 #include <graphscore/core/midi_channel.hpp>

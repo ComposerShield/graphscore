@@ -54,11 +54,14 @@ enum class ConnectorType : std::uint8_t {
 };
 
 // A stable, named exit point on a node with at most one destination edge
-// while editing (see destination()), plus the fields that will govern how
+// while editing (see destination()), plus the fields that govern how
 // playback selects among a node's eligible outputs. This is configuration
-// storage only: the weighted-random selection algorithm and the
-// cross-event arbitration/tie-breaking that actually consume these fields
-// are later phases (see the TODOs below).
+// storage only: the cross-event arbitration/tie-breaking that consumes
+// priority() lives in event_state_machine.hpp; the weighted-random
+// selection algorithm that consumes weight() lives in
+// weighted_selection.hpp and is composed with the other two sequential-
+// precedence tiers by EventStateMachine::resolve_sequential_transition()
+// (event_state_machine.hpp).
 //
 // event_binding() is the type-appropriate trigger: required in practice
 // for ConnectorType::kVertical (there is no other way a vertical output
@@ -70,9 +73,32 @@ enum class ConnectorType : std::uint8_t {
 // at a node boundary -- see EventStateMachine and select_winner()
 // (event_state_machine.hpp) for the exact tie-breaking order (priority,
 // then newest occurrence, then stable connector order). weight() matters
-// only for kSequential -- TODO(Phase 6): weighted-random selection among
-// eligible sequential outputs, 100%-total groups, and zero-weight
-// ineligibility.
+// only for kSequential: it is this output's exact fraction of a node's
+// tier-3 weighted-random selection among its sibling eligible outputs
+// (docs/plan/README.md: "Random groups use deterministic host-seeded
+// randomness and must total exactly 100 percent"). weight() is a fraction
+// of the whole, not a percent, so that product decision's "must total
+// exactly 100 percent" is exactly equivalent to "the eligible group's
+// weight()s must sum to exactly Rational(1)" -- see weighted_selection.hpp
+// (validate_weight_group(), select_weighted_random()) for the group
+// definition, exact-sum check, and selection algorithm this field feeds.
+// Stored as an exact Rational, never a floating-point weight, so an
+// eligible group's total can be validated for exact equality to Rational(1)
+// without any floating-point comparison, and so exact non-percent splits
+// (for example three equal thirds, 1/3 each) are representable at all --
+// something whole-percent storage could not express without silent bias.
+// A weight() of Rational(0) makes this output permanently ineligible for
+// tier-3 selection -- never merely "unlikely" -- see weighted_selection.hpp's
+// overview. set_weight() rejects a negative weight outright (leaving the
+// stored weight unchanged and returning ResultCode::kInvalidArgument): a
+// negative weight is worse than an out-of-range whole percent used to be,
+// because it can make an otherwise-malformed group's total cross-cancel to
+// exactly Rational(1) and be misread as valid; rejecting it here, at the
+// single place a weight is ever written, is cheaper and more reliable than
+// trying to detect that cancellation later from the sum alone. (Non-negative
+// out-of-range weights, e.g. Rational(2), remain permitted storage exactly as
+// out-of-range whole percents were: weighted_selection.hpp sums every
+// candidate's weight() and simply fails the enclosing group's exact-1 check.)
 // Both fields stay stored regardless of the connector's current type, so
 // retyping a connector never discards data entered under its previous
 // type.
@@ -97,9 +123,23 @@ class OutputConnector {
 
   void set_priority(int priority) noexcept { priority_ = priority; }
 
-  [[nodiscard]] double weight() const noexcept { return weight_; }
+  [[nodiscard]] Rational weight() const noexcept { return weight_; }
 
-  void set_weight(double weight) noexcept { weight_ = weight; }
+  // Rejects a negative `weight` outright, leaving the stored weight
+  // unchanged (see this class's overview above for why negative weights are
+  // rejected here rather than left to validate_weight_group()). A
+  // non-negative `weight`, including one outside [0, 1] such as Rational(2),
+  // is stored verbatim; weighted_selection.hpp sums every candidate's
+  // weight() and simply makes the enclosing group fail
+  // validate_weight_group()'s exact-Rational(1) check
+  // (WeightGroupValidity::kInvalidTotal), the same fail-closed outcome any
+  // other malformed total already produces.
+  [[nodiscard]] Result set_weight(Rational weight) noexcept {
+    if (weight.numerator() < 0)
+      return Result(ResultCode::kInvalidArgument);
+    weight_ = weight;
+    return Result();
+  }
 
   // Whether this output must have exactly one destination to count toward
   // Graph::is_export_ready(). An output not yet enabled for export may be
@@ -160,7 +200,7 @@ class OutputConnector {
   ConnectorType                       type_;
   std::optional<EventId>              event_binding_;
   int                                 priority_       = 0;
-  double                              weight_         = 1.0;
+  Rational                            weight_         = Rational(1);
   bool                                export_enabled_ = true;
   std::optional<ConnectorDestination> destination_;
   RouteGeometry                       route_;

@@ -25,7 +25,9 @@
 #include <graphscore/domain/staff_layout.hpp>
 #include <graphscore/domain/tempo_lane.hpp>
 #include <graphscore/domain/track.hpp>
+#include <graphscore/domain/vertical_transition.hpp>
 #include <graphscore/domain/voice_content.hpp>
+#include <graphscore/domain/weighted_selection.hpp>
 
 namespace graphscore {
 

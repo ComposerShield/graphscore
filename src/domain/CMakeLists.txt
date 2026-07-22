@@ -18,7 +18,9 @@ add_library(graphscore_domain STATIC
   staff_layout.cpp
   tempo_lane.cpp
   track.cpp
+  vertical_transition.cpp
   voice_content.cpp
+  weighted_selection.cpp
 )
 
 target_compile_features(graphscore_domain PRIVATE cxx_std_23)

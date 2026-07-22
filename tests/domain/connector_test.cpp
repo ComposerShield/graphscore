@@ -16,6 +16,7 @@ using graphscore::Node;
 using graphscore::NodeId;
 using graphscore::OutputConnector;
 using graphscore::QueuePolicy;
+using graphscore::Rational;
 
 namespace {
 
@@ -81,16 +82,39 @@ TEST(ConnectorTest, SequentialAndVerticalFieldsAreIndependentlySettable) {
   ASSERT_NE(output, nullptr);
 
   EXPECT_EQ(output->type(), ConnectorType::kSequential);
-  output->set_weight(2.5);
+  // 5/2 (2.5) is an out-of-range weight (see OutputConnector::set_weight's
+  // doc comment) but still permitted storage: only negative weights are
+  // rejected outright.
+  ASSERT_TRUE(output->set_weight(*Rational::create(5, 2)).ok());
   output->set_priority(3);
-  EXPECT_DOUBLE_EQ(output->weight(), 2.5);
+  EXPECT_EQ(output->weight(), *Rational::create(5, 2));
   EXPECT_EQ(output->priority(), 3);
 
   ASSERT_TRUE(node.set_output_type(out_id, ConnectorType::kVertical).ok());
   EXPECT_EQ(output->type(), ConnectorType::kVertical);
   // Retyping never discards the fields entered under the previous type.
-  EXPECT_DOUBLE_EQ(output->weight(), 2.5);
+  EXPECT_EQ(output->weight(), *Rational::create(5, 2));
   EXPECT_EQ(output->priority(), 3);
+}
+
+TEST(ConnectorTest, NewOutputDefaultsToWeightOfOne) {
+  Node        node   = make_node();
+  const auto  out_id = node.add_output("Out");
+  const auto* output = node.find_output(out_id);
+  ASSERT_NE(output, nullptr);
+
+  EXPECT_EQ(output->weight(), Rational(1));
+}
+
+TEST(ConnectorTest, SetWeightRejectsNegativeAndLeavesStoredWeightUnchanged) {
+  Node       node   = make_node();
+  const auto out_id = node.add_output("Out");
+  auto*      output = node.find_output(out_id);
+  ASSERT_NE(output, nullptr);
+
+  ASSERT_TRUE(output->set_weight(*Rational::create(1, 3)).ok());
+  EXPECT_FALSE(output->set_weight(Rational(-1)).ok());
+  EXPECT_EQ(output->weight(), *Rational::create(1, 3));
 }
 
 TEST(ConnectorTest, RemoveOutputFailsForUnknownId) {
