@@ -47,7 +47,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [x] Project and track model completed
 - [x] Node timeline completed
 - [x] Notation model completed
-- [ ] Graph model completed
+- [x] Graph model completed
 - [ ] Adaptive playback semantics specified
 - [ ] Normative playback specification completed
 - [ ] Command and selection model completed

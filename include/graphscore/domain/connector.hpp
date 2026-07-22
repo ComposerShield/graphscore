@@ -65,11 +65,14 @@ enum class ConnectorType : std::uint8_t {
 // becomes eligible) and optional for kSequential (an event-gated
 // sequential output only becomes eligible once its event has a matching
 // persisted occurrence; an unbound sequential output is always a
-// candidate at the node boundary). priority() matters only for kVertical
-// -- TODO(Phase 5b): cross-event arbitration/tie-breaking among
-// simultaneously eligible vertical outputs. weight() matters only for
-// kSequential -- TODO(Phase 6): weighted-random selection among eligible
-// sequential outputs, 100%-total groups, and zero-weight ineligibility.
+// candidate at the node boundary). priority() drives both kVertical
+// simultaneous-match arbitration and kSequential cross-event arbitration
+// at a node boundary -- see EventStateMachine and select_winner()
+// (event_state_machine.hpp) for the exact tie-breaking order (priority,
+// then newest occurrence, then stable connector order). weight() matters
+// only for kSequential -- TODO(Phase 6): weighted-random selection among
+// eligible sequential outputs, 100%-total groups, and zero-weight
+// ineligibility.
 // Both fields stay stored regardless of the connector's current type, so
 // retyping a connector never discards data entered under its previous
 // type.

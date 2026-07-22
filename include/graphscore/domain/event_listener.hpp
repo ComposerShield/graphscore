@@ -13,12 +13,13 @@ namespace graphscore {
 // when a sequential transition needs one (product decision,
 // docs/plan/README.md). kLatestValidWins is the default.
 //
-// TODO(Phase 5b): implement the runtime event state machine that actually
-// interprets this policy -- bounded occurrence storage, arrival sequence,
-// first/latest/FIFO arbitration, cross-event connector-priority
-// arbitration, consumption/discard, pause behavior, and clearing on
-// stop/reset/node-play. A full kFifo listener drops its oldest occurrence
-// and increments a diagnostic counter; that counter is also Phase 5b.
+// The runtime event state machine that interprets this policy -- bounded
+// occurrence storage, arrival sequence, first/latest/FIFO arbitration,
+// cross-event connector-priority arbitration, consumption/discard, pause
+// behavior, and clearing on stop/reset/node-play -- lives in EventQueue
+// and EventStateMachine (event_queue.hpp, event_state_machine.hpp). A full
+// kFifo listener drops its oldest occurrence and increments a diagnostic
+// counter there (EventQueue::dropped_count()).
 enum class QueuePolicy : std::uint8_t {
   kFirstWins = 0,
   kLatestValidWins,

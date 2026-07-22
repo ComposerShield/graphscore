@@ -4,7 +4,9 @@ add_executable(graphscore_domain_test
   articulation_test.cpp
   clef_lane_test.cpp
   connector_test.cpp
+  event_queue_test.cpp
   event_registry_test.cpp
+  event_state_machine_test.cpp
   graph_test.cpp
   lane_alignment_test.cpp
   measure_map_test.cpp

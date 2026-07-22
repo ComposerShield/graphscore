@@ -8,7 +8,10 @@
 #include <graphscore/domain/connector.hpp>
 #include <graphscore/domain/dynamic.hpp>
 #include <graphscore/domain/event_listener.hpp>
+#include <graphscore/domain/event_occurrence.hpp>
+#include <graphscore/domain/event_queue.hpp>
 #include <graphscore/domain/event_registry.hpp>
+#include <graphscore/domain/event_state_machine.hpp>
 #include <graphscore/domain/graph.hpp>
 #include <graphscore/domain/graph_position.hpp>
 #include <graphscore/domain/measure_map.hpp>

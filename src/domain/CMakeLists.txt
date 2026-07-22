@@ -3,7 +3,9 @@
 add_library(graphscore_domain STATIC
   clef_lane.cpp
   connector.cpp
+  event_queue.cpp
   event_registry.cpp
+  event_state_machine.cpp
   graph.cpp
   measure_map.cpp
   node.cpp
