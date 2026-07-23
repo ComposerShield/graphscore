@@ -5,8 +5,11 @@
 per Adam's locked scoping rulings (see "Plan for the remaining phases"); 7a
 is complete and committed (`063f1af`), after three review rounds that caught
 and fixed a false continuity claim, a non-additive integration bug, and a
-sanitizer-fatal `Rational` overflow. This file lets a different orchestrator
-pick up mid-milestone without re-deriving the plan.
+sanitizer-fatal `Rational` overflow. 7b is complete and committed (`dc7550a`),
+after two review rounds that caught an inverted precedence claim and a
+second sanitizer-fatal `Rational`/shift-overflow bug in the grace-steal
+math. This file lets a different orchestrator pick up mid-milestone without
+re-deriving the plan.
 Source of truth remains
 [02-domain-model.md](02-domain-model.md) and [CHECKLIST.md](CHECKLIST.md); this
 doc records *how* the milestone is being executed.
@@ -80,7 +83,7 @@ only when the whole section is approved.
 | 6b-ii | Adaptive playback semantics — MIDI ownership + lifecycle | ✅ done | (this commit) |
 | 6c | Adaptive playback semantics — writer audition model | ✅ done | (this commit) |
 | 7a | Normative playback specification — tempo curve math | ✅ done | `063f1af` |
-| 7b | Normative playback specification — articulation/dynamic/grace mapping | ⬜ remaining | — |
+| 7b | Normative playback specification — articulation/dynamic/grace mapping | ✅ done | `dc7550a` |
 | 7c | Normative playback specification — simultaneous MIDI ordering (spec only) | ⬜ remaining | — |
 | 8 | Command and selection model | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
@@ -201,6 +204,47 @@ focus, and the top-level "Milestone 02 complete".
   `pickdown_bound_oracle.hpp:88-94` (comment-only updates, zero logic
   change to `segment_index_at` or the oracle). 619 tests after 7a (+38 over
   Phase 6c's 581).
+- **Phase 7b (`core` + `domain`) — articulation/dynamic/grace mapping:**
+  `Articulation`/`is_duration_articulation`, `Dynamic`, and `GraceNoteType`
+  relocated from `graphscore_domain` into `graphscore_core` (new
+  `articulation.hpp`, `dynamic.hpp`, `grace_note_type.hpp`), same
+  core-cannot-depend-on-domain reasoning as 7a's `TempoPoint` move;
+  `StemDirection` stays in domain (engraving-only, not a playback concern).
+  New `playback_mapping.hpp`/`.cpp` (core, exact `Rational`/integer
+  arithmetic throughout — **no floating-point exception here**, unlike 7a):
+  an 8-level dynamic→velocity table; exact-Rational hairpin interpolation
+  between two already-resolved velocities with round-half-to-even; a
+  documented, non-stacking accent/marcato emphasis rule (marcato wins
+  outright if both present) saturating at `MidiVelocity::kMax`;
+  articulation→sounded-duration ratios (default detache 7/8, staccato 1/2,
+  staccatissimo 1/4, tenuto 1/1); slur legato overlap
+  (`articulated_duration + gap_to_next_onset`); and grace-note steal math
+  (acciaccatura front-loaded geometric division, appoggiatura even
+  division, a steal cap leaving the preceding note >= half its duration,
+  a fixed absolute fallback when there is no preceding sounded note).
+  **Locked precedence: slur wins outright** — a note that is tied AND
+  slurred AND duration-articulated is governed entirely by legato overlap;
+  `is_tied` and any duration-articulation are silently bypassed on that
+  path (a review round caught this contradicting the original doc prose,
+  which claimed the two "never conflict" — they do, and slur wins, now
+  documented as a deliberate call, not an accident). A second review round
+  caught real UB — shift-exponent overflow and a fatal `Rational`
+  summation overflow in the grace-steal weighting, reachable from an
+  ordinary (unvalidated) `GraceGroup` size around 32+ notes, well short of
+  any "non-musical extreme operand" — fixed with a named, enforced
+  `kMaxGraceNotesPerGroup = 16` bound (weights sum to exactly 1 either side
+  of the bound; beyond it, notes past the bound share the smallest slot
+  equally rather than continuing to halve) and a closed-form (loop-free)
+  `grace_steal_remaining_duration`. Thin domain wiring
+  (`notation_playback.hpp`/`.cpp`) applies this math to existing
+  `Note`/`Chord`/`GraceGroup` structures — deliberately does **not** walk
+  `TrackLane`/`VoiceContent` to resolve which `Dynamic`/`Hairpin` governs
+  an arbitrary event; callers supply pre-resolved context, same
+  spec-now-wire-later boundary as 7c draws for MIDI ordering. Resolves the
+  `TODO(Phase 7)` seam at `notation_markings.hpp:112` (was `GraceGroup`)
+  and the untagged dynamic/hairpin/slur/pedal-to-MIDI deferrals at
+  `articulation.hpp:11` and the former `notation_markings.hpp:13,30,41,73`.
+  674 tests after 7b (+55 over Phase 7a's 619).
 
 ## Plan for the remaining phases
 
@@ -504,6 +548,27 @@ Recorded here so the owning phase picks them up:
   `tempo_point.hpp` rather than including `tempo.hpp` directly — harmless
   today, worth tightening to include-what-you-use if the file is touched
   again.
+- **→ Milestone 03 (persistence, 7b):** `GraceGroup` has no cardinality
+  validation anywhere in the model (`make_grace_group` accepts any
+  `notes.size()`). `playback_mapping.hpp`'s `kMaxGraceNotesPerGroup = 16`
+  bound keeps the core math UB-free for any size, but a caller that sums
+  `grace_steal_durations`' returned per-note vector itself (rather than
+  using the closed-form `grace_steal_remaining_duration`) can still
+  overflow `Rational` around `note_count` ~1e5 — reviewer-verified, not
+  reachable through any code this milestone ships, but real once M03 loads
+  `GraceGroup` off disk. The persistence layer should validate group size
+  at load time rather than relying on every future caller preferring the
+  closed-form function.
+- **→ later (advisory only, 7b):** `grace_steal_durations` still returns
+  a heap-allocated `std::vector<Rational>` — same "wants `std::span` plus a
+  caller-supplied fixed buffer before the realtime path uses it" profile
+  already on this list for `compute_group`/`select_winner`/tempo-curve
+  integration. `velocity_for_dynamic` indexes an 8-element table with an
+  unchecked `operator[]` on the raw enum value rather than a `switch`
+  (`sounded_duration_for_articulation`, two functions below it in the same
+  file, uses a `switch` and is immune) — harmless today since `Dynamic` has
+  no invalid-construction path, but inconsistent within the file; worth
+  matching if that function is touched again.
 
 Accepted-as-designed (no action needed): beam-override contiguity check ignores
 list order (4b #2); `Node::lane_count()` counts archived lanes too (Phase 2);
