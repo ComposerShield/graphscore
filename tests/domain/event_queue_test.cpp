@@ -37,7 +37,7 @@ TEST(EventOccurrenceTest, CreateSucceedsAndStoresFields) {
 }
 
 TEST(EventQueueTest, EmptyQueueHasNoPendingOccurrence) {
-  EventQueue queue;
+  const EventQueue queue;
   EXPECT_TRUE(queue.empty());
   EXPECT_EQ(queue.size(), 0u);
   EXPECT_FALSE(queue.peek().has_value());

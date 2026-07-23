@@ -8,7 +8,6 @@
 
 using graphscore::Accidental;
 using graphscore::Letter;
-using graphscore::MidiPitch;
 using graphscore::SpelledPitch;
 
 struct SpelledPitchCase {

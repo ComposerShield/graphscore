@@ -60,14 +60,21 @@ std::vector<ArbitrationCandidate> assemble_vertical_candidates(
     const OutputConnector& output = outputs[index];
     if (output.type() != ConnectorType::kVertical)
       continue;
-    if (!output.destination().has_value())
+    const std::optional<ConnectorDestination>& destination =
+        output.destination();
+    if (!destination.has_value())
       continue;
-    if (!output.event_binding().has_value())
+    // event_binding() returns by value: bind once so the guard and the
+    // dereference operate on the same optional object, and copy the id out
+    // before the loop so the engaged state is established where it is used.
+    const std::optional<EventId> event_binding = output.event_binding();
+    if (!event_binding.has_value())
       continue;
+    const EventId binding_id = *event_binding;
 
     bool fired = false;
     for (const EventId& event : fired_events) {
-      if (event == *output.event_binding()) {
+      if (event == binding_id) {
         fired = true;
         break;
       }
@@ -75,8 +82,7 @@ std::vector<ArbitrationCandidate> assemble_vertical_candidates(
     if (!fired)
       continue;
 
-    const Node* destination_node =
-        project.find_node(output.destination()->node);
+    const Node* destination_node = project.find_node(destination->node);
     if (destination_node == nullptr)
       continue;
     const NodeTimeline* destination_timeline = destination_node->timeline();
@@ -133,10 +139,13 @@ BoundaryResolution EventStateMachine::resolve_sequential_boundary(
       continue;
     if (!output.destination().has_value())
       continue;
-    if (!output.event_binding().has_value())
+    // event_binding() returns by value: bind once so the guard above and
+    // the map lookup below operate on the same optional object.
+    const std::optional<EventId> event_binding = output.event_binding();
+    if (!event_binding.has_value())
       continue;
 
-    const auto it = queues_.find(Key{node.id(), *output.event_binding()});
+    const auto it = queues_.find(Key{node.id(), *event_binding});
     if (it == queues_.end())
       continue;
 
@@ -152,9 +161,13 @@ BoundaryResolution EventStateMachine::resolve_sequential_boundary(
   const std::optional<ConnectorId> winner = select_winner(candidates);
   if (!winner.has_value())
     return BoundaryResolution{BoundaryOutcome::kNoEventIntent, std::nullopt};
+  // Copy the id out before the mutating consume() loop: the loop body may
+  // not alias winner, but keeping check and use adjacent keeps that obvious
+  // to reader and analyzer alike.
+  const ConnectorId winner_id = *winner;
 
   for (auto& [connector, queue_it] : candidate_queues) {
-    if (connector == *winner) {
+    if (connector == winner_id) {
       queue_it->second.consume();
       break;
     }

@@ -39,21 +39,19 @@ class VoiceContent {
     return dynamics_;
   }
 
-  void add_dynamic(DynamicMarking marking) {
-    dynamics_.push_back(std::move(marking));
-  }
+  void add_dynamic(DynamicMarking marking) { dynamics_.push_back(marking); }
 
   [[nodiscard]] const std::vector<Hairpin>& hairpins() const noexcept {
     return hairpins_;
   }
 
-  void add_hairpin(Hairpin hairpin) { hairpins_.push_back(std::move(hairpin)); }
+  void add_hairpin(Hairpin hairpin) { hairpins_.push_back(hairpin); }
 
   [[nodiscard]] const std::vector<Slur>& slurs() const noexcept {
     return slurs_;
   }
 
-  void add_slur(Slur slur) { slurs_.push_back(std::move(slur)); }
+  void add_slur(Slur slur) { slurs_.push_back(slur); }
 
   [[nodiscard]] const std::vector<BeamOverride>& beam_overrides()
       const noexcept {

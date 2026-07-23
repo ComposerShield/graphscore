@@ -35,7 +35,7 @@ const std::vector<PedalSpan>* TrackLane::pedal_spans(StaveId stave_id) const {
 }
 
 void TrackLane::add_pedal_span(StaveId stave_id, PedalSpan span) {
-  pedal_spans_[stave_id].push_back(std::move(span));
+  pedal_spans_[stave_id].push_back(span);
 }
 
 }  // namespace graphscore

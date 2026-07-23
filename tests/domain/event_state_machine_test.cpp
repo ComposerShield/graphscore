@@ -120,8 +120,8 @@ TEST(SelectWinnerTest, ResultIsIndependentOfInputVectorOrdering) {
       ArbitrationCandidate{b, 1, 2, 5},
       ArbitrationCandidate{c, 2, 2, 9},
   };
-  std::vector<ArbitrationCandidate> shuffled = {forward[2], forward[0],
-                                                forward[1]};
+  const std::vector<ArbitrationCandidate> shuffled = {forward[2], forward[0],
+                                                      forward[1]};
 
   EXPECT_EQ(select_winner(forward), select_winner(shuffled));
   EXPECT_EQ(select_winner(forward), c);
@@ -154,7 +154,7 @@ TEST(ResolveVerticalMatchTest,
 
 TEST(EventStateMachineTest, RecordFailsWhenNodeHasNoListenerForEvent) {
   EventStateMachine state_machine;
-  Node              node = make_node();
+  const Node        node = make_node();
 
   EXPECT_FALSE(
       state_machine.record_sequential_occurrence(node, EventId::generate(), 0)
@@ -239,7 +239,7 @@ TEST(EventStateMachineTest, NodeWithNoSequentialOutputsStopsPlayback) {
 
 TEST(EventStateMachineTest, EmptyNodeAlsoStopsPlayback) {
   EventStateMachine state_machine;
-  Node              node = make_node();
+  const Node        node = make_node();
 
   EXPECT_EQ(state_machine.resolve_sequential_boundary(node).outcome,
             BoundaryOutcome::kStopPlayback);
@@ -773,7 +773,7 @@ TEST(EventStateMachineTest, QueueManualTransitionRejectsANonActiveSource) {
 
 TEST(EventStateMachineTest, QueueManualTransitionRejectsAnUnknownConnector) {
   EventStateMachine state_machine;
-  Node              node = make_node();
+  const Node        node = make_node();
 
   EXPECT_FALSE(
       state_machine
@@ -1500,7 +1500,7 @@ TEST(EventStateMachineTest, ClearAllAlsoClearsEveryManualQueueEntry) {
 
 TEST(EventStateMachineTest, ClearNodeDoesNotTouchTheVerticalJumpGuard) {
   EventStateMachine                       state_machine;
-  Node                                    node       = make_node();
+  const Node                              node       = make_node();
   const ConnectorId                       winner     = ConnectorId::generate();
   const std::vector<ArbitrationCandidate> candidates = {
       ArbitrationCandidate{winner, 0, 0, 0},

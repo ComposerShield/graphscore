@@ -9,7 +9,6 @@
 #include <graphscore/domain/graphscore_domain.hpp>
 
 using graphscore::Accidental;
-using graphscore::Chord;
 using graphscore::ChordNote;
 using graphscore::classify_note_ownership;
 using graphscore::classify_voice_ownership;
@@ -22,7 +21,6 @@ using graphscore::make_rest;
 using graphscore::Measure;
 using graphscore::MusicalSpan;
 using graphscore::NodeTimeline;
-using graphscore::Note;
 using graphscore::NoteOwnership;
 using graphscore::NoteValue;
 using graphscore::Rational;

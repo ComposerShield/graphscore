@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Test-code amendments to the root .clang-tidy (clang-tidy inherits parent
+# configs by default; this file only subtracts).
+#
+# bugprone-unchecked-optional-access cannot model GoogleTest assertions:
+#
+#   ASSERT_TRUE(opt.has_value());
+#   EXPECT_EQ(opt->field, expected);
+#
+# is the canonical gtest idiom, but the check's dataflow analysis does not
+# treat ASSERT_*/EXPECT_* as establishing that the optional is engaged, so it
+# flags every guarded dereference in a test body. Rewriting hundreds of
+# assertions to .value() would add noise without adding safety — a disengaged
+# optional in a test fails the ASSERT first. The check stays enabled for
+# production code, where the guard is a real branch the analyzer can verify.
+
+Checks: '-bugprone-unchecked-optional-access'

@@ -36,6 +36,7 @@ TEST(DeterministicPrngTest, DifferentSeedsDiverge) {
 TEST(DeterministicPrngTest, ResetReproducesTheOriginalStreamExactly) {
   DeterministicPrng          original(999999937);
   std::vector<std::uint64_t> expected;
+  expected.reserve(10);
   for (int i = 0; i < 10; ++i) {
     expected.push_back(original.next_u64());
   }

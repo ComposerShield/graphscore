@@ -3,6 +3,7 @@
 #include <graphscore/domain/notation_validation.hpp>
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -200,8 +201,11 @@ void append_tuplet_diagnostics(const std::vector<VoiceEvent>&   events,
       ++i;
     }
 
-    const Duration base_unit_duration =
-        *Duration::create(event_duration(events[run_start]).base(), 0);
+    // dots == 0 always satisfies Duration::create's only validation.
+    const std::optional<Duration> base_unit =
+        Duration::create(event_duration(events[run_start]).base(), 0);
+    assert(base_unit.has_value());
+    const Duration base_unit_duration = *base_unit;
     const Rational multiple = resolved_sum / base_unit_duration.resolved();
     if (multiple.denominator() != 1 || multiple.numerator() <= 0) {
       diagnostics.push_back(
@@ -263,8 +267,11 @@ std::vector<NotationDiagnostic> validate_lane_references(const TrackLane& lane,
       continue;
 
     for (std::uint8_t v = Voice::kMin; v <= Voice::kMax; ++v) {
+      // The loop bounds keep v inside [Voice::kMin, Voice::kMax].
+      const std::optional<Voice> voice = Voice::create(v);
+      assert(voice.has_value());
       const std::vector<NotationDiagnostic> voice_diagnostics =
-          validate_voice_references(voices->voice(*Voice::create(v)));
+          validate_voice_references(voices->voice(*voice));
       diagnostics.insert(diagnostics.end(), voice_diagnostics.begin(),
                          voice_diagnostics.end());
     }

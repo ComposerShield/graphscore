@@ -77,6 +77,7 @@ TEST(MeasureMapTest, MeasureIndexAtMapsPositionsBackToMeasures) {
 
 TEST(MeasureMapTest, RepresentativeSixtyFourMeasureNode) {
   std::vector<Measure> measures;
+  measures.reserve(64);
   for (int i = 0; i < 64; ++i) {
     measures.push_back(make_measure(4, 4));
   }

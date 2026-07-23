@@ -49,8 +49,8 @@ TEST(ClefLaneTest, RejectsNegativePositionAndDuplicatePosition) {
 }
 
 TEST(ClefLaneTest, GrandStaffStavesHaveIndependentClefLanes) {
-  ClefLane treble_lane(Clef::kTreble);
-  ClefLane bass_lane(Clef::kBass);
+  ClefLane       treble_lane(Clef::kTreble);
+  const ClefLane bass_lane(Clef::kBass);
 
   ASSERT_TRUE(treble_lane.add_change(Rational(4), Clef::kAlto).ok());
 

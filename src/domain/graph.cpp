@@ -50,7 +50,7 @@ Result Graph::remove_input(NodeId node_id, ConnectorId connector_id) {
   for (const Node& node : project_->nodes())
     node_ids.push_back(node.id());
 
-  for (NodeId id : node_ids) {
+  for (const NodeId id : node_ids) {
     project_->find_node(id)->clear_destinations_to(node_id, connector_id);
   }
 
@@ -78,7 +78,7 @@ Result Graph::remove_event(EventId event) {
   for (const Node& node : project_->nodes())
     node_ids.push_back(node.id());
 
-  for (NodeId id : node_ids) {
+  for (const NodeId id : node_ids) {
     Node* node = project_->find_node(id);
 
     std::vector<ConnectorId> bound_outputs;
@@ -87,7 +87,7 @@ Result Graph::remove_event(EventId event) {
         bound_outputs.push_back(output.id());
     }
 
-    for (ConnectorId output_id : bound_outputs) {
+    for (const ConnectorId output_id : bound_outputs) {
       // Cannot fail: output_id came from this node's outputs and nullopt
       // skips the vertical/sequential clash check.
       [[maybe_unused]] const Result unbind_result =

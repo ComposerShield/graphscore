@@ -19,7 +19,6 @@ using graphscore::make_note;
 using graphscore::make_rest;
 using graphscore::Note;
 using graphscore::NoteValue;
-using graphscore::Rest;
 using graphscore::SpelledPitch;
 using graphscore::validate_ties;
 using graphscore::VoiceEvent;

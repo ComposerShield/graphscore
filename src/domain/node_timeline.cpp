@@ -105,6 +105,8 @@ Result NodeTimeline::set_tempo(std::vector<TempoPoint> points) {
 
 std::optional<TempoLane> NodeTimeline::rebuild_tempo_for_end(
     Rational new_end) const {
+  if (!tempo_.has_value())
+    return std::nullopt;
   return TempoLane::create(tempo_->points(), tempo_->start(), new_end);
 }
 

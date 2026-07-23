@@ -6,7 +6,6 @@
 
 #include <graphscore/domain/graphscore_domain.hpp>
 
-using graphscore::Accidental;
 using graphscore::Articulation;
 using graphscore::Chord;
 using graphscore::ChordNote;

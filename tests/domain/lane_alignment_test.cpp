@@ -111,6 +111,7 @@ TEST(LaneAlignmentTest, RepresentativeSixtyFourTracksAcrossSeveralNodes) {
 
   constexpr int       kNodeCount = 6;
   std::vector<NodeId> node_ids;
+  node_ids.reserve(kNodeCount);
   for (int i = 0; i < kNodeCount; ++i) {
     node_ids.push_back(project.add_node("Node " + std::to_string(i)));
   }

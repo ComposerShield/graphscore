@@ -11,7 +11,6 @@ using graphscore::ConnectorType;
 using graphscore::Graph;
 using graphscore::KeySignature;
 using graphscore::Measure;
-using graphscore::Node;
 using graphscore::NodeId;
 using graphscore::NodeTimeline;
 using graphscore::PickdownBoundResult;
@@ -48,7 +47,7 @@ std::optional<NodeTimeline> make_timeline_without_pickdown() {
 }  // namespace
 
 TEST(PickdownBoundOracleTest, ProjectWithNoNodesIsBoundedAtZero) {
-  Project project = make_project();
+  const Project project = make_project();
 
   const PickdownBoundResult result = prove_pickdown_overlap_bound(project);
   EXPECT_EQ(result.status, PickdownBoundStatus::kBounded);

@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -62,9 +64,13 @@ std::vector<Duration> plain_rest_candidates() {
   };
 
   std::vector<Duration> candidates;
-  for (NoteValue base : kBases) {
+  candidates.reserve(kBases.size() * (Duration::kMaxDots + 1));
+  for (const NoteValue base : kBases) {
     for (std::uint8_t dots = 0; dots <= Duration::kMaxDots; ++dots) {
-      candidates.push_back(*Duration::create(base, dots));
+      // The loop bound keeps dots <= kMaxDots, create's only failure mode.
+      const std::optional<Duration> duration = Duration::create(base, dots);
+      assert(duration.has_value());
+      candidates.push_back(*duration);
     }
   }
   std::sort(candidates.begin(), candidates.end(),

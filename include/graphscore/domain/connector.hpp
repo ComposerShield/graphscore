@@ -162,7 +162,7 @@ class OutputConnector {
   // interior route is meaningless without an edge to route.
   void set_destination(
       std::optional<ConnectorDestination> destination) noexcept {
-    destination_ = std::move(destination);
+    destination_ = destination;
     if (!destination_.has_value())
       route_.reset_to_automatic();
   }

@@ -8,7 +8,6 @@
 
 #include <graphscore/domain/graphscore_domain.hpp>
 
-using graphscore::Clef;
 using graphscore::Duration;
 using graphscore::KeySignature;
 using graphscore::Letter;
@@ -200,9 +199,9 @@ TEST(FourVoiceGrandStaffTest, AllVoicesNormalizeIndependentlyToNodeEnd) {
 
 TEST(RepresentativeScaleTest,
      SixtyFourMeasureGrandStaffConstructsValidatesAndMutates) {
-  constexpr int        kMeasureCount = 64;
-  std::vector<Measure> measures(kMeasureCount, common_time_measure());
-  auto                 timeline = NodeTimeline::create(measures, {});
+  constexpr int              kMeasureCount = 64;
+  const std::vector<Measure> measures(kMeasureCount, common_time_measure());
+  auto                       timeline = NodeTimeline::create(measures, {});
   ASSERT_TRUE(timeline.has_value());
   const Rational target = timeline->node_end();
   EXPECT_EQ(target, Rational(kMeasureCount));

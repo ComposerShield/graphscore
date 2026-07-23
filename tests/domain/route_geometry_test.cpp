@@ -12,7 +12,7 @@ using graphscore::RouteGeometry;
 using graphscore::RoutePoint;
 
 TEST(RouteGeometryTest, DefaultsToAutomaticWithNoWaypoints) {
-  RouteGeometry route;
+  const RouteGeometry route;
   EXPECT_TRUE(route.is_automatic());
   EXPECT_TRUE(route.waypoints().empty());
 }

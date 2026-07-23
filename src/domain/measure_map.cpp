@@ -34,7 +34,12 @@ const Measure& MeasureMap::measure(std::size_t index) const {
 Rational MeasureMap::measure_length(std::size_t index) const {
   assert(index < measures_.size());
   const TimeSignature& signature = measures_[index].time_signature;
-  return *Rational::create(signature.numerator(), signature.denominator());
+  // TimeSignature guarantees a non-zero denominator, and Rational::create
+  // fails only on a zero denominator, so this is always engaged.
+  const std::optional<Rational> length =
+      Rational::create(signature.numerator(), signature.denominator());
+  assert(length.has_value());
+  return *length;
 }
 
 Rational MeasureMap::measure_start(std::size_t index) const {

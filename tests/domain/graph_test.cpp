@@ -161,7 +161,7 @@ TEST(GraphTest, BindOutputEventSucceedsForRegisteredEvent) {
   const ConnectorId out_id =
       project.find_node(node_id)->add_output("Out", ConnectorType::kVertical);
 
-  EXPECT_TRUE(graph.bind_output_event(node_id, out_id, *event_id).ok());
+  EXPECT_TRUE(graph.bind_output_event(node_id, out_id, event_id).ok());
   const auto* output = project.find_node(node_id)->find_output(out_id);
   ASSERT_NE(output, nullptr);
   EXPECT_EQ(output->event_binding(), *event_id);
@@ -237,8 +237,8 @@ TEST(GraphTest,
   const ConnectorId b_out =
       project.find_node(b_id)->add_output("Out", ConnectorType::kVertical);
 
-  ASSERT_TRUE(graph.bind_output_event(a_id, a_out, *event_id).ok());
-  ASSERT_TRUE(graph.bind_output_event(b_id, b_out, *event_id).ok());
+  ASSERT_TRUE(graph.bind_output_event(a_id, a_out, event_id).ok());
+  ASSERT_TRUE(graph.bind_output_event(b_id, b_out, event_id).ok());
   ASSERT_NE(project.find_node(a_id)->find_listener(*event_id), nullptr);
   ASSERT_NE(project.find_node(b_id)->find_listener(*event_id), nullptr);
 

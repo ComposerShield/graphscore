@@ -14,7 +14,6 @@ using graphscore::EventId;
 using graphscore::InputConnector;
 using graphscore::Node;
 using graphscore::NodeId;
-using graphscore::OutputConnector;
 using graphscore::QueuePolicy;
 using graphscore::Rational;
 

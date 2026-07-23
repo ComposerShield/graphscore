@@ -329,7 +329,7 @@ class MidiOwnerScope {
  private:
   explicit MidiOwnerScope(
       std::variant<NodeId, PickdownTailSnapshotId> value) noexcept
-      : value_(std::move(value)) {}
+      : value_(value) {}
 
   std::variant<NodeId, PickdownTailSnapshotId> value_;
 };
