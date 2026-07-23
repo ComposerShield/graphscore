@@ -14,6 +14,9 @@ add_executable(graphscore_domain_test
   notation_event_test.cpp
   notation_markings_test.cpp
   notation_validation_test.cpp
+  pickdown_bound_oracle_test.cpp
+  pickdown_coordinates_test.cpp
+  pickdown_ownership_test.cpp
   project_track_test.cpp
   route_geometry_test.cpp
   tempo_lane_test.cpp

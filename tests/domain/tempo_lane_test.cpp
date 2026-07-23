@@ -79,3 +79,32 @@ TEST(TempoLaneTest, SinglePointCoversTheWholeLane) {
   ASSERT_TRUE(lane.has_value());
   EXPECT_EQ(lane->points().size(), 1u);
 }
+
+// -- segment_index_at ------------------------------------------------------
+
+TEST(TempoLaneTest, SegmentIndexAtFindsTheLastPointAtOrBeforePosition) {
+  const std::vector<TempoPoint> points = {
+      make_point(Rational(0), 120),
+      make_point(Rational(2), 100),
+      make_point(*Rational::create(15, 4), 140),
+  };
+  const auto lane = TempoLane::create(points, Rational(0), Rational(4));
+  ASSERT_TRUE(lane.has_value());
+
+  EXPECT_EQ(lane->segment_index_at(Rational(0)), 0u);
+  EXPECT_EQ(lane->segment_index_at(Rational(1)), 0u);
+  EXPECT_EQ(lane->segment_index_at(Rational(2)), 1u);
+  EXPECT_EQ(lane->segment_index_at(*Rational::create(5, 2)), 1u);
+  EXPECT_EQ(lane->segment_index_at(*Rational::create(15, 4)), 2u);
+  EXPECT_EQ(lane->segment_index_at(*Rational::create(63, 16)), 2u);
+}
+
+TEST(TempoLaneTest, SegmentIndexAtFailsOutsideTheLaneCoverage) {
+  const auto lane = TempoLane::create({make_point(Rational(0), 120)},
+                                      Rational(0), Rational(4));
+  ASSERT_TRUE(lane.has_value());
+
+  EXPECT_FALSE(lane->segment_index_at(Rational(-1)).has_value());
+  EXPECT_FALSE(lane->segment_index_at(Rational(4)).has_value());
+  EXPECT_FALSE(lane->segment_index_at(Rational(5)).has_value());
+}

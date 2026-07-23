@@ -20,6 +20,9 @@
 #include <graphscore/domain/notation_event.hpp>
 #include <graphscore/domain/notation_markings.hpp>
 #include <graphscore/domain/notation_validation.hpp>
+#include <graphscore/domain/pickdown_bound_oracle.hpp>
+#include <graphscore/domain/pickdown_coordinates.hpp>
+#include <graphscore/domain/pickdown_ownership.hpp>
 #include <graphscore/domain/project.hpp>
 #include <graphscore/domain/route_geometry.hpp>
 #include <graphscore/domain/staff_layout.hpp>

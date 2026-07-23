@@ -13,6 +13,9 @@ add_library(graphscore_domain STATIC
   notation_event.cpp
   notation_markings.cpp
   notation_validation.cpp
+  pickdown_bound_oracle.cpp
+  pickdown_coordinates.cpp
+  pickdown_ownership.cpp
   project.cpp
   route_geometry.cpp
   staff_layout.cpp

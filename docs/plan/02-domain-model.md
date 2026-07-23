@@ -58,7 +58,7 @@ Implement the toolkit-independent source of truth for notation, graph structure,
 ### Adaptive playback semantics
 
 - [x] Exact definitions for sequential precedence, 100-percent random groups, zero-weight ineligibility, deterministic PRNG reset, vertical compatibility/mapping, sample-local vertical triggers, and one vertical jump per sample offset.
-- [ ] Pickdown meter/tempo coordinates, crossing-note ownership, MIDI-only behavior, minimum main-region duration, and requirements for proving finite overlap through cycles.
+- [x] Pickdown meter/tempo coordinates, crossing-note ownership, MIDI-only behavior, minimum main-region duration, and requirements for proving finite overlap through cycles.
 - [ ] Same-pitch newest-owner retrigger behavior and logical-OR CC64 ownership across active main material and tails.
 - [ ] Lifecycle rules remove note and pedal ownership on vertical jump, stop, reset, node play, panic, and snapshot retirement; pause retains ownership.
 - [ ] A toolkit-independent writer audition model describes one opaque instrument slot, zero or more opaque effect slots, plugin identity/state blobs, bypass/order, and writer-only mix values without depending on the VST3 SDK.

@@ -73,11 +73,11 @@ Writer-only data must never appear in a cooked runtime asset unless it is requir
 - Every node owns a common measure timeline across all tracks and may contain at least 64 measures within the supported test envelope.
 - Opening pickup measures are out of scope for `0.1.0`.
 - A node contains at least one complete main-region measure and may end with one explicit partial **pickdown** region greater than zero and shorter than one complete measure under the time signature active at the boundary.
-- A sequential destination starts when the pickdown starts. Pickdown notes continue concurrently on the source tempo curve, may contain new attacks, emit MIDI only, and survive later active-node transitions until naturally complete.
+- A sequential destination starts when the pickdown starts. Pickdown notes continue concurrently on the source tempo curve, may contain new attacks, emit MIDI only, and survive later active-node transitions until naturally complete. On a cycle, the pickdown continues sounding into the next iteration, overlapping the start of its main region; this is intended musical behavior, not an export error.
 - The source tempo curve extends through the pickdown. Notes/ties crossing the transition boundary transfer their post-boundary logical ownership to the pickdown tail.
 - If overlapping material attacks the same track/channel/pitch, emit note-off then the newer note-on; the newer attack owns the eventual note-off and the older logical note's later release is suppressed.
 - Overlapping CC64 pedal spans combine as logical OR per track/channel; pedal-up emits only after the last active logical span releases.
-- Export computes a finite upper bound for concurrent pickdown tails and rejects assets whose cycles/timing cannot be bounded.
+- Export computes a finite upper bound for concurrent pickdown tails and rejects assets whose timing cannot be bounded. A pickdown-bearing node on a cycle is bounded by construction, since a pickdown is always shorter than the complete main region a cycle must traverse before revisiting it; the residual export concern is tempo disparity across a cycle, not cycle structure itself.
 
 ### Tempo and meter
 

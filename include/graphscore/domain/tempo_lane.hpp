@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -64,6 +65,22 @@ class TempoLane {
   [[nodiscard]] Rational start() const noexcept { return start_; }
 
   [[nodiscard]] Rational end() const noexcept { return end_; }
+
+  // The index into points() of the segment governing `position`: the last
+  // point whose position() is <= `position`. This identifies WHICH
+  // segment's data (tempo, beat unit, TempoSegmentKind) applies at
+  // `position` -- it does not evaluate the BPM that segment actually
+  // produces there, which for TempoSegmentKind::kSmooth is Phase 7's
+  // cubic-curve integration (see the TODO(Phase 7) above); a kStep/
+  // kLinear segment's value is likewise left for that same evaluation
+  // layer, deliberately not this purely structural lookup. Returns
+  // std::nullopt if `position` is outside [start(), end()) -- the lane's
+  // own declared coverage -- since create()'s own invariants (points()
+  // non-empty, strictly ordered, and the first point exactly at start())
+  // guarantee that any position inside that range is governed by some
+  // point.
+  [[nodiscard]] std::optional<std::size_t> segment_index_at(
+      Rational position) const;
 
   [[nodiscard]] bool operator==(const TempoLane&) const = default;
 
