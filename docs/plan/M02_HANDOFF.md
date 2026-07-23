@@ -1,9 +1,12 @@
 # Milestone 02 (Domain And Command Model) — Orchestration Handoff
 
-**Status as of this doc:** Phases 1–5 complete and committed. Phase 6
-(Adaptive playback semantics) is **in progress**, split into 6a/6b/6c; 6a is
-complete and committed. This file lets a different orchestrator pick up
-mid-milestone without re-deriving the plan.
+**Status as of this doc:** Phases 1–6 complete and committed. Phase 7
+(Normative playback specification) is **in progress**, split into 7a/7b/7c
+per Adam's locked scoping rulings (see "Plan for the remaining phases"); 7a
+is complete and committed (`063f1af`), after three review rounds that caught
+and fixed a false continuity claim, a non-additive integration bug, and a
+sanitizer-fatal `Rational` overflow. This file lets a different orchestrator
+pick up mid-milestone without re-deriving the plan.
 Source of truth remains
 [02-domain-model.md](02-domain-model.md) and [CHECKLIST.md](CHECKLIST.md); this
 doc records *how* the milestone is being executed.
@@ -76,7 +79,9 @@ only when the whole section is approved.
 | 6b-i | Adaptive playback semantics — pickdown coordinates/ownership/bound oracle | ✅ done | (this commit) |
 | 6b-ii | Adaptive playback semantics — MIDI ownership + lifecycle | ✅ done | (this commit) |
 | 6c | Adaptive playback semantics — writer audition model | ✅ done | (this commit) |
-| 7 | Normative playback specification | ⬜ remaining | — |
+| 7a | Normative playback specification — tempo curve math | ✅ done | `063f1af` |
+| 7b | Normative playback specification — articulation/dynamic/grace mapping | ⬜ remaining | — |
+| 7c | Normative playback specification — simultaneous MIDI ordering (spec only) | ⬜ remaining | — |
 | 8 | Command and selection model | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
@@ -163,6 +168,39 @@ focus, and the top-level "Milestone 02 complete".
   **deliberately distinct from node-local `EventOccurrence::sample_offset`**,
   used to guard at most one vertical jump per instant via a fail-closed `<=`
   comparison.
+- **Phase 7a (`core`) — tempo curve math:** `TempoPoint`/`TempoSegmentKind`
+  relocated from `graphscore_domain` into `graphscore_core` (new
+  `tempo_point.hpp`) since core-level integration math needs them and core
+  cannot depend on domain — mirrors the Phase 6a `DeterministicPrng`
+  placement rationale exactly. New `tempo_curve.hpp`/`.cpp`: instantaneous
+  rate evaluation for `kStep`/`kLinear`/`kSmooth` segments with BPM+beat-unit
+  normalization (a point expressed as 120bpm-quarter and one expressed as
+  60bpm-half interpolate identically — verified by a dedicated trap test,
+  not just claimed); `kSmooth` auto-shaped as a uniform-parametrization
+  Catmull-Rom cubic (tension 0.5, the textbook default) through neighboring
+  points, reflected at lane boundaries, **C0 (value-)continuous everywhere,
+  C1 (slope-)continuous only when both adjacent segments are `kSmooth` and
+  exactly equal-length** — the header states this precisely after a review
+  round caught and corrected an earlier overclaim; deterministic integration
+  of elapsed real time between two `Rational` positions (closed-form for
+  `kStep`/`kLinear`, a fixed-32-step Simpson quadrature anchored at each
+  segment's own start for `kSmooth`, making integration exactly additive
+  across any interior split — a second review round caught and fixed a
+  non-additive first version); deterministic fixed-52-iteration bisection
+  inversion (elapsed seconds → `Rational` position), position quantized to a
+  `2^20` grid (not `2^32` — a third review round caught a `Rational`
+  cross-multiply overflow, fatal under the `asan-ubsan` preset, reachable
+  from any position past ~0.5 whole notes at the original `2^32` grid; `2^20`
+  keeps ~37x margin under one sample period at 192kHz while staying safe to
+  ~8.39e6 whole notes); integer sample-count rounding from a caller-supplied
+  sample rate (never hardcoded), round-half-to-even, with `isfinite`/
+  saturating guards against NaN/±inf/huge-finite input (a UB fix from the
+  first review round). `double` confined to this module only; every
+  `Rational`-typed boundary stays exact. Resolves the `TODO(Phase 7)` seams
+  at `tempo_lane.hpp:47-48` and the cross-reference in
+  `pickdown_bound_oracle.hpp:88-94` (comment-only updates, zero logic
+  change to `segment_index_at` or the oracle). 619 tests after 7a (+38 over
+  Phase 6c's 581).
 
 ## Plan for the remaining phases
 
@@ -189,12 +227,45 @@ focus, and the top-level "Milestone 02 complete".
   writer audition model — one opaque instrument slot, zero or more opaque
   effect slots, plugin identity/state blobs, bypass/order, writer-only mix
   values — **no VST3 SDK types**.
-- **Phase 7 — Normative playback specification:** cubic smooth-tempo curve
-  equations, legal control handles, deterministic integration/inversion
-  tolerances, integer sample rounding; articulation mappings + precedence with
-  slurs/ties/dynamics/hairpins; grace-group steal fraction/limits/division;
-  simultaneous MIDI ordering + note/CC64 ownership transitions. (This is where
-  the deferred playback math below is finally specified.)
+- **Phase 7 — Normative playback specification (in progress, split 7a/7b/7c
+  per Adam's scoping rulings below):**
+  - **Locked scope rulings (Adam, interactively, before 7a started) — apply to
+    7b/7c too:** (1) spec everything in header prose (no `docs/spec/`
+    directory — none exists in this repo; the convention is normative prose
+    inline in headers, matching `midi_ownership.hpp`); implement only what is
+    self-contained today without a real consumer — tempo curve math (7a) and
+    articulation/dynamic/grace → velocity+duration mapping (7b); leave
+    same-sample MIDI emission ordering **spec-only** (7c) since its real
+    consumer is the M04 scheduler and `MidiOwnershipTracker` has no timestamp
+    parameter to hang ordering on yet. (2) New playback math belongs in
+    `graphscore_core`, not `graphscore_domain` — mirrors the Phase 6a
+    `DeterministicPrng` placement, since the ADR 0003 runtime closure sees
+    core but never domain. (3) `double` is permitted, narrowly, inside
+    tempo-curve integration/inversion only; every `Rational`-typed
+    input/output at a function boundary stays exact; `Rational::to_double()`
+    stays display-only everywhere else. (4) Concrete musical constants
+    (tension/tolerance/rounding constants in 7a; velocity tables, duration
+    ratios, steal fractions in 7b) are worker-proposed with cited rationale,
+    reviewer-checked for internal consistency, Adam has final sign-off —
+    not pre-specified by Adam up front. (5) `kSmooth` tempo curves are
+    auto-shaped (Catmull-Rom-style) from neighboring `TempoPoint` data only —
+    Adam explicitly rejected adding control-handle fields to `TempoPoint`,
+    so this carries **no M03 persistence schema change**.
+  - **7a — tempo curve math (done):** see the Phase 7a delivery note below.
+  - **7b — articulation/dynamic/grace → velocity+duration mapping
+    (remaining):** in `graphscore_core`, alongside `tempo_curve.hpp`/
+    `tempo_point.hpp`; wired into `graphscore_domain`'s notation types
+    (`Articulation`, `Dynamic`, `Hairpin`, `Slur`, `GraceGroup`). Resolves
+    the `TODO(Phase 7)` seam at `notation_markings.hpp:112` (grace steal
+    fraction/limits/division) and the untagged Phase-7 deferrals at
+    `articulation.hpp:11` and `notation_markings.hpp:13,30,41,73`
+    (dynamic/hairpin/slur/pedal → MIDI mapping presence-only today).
+  - **7c — simultaneous MIDI ordering + note/CC64 ownership transitions,
+    spec-only (remaining):** normative header-prose rules for what order
+    unrelated same-sample events land in an output stream, layered on top
+    of the existing `MidiOwnershipTracker` (Phase 6c) — no new code, since
+    the real consumer (a scheduler-level emission ordering pass) is out of
+    this milestone's scope per the locked ruling above.
 - **Phase 8 — Command and selection model:** reversible commands for every edit,
   transaction grouping, all selection kinds, toolkit-independent clipboard
   fragments, cut/copy/paste with identity remapping + rest normalization,
@@ -407,6 +478,32 @@ Recorded here so the owning phase picks them up:
   that list. `MidiOwnershipTracker` (6b-ii) is allocation-light — a fixed
   16-slot array for per-channel pedal counts — but still uses
   `unordered_map` for note/pedal ownership; same profile as `EventQueue`.
+- **→ Phase 7 / runtime (performance, advisory only, 7a):**
+  `tempo_curve.cpp`'s `integrate_elapsed_seconds` re-runs a linear
+  `locate_segment` scan on every internal loop iteration, and
+  `invert_elapsed_seconds`'s fixed 52-iteration bisection calls it again
+  each step, giving `O(52·n²)` per inversion; each `smooth_rate` evaluation
+  re-normalizes up to four `Rational`→`double` BPM conversions per call with
+  no caching. Fine at authoring scale in `graphscore_core` today, but this
+  code sits inside the ADR 0003 runtime closure and is therefore subject to
+  the realtime "no unbounded work on `process`" rule once something calls
+  it from that path — wants an advancing index / `std::upper_bound` and
+  per-segment rate memoization before then. Same profile as the existing
+  `compute_group`/`segment_index_at` entries above.
+- **→ later (advisory only, 7a):** `tempo_rate_at`'s doc comment doesn't
+  warn that a `kSmooth` segment's returned rate can overshoot the interval
+  `[min(r_i, r_(i+1)), max(...)]` (the header documents the overshoot
+  property elsewhere but not on this specific function) — a caller taking
+  the reciprocal without a floor could hit a very small divisor; add one
+  sentence if a Phase 7-adjacent consumer surfaces this.
+  `quantize_position` (`tempo_curve.cpp`) has no explicit magnitude guard of
+  its own (`std::llround` is UB above ~8.8e12) — unreachable at realistic
+  node/position scale and covered by the existing Phase 1
+  accepted-as-designed `Rational` overflow entry below, not a new risk.
+  `tempo_curve.cpp` obtains `Tempo`/`NoteValue` transitively through
+  `tempo_point.hpp` rather than including `tempo.hpp` directly — harmless
+  today, worth tightening to include-what-you-use if the file is touched
+  again.
 
 Accepted-as-designed (no action needed): beam-override contiguity check ignores
 list order (4b #2); `Node::lane_count()` counts archived lanes too (Phase 2);
