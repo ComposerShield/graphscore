@@ -16,7 +16,9 @@
       "Bash(screencapture -x /private/tmp/claude-501/-Users-adamshield-dev-bum-games-scrambled-chess/496f1e1b-73a3-4cf8-bbce-47d4c17d251b/scratchpad/screenshot_rect10x6.png)",
       "Bash(pkill -f ScrambledChess.Desktop)",
       "Bash(osascript -e 'tell application \"System Events\" to tell \\(first application process whose name is \"ScrambledChess.Desktop\"\\) to set frontmost to true')",
-      "Bash(screencapture -x /private/tmp/claude-501/-Users-adamshield-dev-bum-games-scrambled-chess/496f1e1b-73a3-4cf8-bbce-47d4c17d251b/scratchpad/screenshot_ellshape.png)"
+      "Bash(screencapture -x /private/tmp/claude-501/-Users-adamshield-dev-bum-games-scrambled-chess/496f1e1b-73a3-4cf8-bbce-47d4c17d251b/scratchpad/screenshot_ellshape.png)",
+      "Bash(claude mcp *)",
+      "Bash(claude *)"
     ]
   }
 }
