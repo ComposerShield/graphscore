@@ -1,5 +1,5 @@
 ---
-description: Use for read-only research and reconnaissance — locating code, understanding structure, investigating conventions in this repo or ../soul-redux, and answering questions before implementation work is dispatched. This agent never modifies anything.
+description: Use for read-only research and reconnaissance — locating code, understanding structure, investigating conventions in this repo, and answering questions before implementation work is dispatched. This agent never modifies anything.
 mode: subagent
 model: deepseek/deepseek-v4-pro
 variant: medium
