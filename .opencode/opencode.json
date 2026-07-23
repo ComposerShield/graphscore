@@ -5,11 +5,9 @@
       "/tmp/*": "allow"
     },
     "edit": {
-      "**/soul-redux/**": "deny",
       "/tmp/*": "allow"
     },
     "external_directory": {
-      "**/soul-redux/**": "allow",
       "/tmp/*": "allow"
     }
   }

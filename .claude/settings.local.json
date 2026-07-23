@@ -3,22 +3,9 @@
     "allow": [
       "Read(/tmp/**)",
       "Edit(/tmp/**)",
-      "Bash(* /tmp/* *)",
-      "Bash(dotnet *)",
-      "Read(//Users/adamshield/dev/bum-games/**)",
-      "Bash(find / -maxdepth 4 -iname \"soul-redux\")",
-      "Bash(echo \"exit=$?\")",
-      "Bash(timeout 12 ./run_game.sh)",
-      "Bash(kill 84486 84485)",
-      "Bash(screencapture -x /private/tmp/claude-501/-Users-adamshield-dev-bum-games-scrambled-chess/496f1e1b-73a3-4cf8-bbce-47d4c17d251b/scratchpad/rect_screenshot.png)",
-      "Bash(./run_game.sh)",
-      "Bash(echo \"PID: $!\")",
-      "Bash(screencapture -x /private/tmp/claude-501/-Users-adamshield-dev-bum-games-scrambled-chess/496f1e1b-73a3-4cf8-bbce-47d4c17d251b/scratchpad/screenshot_rect10x6.png)",
-      "Bash(pkill -f ScrambledChess.Desktop)",
-      "Bash(osascript -e 'tell application \"System Events\" to tell \\(first application process whose name is \"ScrambledChess.Desktop\"\\) to set frontmost to true')",
-      "Bash(screencapture -x /private/tmp/claude-501/-Users-adamshield-dev-bum-games-scrambled-chess/496f1e1b-73a3-4cf8-bbce-47d4c17d251b/scratchpad/screenshot_ellshape.png)",
-      "Bash(claude mcp *)",
-      "Bash(claude *)"
+      "Bash(cmake *)",
+      "Bash(ctest *)",
+      "Bash(* /tmp/* *)"
     ]
   }
 }
