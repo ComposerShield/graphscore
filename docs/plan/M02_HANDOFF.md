@@ -74,14 +74,14 @@ only when the whole section is approved.
 | 5 | Graph model | ✅ done — split 5a + 5b | `87e4b92` (5a), `e13d4b5` (5b) |
 | 6a | Adaptive playback semantics — transition selection | ✅ done | `c6be9a4` |
 | 6b-i | Adaptive playback semantics — pickdown coordinates/ownership/bound oracle | ✅ done | (this commit) |
-| 6b-ii | Adaptive playback semantics — MIDI ownership + lifecycle | ⬜ remaining | — |
+| 6b-ii | Adaptive playback semantics — MIDI ownership + lifecycle | ✅ done | (this commit) |
 | 6c | Adaptive playback semantics — writer audition model | ⬜ remaining | — |
 | 7 | Normative playback specification | ⬜ remaining | — |
 | 8 | Command and selection model | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
 
-Test suite currently: **499 tests, 100% pass** after Phase 6b-i.
+Test suite currently: **530 tests, 100% pass** after Phase 6b-ii.
 
 CHECKLIST.md M02 boxes checked so far: Dependencies, Identity and value types,
 Project and track model, Node timeline, Notation model, Graph model. Remaining
@@ -170,13 +170,25 @@ sub-bullets is checked so far.
 
 ## Plan for the remaining phases
 
-- **Phase 6b — pickdown/MIDI-ownership lifecycle (remaining):** pickdown
-  meter/tempo coordinates, crossing-note ownership, MIDI-only behavior,
-  minimum main-region duration, finite-overlap-through-cycles proof;
-  same-pitch newest-owner retrigger; logical-OR CC64 ownership across active
-  main material and tails; lifecycle rules removing note/pedal ownership on
-  vertical jump, stop, reset, node play, panic, and snapshot retirement
-  (pause retains ownership).
+- **Phase 6b — pickdown/MIDI-ownership lifecycle (done, split 6b-i + 6b-ii):**
+  **6b-i** delivered `pickdown_coordinates` (pickdown meter/tempo coordinates
+  in the source node's system, plus a structural `TempoLane::
+  segment_index_at`), `pickdown_ownership` (`tied_note_spans` tie-chain
+  resolution and `classify_note_ownership`/`classify_voice_ownership`
+  splitting a note across the boundary into main and pickdown-tail
+  ownership, with MIDI-only tail material as a semantic flag), and
+  `pickdown_bound_oracle` (a finite upper bound on concurrent tails;
+  cycles bounded by construction per Adam's ruling). Minimum main-region
+  duration was verified already enforced on every path (`MeasureMap` has
+  no mutator at all) and pinned by new tests. **6b-ii** delivered
+  `midi_ownership`: `MidiOwnershipTracker` with per-(channel, pitch)
+  newest-owner retrigger and explicit suppression of a superseded
+  attack's later release, logical-OR CC64 ownership per (channel) across
+  main material and tails, `transfer_main_to_pickdown_tail` for
+  boundary-crossing notes/spans, and the full lifecycle set
+  (`vertical_jump` releasing only source-main entries while tails survive,
+  `clear_all` for stop/reset/node-play, `panic`,
+  `retire_pickdown_tail_snapshot`) with pause modeled as no method at all.
 - **Phase 6c — writer audition model (remaining):** a toolkit-independent
   writer audition model — one opaque instrument slot, zero or more opaque
   effect slots, plugin identity/state blobs, bypass/order, writer-only mix
@@ -330,6 +342,46 @@ Recorded here so the owning phase picks them up:
   that requires integrating real time over the cubic smooth-tempo curve
   (`tempo_lane.hpp`'s `TODO(Phase 7)`); this is where
   `PickdownBoundStatus::kUnbounded` becomes reachable, if it ever is.
+- **Adam's rulings (product decisions, Phase 6b-ii):** (1) **panic is
+  global** — verbatim: "Since panic refers to the audio processing itself,
+  which is only in one place, and by extension the transport, this is
+  global. It clears audio processing, stops it, stops the transport." So
+  `MidiOwnershipTracker::panic()` releases all note and pedal ownership
+  project-wide including pickdown tails; stopping the transport and
+  clearing `EventStateMachine` state are the caller's obligations, outside
+  that class. (2) **Snapshot retirement** = retirement of a pickdown-tail
+  snapshot when it completes naturally, releasing whatever ownership it
+  still holds — the ordinary end of a tail's life, contrasted with panic,
+  which cuts it early.
+- **Ruling (reviewer-settled, Phase 6b-ii): pedal spans ARE released on a
+  vertical jump**, not just notes. `README.md:110` names only notes, but a
+  source-main pedal span left down across a jump has **no reachable
+  release event** — its notated end lies in a node that is no longer
+  playing — so under `README.md:79` ("pedal-up emits only after the last
+  active logical span releases") CC64 would stay at 127 for the remainder
+  of playback, blurring the destination node and everything after it.
+  Cutting at the jump costs only a pedal shorter than notated, exactly the
+  cost `README.md:110` already accepts for notes. Tail pedal spans remain
+  active per `README.md:76`.
+- **→ Phase 7 / transport wiring:** `MidiOwnershipTracker` trusts
+  caller-supplied `MidiOwnerScope` correctness (it has no `Project`/`Graph`
+  access, so it cannot verify that `MidiOwnerScope::main(node)` is only
+  attached while `node` is genuinely active), and
+  `transfer_main_to_pickdown_tail` is a **caller obligation** that must be
+  invoked once at each sequential boundary, paired with
+  `begin_pickdown_tail`. A wrong scope or a missed transfer produces a
+  stuck note or a wrongly cut tail with **no diagnostic**. Same shape as
+  the `EventStateMachine::clear_event` caller-obligation entry above, and
+  the same Phase 7 transport-wiring site should make both automatic.
+  `MidiOwnershipTracker` is deliberately a standalone state machine
+  alongside `EventStateMachine`, not wired into it.
+- **→ later (advisory, 6b-ii):** the `ReleaseFilter` enum refactor of
+  `MidiOwnershipTracker::release_where` (its `(bool, optional, optional)`
+  signature admits only three legal combinations) was judged coherent
+  as-is; revisit if a fourth filter kind appears. `panic()` and
+  `clear_all()` have byte-identical bodies — kept as separate named entry
+  points so Phase 7 can give panic a diagnostic flag or forced snapshot
+  drop without an API break.
 - **→ Phase 7 / runtime (performance, advisory only):**
   `TempoLane::segment_index_at` (`src/domain/tempo_lane.cpp:38-44`) is an
   O(n) scan over strictly-ordered points where `std::upper_bound` would be
@@ -338,7 +390,9 @@ Recorded here so the owning phase picks them up:
   per sounding column and `classify_voice_ownership` (:90-93) does not
   `reserve()`. All fine at 64-node/64-measure scale in a non-realtime domain
   layer. Same profile as the `compute_group`/`select_winner` entry already in
-  that list.
+  that list. `MidiOwnershipTracker` (6b-ii) is allocation-light — a fixed
+  16-slot array for per-channel pedal counts — but still uses
+  `unordered_map` for note/pedal ownership; same profile as `EventQueue`.
 
 Accepted-as-designed (no action needed): beam-override contiguity check ignores
 list order (4b #2); `Node::lane_count()` counts archived lanes too (Phase 2);

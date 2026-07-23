@@ -8,6 +8,7 @@ add_library(graphscore_domain STATIC
   event_state_machine.cpp
   graph.cpp
   measure_map.cpp
+  midi_ownership.cpp
   node.cpp
   node_timeline.cpp
   notation_event.cpp

@@ -15,6 +15,7 @@
 #include <graphscore/domain/graph.hpp>
 #include <graphscore/domain/graph_position.hpp>
 #include <graphscore/domain/measure_map.hpp>
+#include <graphscore/domain/midi_ownership.hpp>
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/node_timeline.hpp>
 #include <graphscore/domain/notation_event.hpp>
