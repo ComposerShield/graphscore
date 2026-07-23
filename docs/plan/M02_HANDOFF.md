@@ -1,15 +1,14 @@
 # Milestone 02 (Domain And Command Model) — Orchestration Handoff
 
-**Status as of this doc:** Phases 1–6 complete and committed. Phase 7
-(Normative playback specification) is **in progress**, split into 7a/7b/7c
-per Adam's locked scoping rulings (see "Plan for the remaining phases"); 7a
-is complete and committed (`063f1af`), after three review rounds that caught
-and fixed a false continuity claim, a non-additive integration bug, and a
-sanitizer-fatal `Rational` overflow. 7b is complete and committed (`dc7550a`),
-after two review rounds that caught an inverted precedence claim and a
-second sanitizer-fatal `Rational`/shift-overflow bug in the grace-steal
-math. This file lets a different orchestrator pick up mid-milestone without
-re-deriving the plan.
+**Status as of this doc:** Phases 1–7 complete. Phase 7 (Normative playback
+specification) was split into 7a/7b/7c per Adam's locked scoping rulings (see
+"Plan for the remaining phases"). 7a is committed (`063f1af`) after three
+review rounds that caught a false continuity claim, a non-additive integration
+bug, and a sanitizer-fatal `Rational` overflow. 7b is committed (`dc7550a`)
+after two review rounds that caught an inverted precedence claim and a second
+sanitizer-fatal `Rational`/shift-overflow bug in the grace-steal math. 7c is
+the completed spec-only same-sample MIDI ordering contract. This file lets a
+different orchestrator pick up mid-milestone without re-deriving the plan.
 Source of truth remains
 [02-domain-model.md](02-domain-model.md) and [CHECKLIST.md](CHECKLIST.md); this
 doc records *how* the milestone is being executed.
@@ -84,16 +83,17 @@ only when the whole section is approved.
 | 6c | Adaptive playback semantics — writer audition model | ✅ done | (this commit) |
 | 7a | Normative playback specification — tempo curve math | ✅ done | `063f1af` |
 | 7b | Normative playback specification — articulation/dynamic/grace mapping | ✅ done | `dc7550a` |
-| 7c | Normative playback specification — simultaneous MIDI ordering (spec only) | ⬜ remaining | — |
+| 7c | Normative playback specification — simultaneous MIDI ordering (spec only) | ✅ done | — |
 | 8 | Command and selection model | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
 
-Test suite currently: **581 tests, 100% pass** after Phase 6c.
+Test suite currently: **674 tests, 100% pass** after Phase 7c; Phase 7c is
+spec-only and adds no tests.
 
 CHECKLIST.md M02 boxes checked so far: Dependencies, Identity and value types,
 Project and track model, Node timeline, Notation model, Graph model, Adaptive
-playback semantics. Remaining M02 boxes: Normative playback specification,
+playback semantics, Normative playback specification. Remaining M02 boxes:
 Command and selection model, Validation service, Acceptance criteria, Test
 focus, and the top-level "Milestone 02 complete".
 
@@ -245,6 +245,11 @@ focus, and the top-level "Milestone 02 complete".
   and the untagged dynamic/hairpin/slur/pedal-to-MIDI deferrals at
   `articulation.hpp:11` and the former `notation_markings.hpp:13,30,41,73`.
   674 tests after 7b (+55 over Phase 7a's 619).
+- **Phase 7c (`domain`, spec only) — simultaneous MIDI ordering:** added the
+  normative `midi_ownership.hpp` contract for atomic per-sample note and CC64
+  ownership resolution, source ordering, lifecycle/retrigger provenance, and
+  note-off/CC64/note-on stream serialization. It deliberately adds no runtime
+  API, production logic, or tests; M04 owns the scheduler implementation.
 
 ## Plan for the remaining phases
 
@@ -267,11 +272,11 @@ focus, and the top-level "Milestone 02 complete".
   (`vertical_jump` releasing only source-main entries while tails survive,
   `clear_all` for stop/reset/node-play, `panic`,
   `retire_pickdown_tail_snapshot`) with pause modeled as no method at all.
-- **Phase 6c — writer audition model (remaining):** a toolkit-independent
+- **Phase 6c — writer audition model (done):** a toolkit-independent
   writer audition model — one opaque instrument slot, zero or more opaque
   effect slots, plugin identity/state blobs, bypass/order, writer-only mix
   values — **no VST3 SDK types**.
-- **Phase 7 — Normative playback specification (in progress, split 7a/7b/7c
+- **Phase 7 — Normative playback specification (done, split 7a/7b/7c
   per Adam's scoping rulings below):**
   - **Locked scope rulings (Adam, interactively, before 7a started) — apply to
     7b/7c too:** (1) spec everything in header prose (no `docs/spec/`
@@ -297,7 +302,7 @@ focus, and the top-level "Milestone 02 complete".
     so this carries **no M03 persistence schema change**.
   - **7a — tempo curve math (done):** see the Phase 7a delivery note below.
   - **7b — articulation/dynamic/grace → velocity+duration mapping
-    (remaining):** in `graphscore_core`, alongside `tempo_curve.hpp`/
+    (done):** in `graphscore_core`, alongside `tempo_curve.hpp`/
     `tempo_point.hpp`; wired into `graphscore_domain`'s notation types
     (`Articulation`, `Dynamic`, `Hairpin`, `Slur`, `GraceGroup`). Resolves
     the `TODO(Phase 7)` seam at `notation_markings.hpp:112` (grace steal
@@ -305,11 +310,10 @@ focus, and the top-level "Milestone 02 complete".
     `articulation.hpp:11` and `notation_markings.hpp:13,30,41,73`
     (dynamic/hairpin/slur/pedal → MIDI mapping presence-only today).
   - **7c — simultaneous MIDI ordering + note/CC64 ownership transitions,
-    spec-only (remaining):** normative header-prose rules for what order
-    unrelated same-sample events land in an output stream, layered on top
-    of the existing `MidiOwnershipTracker` (Phase 6c) — no new code, since
-    the real consumer (a scheduler-level emission ordering pass) is out of
-    this milestone's scope per the locked ruling above.
+    spec-only (done):** normative header-prose rules define atomic ownership
+    resolution, deterministic source and stream orders, CC64 net transitions,
+    and lifecycle/boundary integration on top of `MidiOwnershipTracker`.
+    No code was added because the M04 scheduler is the real consumer.
 - **Phase 8 — Command and selection model:** reversible commands for every edit,
   transaction grouping, all selection kinds, toolkit-independent clipboard
   fragments, cut/copy/paste with identity remapping + rest normalization,

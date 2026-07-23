@@ -65,10 +65,10 @@ Implement the toolkit-independent source of truth for notation, graph structure,
 
 ### Normative playback specification
 
-- [ ] Specify cubic smooth-tempo curve equations, legal control handles, deterministic integration/inversion tolerances, and integer sample rounding at boundaries.
-- [ ] Enumerate articulation mappings and precedence with slurs, ties, dynamics, and hairpins.
-- [ ] Specify grace-group steal fraction/limits, multi-note division, behavior without a preceding sounded note, and interaction with articulations.
-- [ ] Define simultaneous MIDI ordering and exact note/CC64 ownership transitions independently of implementation.
+- [x] Specify cubic smooth-tempo curve equations, legal control handles, deterministic integration/inversion tolerances, and integer sample rounding at boundaries.
+- [x] Enumerate articulation mappings and precedence with slurs, ties, dynamics, and hairpins.
+- [x] Specify grace-group steal fraction/limits, multi-note division, behavior without a preceding sounded note, and interaction with articulations.
+- [x] Define simultaneous MIDI ordering and exact note/CC64 ownership transitions independently of implementation.
 
 ### Command and selection model
 
