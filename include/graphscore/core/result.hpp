@@ -7,12 +7,14 @@
 namespace graphscore {
 
 enum class ResultCode : std::int32_t {
-  kSuccess         = 0,
-  kInvalidArgument = 1,
-  kOutOfMemory     = 2,
-  kVersionMismatch = 3,
-  kCorruptedData   = 4,
-  kInternalError   = 5,
+  kSuccess                   = 0,
+  kInvalidArgument           = 1,
+  kOutOfMemory               = 2,
+  kVersionMismatch           = 3,
+  kCorruptedData             = 4,
+  kInternalError             = 5,
+  kTransactionRollbackFailed = 6,
+  kCommandFaulted            = 7,
 };
 
 class Result {

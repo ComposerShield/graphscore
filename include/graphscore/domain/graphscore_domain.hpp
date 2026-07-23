@@ -6,6 +6,9 @@
 #include <graphscore/domain/articulation.hpp>
 #include <graphscore/domain/audition_mix.hpp>
 #include <graphscore/domain/clef_lane.hpp>
+#include <graphscore/domain/command.hpp>
+#include <graphscore/domain/command_history.hpp>
+#include <graphscore/domain/command_transaction.hpp>
 #include <graphscore/domain/connector.hpp>
 #include <graphscore/domain/event_listener.hpp>
 #include <graphscore/domain/event_occurrence.hpp>
@@ -28,6 +31,9 @@
 #include <graphscore/domain/plugin_chain.hpp>
 #include <graphscore/domain/project.hpp>
 #include <graphscore/domain/route_geometry.hpp>
+#include <graphscore/domain/set_node_name_command.hpp>
+#include <graphscore/domain/set_project_tempo_command.hpp>
+#include <graphscore/domain/set_track_name_command.hpp>
 #include <graphscore/domain/staff_layout.hpp>
 #include <graphscore/domain/tempo_lane.hpp>
 #include <graphscore/domain/track.hpp>
@@ -37,7 +43,6 @@
 
 namespace graphscore {
 
-class Command;
 class Selection;
 class ValidationService;
 

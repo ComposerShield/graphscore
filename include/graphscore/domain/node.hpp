@@ -49,7 +49,7 @@ class Node {
 
   [[nodiscard]] const std::string& name() const noexcept { return name_; }
 
-  void set_name(std::string name) { name_ = std::move(name); }
+  void set_name(std::string name) noexcept { name_ = std::move(name); }
 
   // Packed 0xRRGGBBAA custom color; writer display data only.
   [[nodiscard]] std::uint32_t color() const noexcept { return color_; }

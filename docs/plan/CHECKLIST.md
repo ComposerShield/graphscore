@@ -50,6 +50,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [x] Graph model completed
 - [x] Adaptive playback semantics specified
 - [x] Normative playback specification completed
+- [x] &nbsp;&nbsp;Phase 8a foundational command/history/transaction increment completed<br>&nbsp;&nbsp;&nbsp;&nbsp;(non-throwing `Command` protocol, standalone `CommandHistory`, atomic `CommandTransaction` with<br>&nbsp;&nbsp;&nbsp;&nbsp;best-effort rollback, three stable-ID proving commands; 734 tests. Remaining Phase 8<br>&nbsp;&nbsp;&nbsp;&nbsp;edit commands, selection, clipboard, clipping/remapping, and measure ops still unchecked.)
 - [ ] Command and selection model completed
 - [ ] Validation service completed
 - [ ] Acceptance criteria passed

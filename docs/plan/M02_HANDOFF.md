@@ -1,14 +1,15 @@
 # Milestone 02 (Domain And Command Model) — Orchestration Handoff
 
-**Status as of this doc:** Phases 1–7 complete. Phase 7 (Normative playback
-specification) was split into 7a/7b/7c per Adam's locked scoping rulings (see
-"Plan for the remaining phases"). 7a is committed (`063f1af`) after three
-review rounds that caught a false continuity claim, a non-additive integration
-bug, and a sanitizer-fatal `Rational` overflow. 7b is committed (`dc7550a`)
-after two review rounds that caught an inverted precedence claim and a second
-sanitizer-fatal `Rational`/shift-overflow bug in the grace-steal math. 7c is
-the completed spec-only same-sample MIDI ordering contract. This file lets a
-different orchestrator pick up mid-milestone without re-deriving the plan.
+**Status as of this doc:** Phases 1–7 complete. Phase 8a (command foundation)
+is complete and committed. Phase 7 (Normative playback specification) was split
+into 7a/7b/7c per Adam's locked scoping rulings (see "Plan for the remaining
+phases"). 7a is committed (`063f1af`) after three review rounds that caught a
+false continuity claim, a non-additive integration bug, and a sanitizer-fatal
+`Rational` overflow. 7b is committed (`dc7550a`) after two review rounds that
+caught an inverted precedence claim and a second sanitizer-fatal
+`Rational`/shift-overflow bug in the grace-steal math. 7c is the completed
+spec-only same-sample MIDI ordering contract. This file lets a different
+orchestrator pick up mid-milestone without re-deriving the plan.
 Source of truth remains
 [02-domain-model.md](02-domain-model.md) and [CHECKLIST.md](CHECKLIST.md); this
 doc records *how* the milestone is being executed.
@@ -84,12 +85,13 @@ only when the whole section is approved.
 | 7a | Normative playback specification — tempo curve math | ✅ done | `063f1af` |
 | 7b | Normative playback specification — articulation/dynamic/grace mapping | ✅ done | `dc7550a` |
 | 7c | Normative playback specification — simultaneous MIDI ordering (spec only) | ✅ done | — |
-| 8 | Command and selection model | ⬜ remaining | — |
+| 8a | Command foundation (protocol, history, transaction, proving commands) | ✅ done | (this commit) |
+| 8b..f | Command and selection model (remaining edit commands, selection, clipboard, etc.) | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
 
-Test suite currently: **674 tests, 100% pass** after Phase 7c; Phase 7c is
-spec-only and adds no tests.
+Test suite currently: **734 tests, 100% pass** after Phase 8a; ASan/UBSan
+clean with 734/734 and zero findings.
 
 CHECKLIST.md M02 boxes checked so far: Dependencies, Identity and value types,
 Project and track model, Node timeline, Notation model, Graph model, Adaptive
@@ -250,6 +252,35 @@ focus, and the top-level "Milestone 02 complete".
   ownership resolution, source ordering, lifecycle/retrigger provenance, and
   note-off/CC64/note-on stream serialization. It deliberately adds no runtime
   API, production logic, or tests; M04 owns the scheduler implementation.
+- **Phase 8a (`core` + `domain`) — command foundation:** delivered the
+  non-throwing `Command` ABC (`execute`/`undo`/`redo` all `noexcept`, returning
+  `Result` via extended `ResultCode` with two new terminal codes:
+  `kTransactionRollbackFailed` and `kCommandFaulted`). `CommandHistory` —
+  standalone undo/redo double-stack service, allocation-safe with pre-reserve
+  before any model mutation, undo/redo failure keeps the command on its
+  original stack (no silent loss), empty-stack operations are safe no-ops.
+  `CommandTransaction` — ordered-child atomic grouping implementing the
+  plan's Phase 8 transaction spec: children execute in insertion order; any
+  child failure triggers best-effort rollback (compensating undo in reverse
+  order, every compensator attempted even if an earlier one fails). Three
+  explicit fault paths: (1) execute failure + successful rollback →
+  `kFaulted` (terminal, transaction must be discarded — children are now in
+  `kUndone` and the transaction demands `kFresh` for re-execution);
+  (2) any operation failure where compensation ALSO fails →
+  `kTransactionRollbackFailed` + `kFaulted` (project may retain partial
+  mutations); (3) undo/redo compensation failure where restoration succeeded
+  → original failure returned, state preserved for retry. Empty transactions
+  are valid. After a review round: best-effort semantics verified across all
+  three phases; undo/redo restoration insertion order confirmed model-observable;
+  one-shot retry after successful compensation added. Three stable-ID proving
+  commands exercising the full lifecycle against real domain types:
+  `SetNodeNameCommand`, `SetTrackNameCommand`, `SetProjectTempoCommand` — each
+  snapshots old state on first execute, double-execute/undo-without-execute/
+  redo-without-undo all rejected, missing-ID lookup returns `kInvalidArgument`
+  without touching the model. Precondition: `Node::set_name` and
+  `Track::set_name` tightened to `noexcept` so concrete command implementations
+  can uphold the base-class `noexcept` contract. 60 new test cases (60 added,
+  total 734), ASan/UBSan green with zero findings across two review rounds.
 
 ## Plan for the remaining phases
 
@@ -314,11 +345,15 @@ focus, and the top-level "Milestone 02 complete".
     resolution, deterministic source and stream orders, CC64 net transitions,
     and lifecycle/boundary integration on top of `MidiOwnershipTracker`.
     No code was added because the M04 scheduler is the real consumer.
-- **Phase 8 — Command and selection model:** reversible commands for every edit,
-  transaction grouping, all selection kinds, toolkit-independent clipboard
-  fragments, cut/copy/paste with identity remapping + rest normalization,
-  boundary-crossing clip/reconnection rules, node copy/paste id remapping,
-  atomic measure insert/delete.
+- **Phase 8 — Command and selection model:**
+  - **8a (done, this commit):** foundational non-throwing `Command` protocol,
+    standalone `CommandHistory`, atomic `CommandTransaction` with best-effort
+    rollback, three stable-ID proving commands. See delivery note above.
+  - **8b..f (remaining):** reversible commands for every graph/notation/tempo/
+    track/metadata edit; all selection kinds; toolkit-independent clipboard
+    fragments; cut/copy/paste with identity remapping + rest normalization;
+    boundary-crossing clip/reconnection rules; node copy/paste id remapping;
+    atomic measure insert/delete.
 - **Phase 9 — Validation service:** fast incremental + complete validation;
   diagnostics with stable ids/severity/machine code/user text; validates
   rhythmic completeness, UUID uniqueness, references, track alignment, signature

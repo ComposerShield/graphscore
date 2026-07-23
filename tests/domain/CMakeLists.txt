@@ -3,6 +3,7 @@
 add_executable(graphscore_domain_test
   articulation_test.cpp
   clef_lane_test.cpp
+  command_test.cpp
   connector_test.cpp
   event_queue_test.cpp
   event_registry_test.cpp

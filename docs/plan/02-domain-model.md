@@ -72,6 +72,7 @@ Implement the toolkit-independent source of truth for notation, graph structure,
 
 ### Command and selection model
 
+- [x] **Phase 8a — foundational command protocol, standalone history, and atomic transaction grouping (done, committed).** Delivered the non-throwing `Command` ABC with `execute`/`undo`/`redo` all `noexcept` and returning `Result`; `CommandHistory` (standalone undo/redo stacks with allocation-safe pre-reserve before any model mutation); `CommandTransaction` (ordered-child atomic grouping with best-effort rollback on any child failure, explicit `kCommandFaulted`/`kTransactionRollbackFailed` terminal states, and exact restoration semantics on undo/redo compensation failure); three stable-ID proving commands (`SetNodeNameCommand`, `SetTrackNameCommand`, `SetProjectTempoCommand`) exercising the full three-phase lifecycle against real domain types. `Result` and `ResultCode` extended with two new terminal codes. `Node::set_name` and `Track::set_name` tightened to `noexcept`. The eight original Phase 8 deliverable boxes below remain unchecked: exhaustive edit commands, selection, clipboard, clipping/remapping, and measure operations are scheduled for Phase 8b and later.
 - [ ] Reversible commands for every graph, notation, tempo, track, and metadata edit.
 - [ ] Transaction grouping for multi-measure operations and drag gestures.
 - [ ] Stable notehead, chord, full-measure, arbitrary musical-time range, node, connector, route-segment, staff-focus, and insertion-caret selection, with explicit staff/track/voice scope.

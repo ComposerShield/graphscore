@@ -2,6 +2,8 @@
 
 add_library(graphscore_domain STATIC
   clef_lane.cpp
+  command_history.cpp
+  command_transaction.cpp
   connector.cpp
   event_queue.cpp
   event_registry.cpp
@@ -20,6 +22,9 @@ add_library(graphscore_domain STATIC
   pickdown_ownership.cpp
   project.cpp
   route_geometry.cpp
+  set_node_name_command.cpp
+  set_project_tempo_command.cpp
+  set_track_name_command.cpp
   staff_layout.cpp
   tempo_lane.cpp
   track.cpp

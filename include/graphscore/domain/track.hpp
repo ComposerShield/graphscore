@@ -111,7 +111,7 @@ class Track {
 
   [[nodiscard]] const std::string& name() const noexcept { return name_; }
 
-  void set_name(std::string name) { name_ = std::move(name); }
+  void set_name(std::string name) noexcept { name_ = std::move(name); }
 
   [[nodiscard]] const StaffLayout& layout() const noexcept { return layout_; }
 
