@@ -84,6 +84,8 @@ class Project {
     return archived_tracks_;
   }
 
+  [[nodiscard]] Track* find_active_track(TrackId track_id);
+
   [[nodiscard]] const Track* find_active_track(TrackId track_id) const;
 
   [[nodiscard]] const Track* find_archived_track(TrackId track_id) const;

@@ -4,6 +4,7 @@
 
 #include <graphscore/core/graphscore_core.hpp>
 #include <graphscore/domain/articulation.hpp>
+#include <graphscore/domain/audition_mix.hpp>
 #include <graphscore/domain/clef_lane.hpp>
 #include <graphscore/domain/connector.hpp>
 #include <graphscore/domain/dynamic.hpp>
@@ -24,6 +25,7 @@
 #include <graphscore/domain/pickdown_bound_oracle.hpp>
 #include <graphscore/domain/pickdown_coordinates.hpp>
 #include <graphscore/domain/pickdown_ownership.hpp>
+#include <graphscore/domain/plugin_chain.hpp>
 #include <graphscore/domain/project.hpp>
 #include <graphscore/domain/route_geometry.hpp>
 #include <graphscore/domain/staff_layout.hpp>

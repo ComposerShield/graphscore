@@ -75,23 +75,19 @@ only when the whole section is approved.
 | 6a | Adaptive playback semantics — transition selection | ✅ done | `c6be9a4` |
 | 6b-i | Adaptive playback semantics — pickdown coordinates/ownership/bound oracle | ✅ done | (this commit) |
 | 6b-ii | Adaptive playback semantics — MIDI ownership + lifecycle | ✅ done | (this commit) |
-| 6c | Adaptive playback semantics — writer audition model | ⬜ remaining | — |
+| 6c | Adaptive playback semantics — writer audition model | ✅ done | (this commit) |
 | 7 | Normative playback specification | ⬜ remaining | — |
 | 8 | Command and selection model | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
 
-Test suite currently: **530 tests, 100% pass** after Phase 6b-ii.
+Test suite currently: **581 tests, 100% pass** after Phase 6c.
 
 CHECKLIST.md M02 boxes checked so far: Dependencies, Identity and value types,
-Project and track model, Node timeline, Notation model, Graph model. Remaining
-M02 boxes: Adaptive playback semantics, Normative playback specification,
+Project and track model, Node timeline, Notation model, Graph model, Adaptive
+playback semantics. Remaining M02 boxes: Normative playback specification,
 Command and selection model, Validation service, Acceptance criteria, Test
-focus, and the top-level "Milestone 02 complete". **Adaptive playback
-semantics remains unchecked** even though 6a is done — that CHECKLIST.md box
-covers the whole plan section (6a+6b+6c), and is checked only once 6b and 6c
-are also complete; only the first of that section's five `02-domain-model.md`
-sub-bullets is checked so far.
+focus, and the top-level "Milestone 02 complete".
 
 ## What each completed phase delivered (so the next agent knows what exists)
 
@@ -282,6 +278,24 @@ Recorded here so the owning phase picks them up:
   consumes them. Also `compute_group` allocates a `std::vector` per call and
   is called twice per boundary — fine for the writer-side domain layer, not
   for the realtime `process` path.
+- **Phase 6c (`graphscore_domain`) — writer audition model:** `PluginIdentity`
+  (toolkit-independent opaque plugin type identifier: human-readable name,
+  format string, 16-byte uid — no VST3 SDK types), `PluginStateBlob`
+  (opaque `std::vector<std::uint8_t>` wrapper for serialised processor
+  state), `EffectSlot` (identity + state + bypass flag, ordered by position
+  in the chain vector), `TrackPluginChain` (0-or-1 instrument slot + ordered
+  effect slots per track; `set_instrument`/`clear_instrument`,
+  `add_effect`/`insert_effect`/`remove_effect`/`move_effect`,
+  `set_effect_bypass`/`set_effect_state` with documented index preconditions,
+  default equality), and `AuditionMixSettings` (gain/pan/mute/solo with
+  defaults; gain/pan stored as-is, legal ranges deferred to the M08 mixer).
+  Integrated as accessor-only private members on `Track` with a non-const
+  `Project::find_active_track` mirroring `find_node`. Archive/restore
+  preserves the full chain and mix. 49 test cases covering identity
+  equality/comparison, blob storage, effect slot bypass/state, chain
+  mutators, move semantics both directions, instrument/effect independence,
+  copy independence, mix defaults/setters/equality, track integration,
+  archive/restore round-trips, and multi-track isolation.
 - **→ Phase 7 / transport:** `TransportInstant` currently lives in
   `event_state_machine.hpp` though documented as project-wide; consider
   relocating it to `graphscore/core/` when a real transport lands. Note it

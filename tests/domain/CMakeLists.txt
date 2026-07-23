@@ -26,6 +26,7 @@ add_executable(graphscore_domain_test
   voice_content_test.cpp
   voice_normalization_test.cpp
   weighted_selection_test.cpp
+  writer_audition_test.cpp
 )
 
 target_compile_features(graphscore_domain_test PRIVATE cxx_std_23)

@@ -70,6 +70,13 @@ Result Project::restore_track(TrackId track_id) {
   return Result();
 }
 
+Track* Project::find_active_track(TrackId track_id) {
+  const auto it = std::find_if(
+      active_tracks_.begin(), active_tracks_.end(),
+      [track_id](const Track& track) { return track.id() == track_id; });
+  return it == active_tracks_.end() ? nullptr : &*it;
+}
+
 const Track* Project::find_active_track(TrackId track_id) const {
   const auto it = std::find_if(
       active_tracks_.begin(), active_tracks_.end(),

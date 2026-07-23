@@ -10,7 +10,9 @@
 #include <vector>
 
 #include <graphscore/core/graphscore_core.hpp>
+#include <graphscore/domain/audition_mix.hpp>
 #include <graphscore/domain/notation_markings.hpp>
+#include <graphscore/domain/plugin_chain.hpp>
 #include <graphscore/domain/staff_layout.hpp>
 #include <graphscore/domain/voice_content.hpp>
 
@@ -115,12 +117,30 @@ class Track {
 
   [[nodiscard]] MidiChannel channel() const noexcept { return channel_; }
 
+  [[nodiscard]] TrackPluginChain& plugin_chain() noexcept {
+    return plugin_chain_;
+  }
+
+  [[nodiscard]] const TrackPluginChain& plugin_chain() const noexcept {
+    return plugin_chain_;
+  }
+
+  [[nodiscard]] AuditionMixSettings& mix_settings() noexcept {
+    return mix_settings_;
+  }
+
+  [[nodiscard]] const AuditionMixSettings& mix_settings() const noexcept {
+    return mix_settings_;
+  }
+
  private:
-  TrackId     id_;
-  TrackIndex  index_;
-  std::string name_;
-  StaffLayout layout_;
-  MidiChannel channel_;
+  TrackId             id_;
+  TrackIndex          index_;
+  std::string         name_;
+  StaffLayout         layout_;
+  MidiChannel         channel_;
+  TrackPluginChain    plugin_chain_;
+  AuditionMixSettings mix_settings_;
 };
 
 }  // namespace graphscore
