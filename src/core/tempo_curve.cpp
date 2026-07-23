@@ -3,6 +3,7 @@
 #include <graphscore/core/tempo_curve.hpp>
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -228,7 +229,12 @@ namespace {
 [[nodiscard]] Rational quantize_position(double value) {
   const auto numerator = static_cast<std::int64_t>(std::llround(
       value * static_cast<double>(kInversionQuantizationDenominator)));
-  return *Rational::create(numerator, kInversionQuantizationDenominator);
+  // kInversionQuantizationDenominator is a fixed non-zero constant, and
+  // Rational::create fails only on a zero denominator, so this always engages.
+  const std::optional<Rational> quantized =
+      Rational::create(numerator, kInversionQuantizationDenominator);
+  assert(quantized.has_value());
+  return *quantized;
 }
 
 [[nodiscard]] Rational clamp_position(Rational value, Rational lo,
@@ -268,7 +274,12 @@ std::optional<double> integrate_elapsed_seconds(
   double   total  = 0.0;
   Rational cursor = from;
   while (cursor < to) {
-    const std::size_t index = *locate_segment(points, cursor);
+    // cursor never falls below from (it only advances toward to), and
+    // starting_index proved from is within the curve, so locate_segment
+    // always engages here.
+    const std::optional<std::size_t> segment = locate_segment(points, cursor);
+    assert(segment.has_value());
+    const std::size_t index = *segment;
     const Rational    next_boundary =
         index + 1 < points.size() ? points[index + 1].position : to;
     const Rational segment_end = next_boundary < to ? next_boundary : to;
@@ -301,7 +312,12 @@ std::optional<Rational> invert_elapsed_seconds(
     const double mid_d = lo + (hi - lo) * 0.5;
     mid = clamp_position(quantize_position(mid_d), from, curve_end);
 
-    const double elapsed_to_mid = *integrate_elapsed_seconds(points, from, mid);
+    // mid is clamped to [from, curve_end]; the total-span integration above
+    // already proved this range integrates, so this always engages.
+    const std::optional<double> elapsed =
+        integrate_elapsed_seconds(points, from, mid);
+    assert(elapsed.has_value());
+    const double elapsed_to_mid = *elapsed;
     if (elapsed_to_mid < elapsed_seconds) {
       lo = mid_d;
     } else {

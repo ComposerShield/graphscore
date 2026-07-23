@@ -3,6 +3,7 @@
 #include <graphscore/core/playback_mapping.hpp>
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -99,7 +100,12 @@ namespace {
 
 MidiVelocity velocity_for_dynamic(Dynamic dynamic) noexcept {
   const std::size_t index = static_cast<std::size_t>(dynamic);
-  return *MidiVelocity::create(kDynamicVelocityTable[index]);
+  // Every kDynamicVelocityTable entry is a legal MIDI velocity (<= kMax), so
+  // create always engages.
+  const std::optional<MidiVelocity> velocity =
+      MidiVelocity::create(kDynamicVelocityTable[index]);
+  assert(velocity.has_value());
+  return *velocity;
 }
 
 MidiVelocity interpolate_hairpin_velocity(MidiVelocity from, MidiVelocity to,
@@ -110,7 +116,12 @@ MidiVelocity interpolate_hairpin_velocity(MidiVelocity from, MidiVelocity to,
   const Rational to_value(to.value());
   const Rational interpolated =
       from_value + (to_value - from_value) * clamped_position;
-  return *MidiVelocity::create(round_velocity(interpolated));
+  // round_velocity clamps its result to [kMin, kMax], so create always
+  // engages.
+  const std::optional<MidiVelocity> velocity =
+      MidiVelocity::create(round_velocity(interpolated));
+  assert(velocity.has_value());
+  return *velocity;
 }
 
 MidiVelocity apply_emphasis(MidiVelocity base, bool accent,
@@ -123,7 +134,11 @@ MidiVelocity apply_emphasis(MidiVelocity base, bool accent,
   }
   const std::int32_t saturated =
       std::clamp<std::int32_t>(boosted, MidiVelocity::kMin, MidiVelocity::kMax);
-  return *MidiVelocity::create(static_cast<std::uint8_t>(saturated));
+  // saturated is clamped to [kMin, kMax], so create always engages.
+  const std::optional<MidiVelocity> velocity =
+      MidiVelocity::create(static_cast<std::uint8_t>(saturated));
+  assert(velocity.has_value());
+  return *velocity;
 }
 
 Rational sounded_duration_for_articulation(
