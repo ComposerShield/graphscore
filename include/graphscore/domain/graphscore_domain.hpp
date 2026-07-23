@@ -7,7 +7,6 @@
 #include <graphscore/domain/audition_mix.hpp>
 #include <graphscore/domain/clef_lane.hpp>
 #include <graphscore/domain/connector.hpp>
-#include <graphscore/domain/dynamic.hpp>
 #include <graphscore/domain/event_listener.hpp>
 #include <graphscore/domain/event_occurrence.hpp>
 #include <graphscore/domain/event_queue.hpp>
@@ -21,6 +20,7 @@
 #include <graphscore/domain/node_timeline.hpp>
 #include <graphscore/domain/notation_event.hpp>
 #include <graphscore/domain/notation_markings.hpp>
+#include <graphscore/domain/notation_playback.hpp>
 #include <graphscore/domain/notation_validation.hpp>
 #include <graphscore/domain/pickdown_bound_oracle.hpp>
 #include <graphscore/domain/pickdown_coordinates.hpp>

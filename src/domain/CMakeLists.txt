@@ -13,6 +13,7 @@ add_library(graphscore_domain STATIC
   node_timeline.cpp
   notation_event.cpp
   notation_markings.cpp
+  notation_playback.cpp
   notation_validation.cpp
   pickdown_bound_oracle.cpp
   pickdown_coordinates.cpp

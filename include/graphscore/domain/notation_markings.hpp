@@ -6,12 +6,13 @@
 #include <vector>
 
 #include <graphscore/core/graphscore_core.hpp>
-#include <graphscore/domain/dynamic.hpp>
 
 namespace graphscore {
 
 // A point dynamic marking (e.g. "mf") attached to one event in a voice.
-// Dynamics-to-note-on-velocity mapping is Phase 7; this is structure only.
+// Dynamics-to-note-on-velocity mapping is
+// graphscore/core/playback_mapping.hpp's velocity_for_dynamic(); this is
+// structure only.
 struct DynamicMarking {
   NotationEntityId id;
   NotationEntityId at_event;
@@ -27,7 +28,9 @@ enum class HairpinDirection : std::uint8_t {
 
 // A crescendo/diminuendo span from one event to a later event in the same
 // voice, referencing both endpoints by NotationEntityId.
-// Hairpin-to-note-on-velocity mapping is Phase 7; this is structure only.
+// Hairpin-to-note-on-velocity mapping is
+// graphscore/core/playback_mapping.hpp's interpolate_hairpin_velocity();
+// this is structure only.
 struct Hairpin {
   NotationEntityId id;
   NotationEntityId start_event;
@@ -39,7 +42,8 @@ struct Hairpin {
 
 // A legato span from one note/chord to a later note/chord in the same
 // voice, referencing both endpoints by NotationEntityId. Slur-to-legato-
-// overlap MIDI behavior is Phase 7; this is structure only.
+// overlap MIDI behavior is graphscore/core/playback_mapping.hpp's
+// legato_sounded_duration(); this is structure only.
 struct Slur {
   NotationEntityId id;
   NotationEntityId start_event;
@@ -81,16 +85,6 @@ struct PedalSpan {
   [[nodiscard]] bool operator==(const PedalSpan&) const = default;
 };
 
-// Acciaccatura ("crushed" grace note, conventionally slashed) is played as
-// close as possible to the preceding beat, stealing the least possible
-// time from the preceding sounded note; appoggiatura steals a more
-// deliberate, structured share of it. The exact steal fraction is a Phase
-// 7 concern (see GraceGroup below); this only records the notated kind.
-enum class GraceNoteType : std::uint8_t {
-  kAcciaccatura = 0,
-  kAppoggiatura,
-};
-
 // One grace note within a GraceGroup: its spelling, its notated (unstolen)
 // duration, its acciaccatura/appoggiatura kind, and whether it is drawn
 // slashed.
@@ -109,12 +103,13 @@ struct GraceNote {
 // precedes the principal event. This models the attachment and note
 // ordering only.
 //
-// TODO(Phase 7): the steal fraction/limits, multi-note division of the
-// stolen time across `notes`, behavior when no sounded note precedes
-// `principal_event`, and interaction with articulations are normative
-// playback rules (docs/plan/02-domain-model.md, "Normative playback
-// specification"), not structure, and are deliberately not implemented
-// here.
+// The steal fraction/limits, multi-note division of the stolen time across
+// `notes`, behavior when no sounded note precedes `principal_event`, and
+// interaction with articulations are normative playback rules specified
+// and implemented by graphscore/core/playback_mapping.hpp's
+// grace_steal_durations(), and wired to this structure by
+// graphscore/domain/notation_playback.hpp; this type itself remains
+// structure only.
 struct GraceGroup {
   NotationEntityId       id;
   NotationEntityId       principal_event;

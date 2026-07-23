@@ -9,7 +9,6 @@
 #include <vector>
 
 #include <graphscore/core/graphscore_core.hpp>
-#include <graphscore/domain/dynamic.hpp>
 #include <graphscore/domain/event_registry.hpp>
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/staff_layout.hpp>

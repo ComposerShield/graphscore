@@ -14,6 +14,7 @@ add_executable(graphscore_domain_test
   node_timeline_test.cpp
   notation_event_test.cpp
   notation_markings_test.cpp
+  notation_playback_test.cpp
   notation_validation_test.cpp
   pickdown_bound_oracle_test.cpp
   pickdown_coordinates_test.cpp

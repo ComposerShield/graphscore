@@ -2,6 +2,7 @@
 
 add_library(graphscore_core STATIC
   core.cpp
+  playback_mapping.cpp
   tempo_curve.cpp
   uuid.cpp
 )

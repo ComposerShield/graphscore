@@ -6,6 +6,7 @@ add_executable(graphscore_core_test
   duration_test.cpp
   midi_test.cpp
   notation_value_test.cpp
+  playback_mapping_test.cpp
   rational_test.cpp
   spelled_pitch_test.cpp
   strong_id_test.cpp

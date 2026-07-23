@@ -6,7 +6,7 @@
 #include <vector>
 
 #include <graphscore/core/graphscore_core.hpp>
-#include <graphscore/domain/articulation.hpp>
+#include <graphscore/domain/articulation.hpp>  // StemDirection
 
 namespace graphscore {
 
