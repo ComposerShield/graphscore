@@ -34,7 +34,7 @@ satisfy).
 | `tools/` | Developer-facing helper executables that are not part of the shipped product. |
 | `cmake/` | CMake modules: compiler/warning setup, dependency adapters (one file per third-party dependency, e.g. `SDL3.cmake`), the runtime install/export package (`RuntimePackage.cmake`), and the architecture audit (`architecture_contract.cmake` — the machine-readable ADR 0003 contract — plus `audit_permitted_edges.cmake`, `audit_link_closure.cmake`, `audit_transitive_closure.cmake`). |
 | `scripts/` | Non-CMake tooling: Python audit scripts (`audit_includes.py`, `audit_runtime_symbols.py`, `audit_cycles.py`, `audit_third_party_types.py`, sharing `graphscore_audit.py`) and `bootstrap.sh`. |
-| `.githooks/` | Tracked Git hooks. Installed by `scripts/bootstrap.sh`; never installed automatically. |
+| `.githooks/` | Tracked Git hooks (`pre-commit`: cpplint + clang-format on staged files; `pre-push`: the const-correctness clang-tidy analysis). Installed by `scripts/bootstrap.sh`; never installed automatically. |
 | `docs/plan/` | The milestone plan and the source-controlled execution checklist. |
 | `docs/decisions/` | Accepted ADRs. |
 | `docs/licenses/`, `NOTICES.md` | Third-party license inventory. |
@@ -45,7 +45,8 @@ satisfy).
 All commands run from the repository root unless noted.
 
 ```sh
-# One-time: install the tracked pre-commit hook.
+# One-time: install the tracked Git hooks (pre-commit lint, pre-push
+# clang-tidy).
 ./scripts/bootstrap.sh
 
 # Configure + build (presets defined in CMakePresets.json).
@@ -70,14 +71,25 @@ cmake --preset asan-ubsan && cmake --build --preset asan-ubsan && ctest --preset
 cmake --build --preset debug --target lint
 
 # Const-correctness analysis. Off by default because clang-tidy roughly
-# triples compile time; CI runs it as its own job.
+# triples compile time; CI runs it as its own job, and the tracked pre-push
+# hook runs it locally (incrementally, reusing build/tidy) and blocks the
+# push on findings.
 #
 # Use clang-tidy 18 to match CI. Check selections and their defaults change
 # between releases, so another version will report a different set — newer
-# ones both add and drop findings. `pip install clang-tidy==18.1.8` provides
-# a matching binary on any platform.
+# ones both add and drop findings. Note that `brew install llvm` gives the
+# latest major version, not 18. Matching installs:
+#   brew install llvm@18            (macOS; keg-only, the hook finds it)
+#   sudo apt install clang-tidy-18  (Debian/Ubuntu)
+#   pip install clang-tidy==18.1.8  (any platform)
 cmake --preset debug -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON
 cmake --build --preset debug -- -k 0   # -k 0: report every file, not the first
+#
+# On macOS, a non-Apple clang-tidy (Homebrew or the official LLVM builds
+# pip installs) does not inherit AppleClang's implicit SDK include path and
+# fails to find libc++ headers without it; the pre-push hook adds it itself.
+# For a manual run, configure with:
+#   -DCMAKE_CXX_FLAGS="-isysroot $(xcrun --show-sdk-path)"
 
 # Architecture boundary audit (ADR 0003 §7).
 cmake --build --preset debug --target audit_architecture

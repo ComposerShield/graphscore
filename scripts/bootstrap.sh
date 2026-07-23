@@ -24,7 +24,7 @@ fi
 
 # The executable bit is tracked in the index, but a checkout made with
 # core.fileMode=false (or an archive export) can lose it.
-chmod +x .githooks/pre-commit
+chmod +x .githooks/pre-commit .githooks/pre-push
 
 git config --local core.hooksPath .githooks
 
@@ -42,8 +42,14 @@ if ! command -v clang-format >/dev/null 2>&1 \
   missing="$missing\n  clang-format  LLVM install, or Xcode Command Line Tools on macOS"
 fi
 
-if ! command -v clang-tidy >/dev/null 2>&1; then
-  missing="$missing\n  clang-tidy    LLVM install (only needed for -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON)"
+# The pre-push hook requires clang-tidy 18 specifically: CI pins that
+# version, and another major version reports a different set of findings.
+tidy_version=""
+if command -v clang-tidy >/dev/null 2>&1; then
+  tidy_version=$(clang-tidy --version 2>/dev/null | sed -n 's/.*version \([0-9]*\).*/\1/p')
+fi
+if [ "$tidy_version" != "18" ] && [ ! -x /opt/homebrew/opt/llvm@18/bin/clang-tidy ]; then
+  missing="$missing\n  clang-tidy 18  brew install llvm@18 | apt install clang-tidy-18 | pip install clang-tidy==18.1.8 (pre-push hook)"
 fi
 
 if [ -n "$missing" ]; then

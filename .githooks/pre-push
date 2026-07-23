@@ -1,0 +1,89 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# GraphScore pre-push hook. Runs the const-correctness clang-tidy analysis
+# so a findings-introducing change is caught locally instead of by the CI
+# `clang-tidy` job after the fact.
+#
+# Install with:  ./scripts/bootstrap.sh
+#
+# The analysis mirrors the CI job exactly:
+#   * clang-tidy 18 (CI pins clang-tidy-18; another major version reports a
+#     different set of findings and is rejected below),
+#   * the debug preset (asserts must be active: the dataflow checks model
+#     assert() as an assumption),
+#   * GRAPHSCORE_BUILD_WRITER=OFF, matching the CI job's scope,
+#   * `-k 0`, so one run reports every file rather than stopping at the
+#     first failure.
+#
+# The build tree at build/tidy is reused across pushes, so after the first
+# (slow) run only changed translation units are re-analyzed. CI runs the
+# same analysis independently of this hook, so a contributor who bypasses
+# it with `git push --no-verify` still cannot merge code that fails it.
+#
+# POSIX sh, no bashisms: Git invokes hooks with /bin/sh.
+
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+# --- clang-tidy 18 ---------------------------------------------------------
+
+is_tidy_18() {
+  "$1" --version 2>/dev/null | grep -q 'version 18\.'
+}
+
+clang_tidy=""
+for candidate in clang-tidy-18 clang-tidy; do
+  if command -v "$candidate" >/dev/null 2>&1 && is_tidy_18 "$candidate"; then
+    clang_tidy=$(command -v "$candidate")
+    break
+  fi
+done
+
+# Homebrew's llvm@18 is keg-only and never lands on PATH.
+if [ -z "$clang_tidy" ] && [ -x /opt/homebrew/opt/llvm@18/bin/clang-tidy ]; then
+  clang_tidy=/opt/homebrew/opt/llvm@18/bin/clang-tidy
+fi
+
+if [ -z "$clang_tidy" ]; then
+  echo "pre-push: clang-tidy 18 not found; the const-correctness analysis" >&2
+  echo "          cannot run. CI pins version 18; another major version" >&2
+  echo "          reports a different set of findings. Install one of:" >&2
+  echo "            brew install llvm@18            (macOS)" >&2
+  echo "            sudo apt install clang-tidy-18  (Debian/Ubuntu)" >&2
+  echo "            pip install clang-tidy==18.1.8  (any platform)" >&2
+  echo "pre-push: push rejected. Re-run after installing, or use" >&2
+  echo "          'git push --no-verify' to defer to CI." >&2
+  exit 1
+fi
+
+# --- configure (idempotent; reuses build/tidy across pushes) ---------------
+
+set -- \
+  -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON \
+  -DGRAPHSCORE_CLANG_TIDY_EXECUTABLE="$clang_tidy" \
+  -DGRAPHSCORE_BUILD_WRITER=OFF
+
+# -isysroot: clang-tidy binaries that are not AppleClang (the official LLVM
+# builds, whether pip or Homebrew) do not inherit the implicit SDK include
+# path AppleClang compiles with, and fail to find libc++ headers without it.
+# Passing it explicitly merely makes the compiler's behavior visible to the
+# analyzer.
+if [ "$(uname -s)" = "Darwin" ]; then
+  sdk=$(xcrun --show-sdk-path)
+  set -- "$@" "-DCMAKE_CXX_FLAGS=-isysroot $sdk" "-DCMAKE_C_FLAGS=-isysroot $sdk"
+fi
+
+cmake --preset debug -B build/tidy "$@"
+
+# --- analyze ---------------------------------------------------------------
+
+if ! cmake --build build/tidy -- -k 0; then
+  echo "pre-push: clang-tidy reported findings. Re-run after fixing, or" >&2
+  echo "          use 'git push --no-verify' to defer to CI." >&2
+  exit 1
+fi
+
+exit 0
