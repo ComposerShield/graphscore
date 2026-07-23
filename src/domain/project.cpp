@@ -12,7 +12,7 @@ namespace graphscore {
 Project::Project(ProjectId id, std::string name)
     : id_(id), name_(std::move(name)) {}
 
-Result Project::set_start_node(NodeId node_id) {
+Result Project::set_start_node(NodeId node_id) noexcept {
   if (find_node(node_id) == nullptr)
     return Result(ResultCode::kInvalidArgument);
   start_node_ = node_id;

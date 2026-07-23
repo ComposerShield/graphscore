@@ -22,9 +22,19 @@ add_library(graphscore_domain STATIC
   pickdown_ownership.cpp
   project.cpp
   route_geometry.cpp
+  set_node_color_command.cpp
   set_node_name_command.cpp
+  set_node_notes_command.cpp
+  set_node_position_command.cpp
+  set_project_dynamic_command.cpp
+  set_project_name_command.cpp
   set_project_tempo_command.cpp
+  set_start_node_command.cpp
+  set_track_gain_command.cpp
+  set_track_mute_command.cpp
   set_track_name_command.cpp
+  set_track_pan_command.cpp
+  set_track_solo_command.cpp
   staff_layout.cpp
   tempo_lane.cpp
   track.cpp

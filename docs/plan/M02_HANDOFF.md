@@ -1,15 +1,16 @@
 # Milestone 02 (Domain And Command Model) — Orchestration Handoff
 
-**Status as of this doc:** Phases 1–7 complete. Phase 8a (command foundation)
-is complete and committed. Phase 7 (Normative playback specification) was split
-into 7a/7b/7c per Adam's locked scoping rulings (see "Plan for the remaining
-phases"). 7a is committed (`063f1af`) after three review rounds that caught a
-false continuity claim, a non-additive integration bug, and a sanitizer-fatal
-`Rational` overflow. 7b is committed (`dc7550a`) after two review rounds that
-caught an inverted precedence claim and a second sanitizer-fatal
-`Rational`/shift-overflow bug in the grace-steal math. 7c is the completed
-spec-only same-sample MIDI ordering contract. This file lets a different
-orchestrator pick up mid-milestone without re-deriving the plan.
+**Status as of this doc:** Phases 1–7 complete. Phases 8a (command foundation)
+and 8b (metadata/audition-mix commands) are complete and committed. Phase 7
+(Normative playback specification) was split into 7a/7b/7c per Adam's locked
+scoping rulings (see "Plan for the remaining phases"). 7a is committed
+(`063f1af`) after three review rounds that caught a false continuity claim, a
+non-additive integration bug, and a sanitizer-fatal `Rational` overflow. 7b is
+committed (`dc7550a`) after two review rounds that caught an inverted
+precedence claim and a second sanitizer-fatal `Rational`/shift-overflow bug in
+the grace-steal math. 7c is the completed spec-only same-sample MIDI ordering
+contract. This file lets a different orchestrator pick up mid-milestone without
+re-deriving the plan.
 Source of truth remains
 [02-domain-model.md](02-domain-model.md) and [CHECKLIST.md](CHECKLIST.md); this
 doc records *how* the milestone is being executed.
@@ -86,12 +87,13 @@ only when the whole section is approved.
 | 7b | Normative playback specification — articulation/dynamic/grace mapping | ✅ done | `dc7550a` |
 | 7c | Normative playback specification — simultaneous MIDI ordering (spec only) | ✅ done | — |
 | 8a | Command foundation (protocol, history, transaction, proving commands) | ✅ done | (this commit) |
-| 8b..f | Command and selection model (remaining edit commands, selection, clipboard, etc.) | ⬜ remaining | — |
+| 8b | Metadata/audition-mix reversible commands | ✅ done | (next commit) |
+| 8c..f | Command and selection model (remaining edit commands, selection, clipboard, etc.) | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
 
-Test suite currently: **734 tests, 100% pass** after Phase 8a; ASan/UBSan
-clean with 734/734 and zero findings.
+Test suite currently: **798 tests, 100% pass** after Phase 8b; ASan/UBSan
+clean with 798/798 and zero findings.
 
 CHECKLIST.md M02 boxes checked so far: Dependencies, Identity and value types,
 Project and track model, Node timeline, Notation model, Graph model, Adaptive
@@ -281,6 +283,60 @@ focus, and the top-level "Milestone 02 complete".
   `Track::set_name` tightened to `noexcept` so concrete command implementations
   can uphold the base-class `noexcept` contract. 60 new test cases (60 added,
   total 734), ASan/UBSan green with zero findings across two review rounds.
+- **Phase 8b (`domain`) — ten reversible non-structural commands (approved,
+  no required findings):** delivered the remaining single-field project,
+  track, and node commands against stable `NodeId`/`TrackId` lookup with
+  identical noexcept-snapshot semantics as 8a. Project commands:
+  `SetProjectNameCommand` (UTF-8 `std::string`, allocation-safe with
+  `std::bad_alloc`/`std::length_error` guard; empty, 10k-char, and multibyte
+  round-trips all verified), `SetStartNodeCommand` (optional set or clear
+  with `kInvalidArgument` on unowned `NodeId`, correctly re-validates on
+  each phase — including the case where an undo/redo attempts to set an
+  id that has since been removed from the model, returning
+  `kInvalidArgument` rather than silently persisting a stale reference);
+  `SetProjectDynamicCommand` (all eight `Dynamic` values round-trip,
+  snapshotting the project's `default_dynamic()`). Track audition-mix
+  commands: `SetTrackGainCommand`, `SetTrackPanCommand`, `SetTrackMuteCommand`,
+  `SetTrackSoloCommand` — each rejects missing and archived `TrackId`s
+  without mutation via `find_active_track` (not `find_track`); gain and pan
+  store every IEEE 754 `float` bit-pattern exactly (NaN, inf, subnormal,
+  ±0 included); mute and solo store `bool` exactly; legal-range validation
+  is deferred to M08 per the existing `AuditionMixSettings` contract.
+  `SetTrackGainCommand` and `SetTrackPanCommand` include bitwise round-trip
+  tests over 15 and 13 IEEE 754 cases respectively, and
+  `SetTrackGainCommand` verifies unrelated fields (pan, mute) are unchanged
+  after gain mutation. Node metadata commands: `SetNodeColorCommand` (packed
+  `uint32_t` RGBA, six explicit color values verified exact including
+  `0x00000000` and `0xFFFFFFFF`), `SetNodeNotesCommand` (freeform
+  `std::string`, empty/long/UTF-8 round-trips, `set_notes` precondition
+  pre-verified), `SetNodePositionCommand` (`GraphPosition` double-pair, nine
+  IEEE 754 `double` bit-pattern pairs verified round-trip exact, unrelated
+  fields unchanged). Deterministic replay evidence: all ten commands
+  snapshot the old value on first successful execute, restore it on undo,
+  and reapply the new value on redo; same-ID paths produce identical
+  project state regardless of interleaving with other commands (verified
+  via `SetNodeNotesCommand` + `SetNodeColorCommand` interleaved undo/redo
+  against the same id). 64 new test cases (798 total, +64 over Phase 8a's
+  734), debug and ASan/UBSan clean with 798/798 and zero findings.
+
+  **Reviewer LOW advisory (accepted, not blocking):**
+  `NodeCommandsSurviveReallocation` appends 200 nodes to a project and
+  verifies that `SetNodeColorCommand`/`SetNodeNotesCommand` against the
+  first inserted node still work. It relies on `std::vector` reallocation
+  being _likely_ rather than capacity-proven; a move-constructed `Node`
+  with a stable `NodeId` is well-defined but the test asserts a
+  probabilistic guarantee. Accepted as test-strengthening only if useful;
+  no counterexample has been observed with reasonable node counts.
+
+  **Remaining categories explicitly unscoped for 8b:** plugin-chain commands,
+  structural graph commands (add/remove node, add/remove track), node
+  timeline commands, notation entry/delete commands, selection model,
+  clipboard, and measure insert/delete — all reserved for
+  Phase 8c and later. The eight original Phase 8 deliverable boxes in
+  `02-domain-model.md` remain unchecked.
+
+  **Orchestration must stop after this commit until Adam says continue.
+  Do not begin Phase 8c.**
 
 ## Plan for the remaining phases
 
@@ -346,14 +402,18 @@ focus, and the top-level "Milestone 02 complete".
     and lifecycle/boundary integration on top of `MidiOwnershipTracker`.
     No code was added because the M04 scheduler is the real consumer.
 - **Phase 8 — Command and selection model:**
-  - **8a (done, this commit):** foundational non-throwing `Command` protocol,
+  - **8a (done):** foundational non-throwing `Command` protocol,
     standalone `CommandHistory`, atomic `CommandTransaction` with best-effort
     rollback, three stable-ID proving commands. See delivery note above.
-  - **8b..f (remaining):** reversible commands for every graph/notation/tempo/
-    track/metadata edit; all selection kinds; toolkit-independent clipboard
-    fragments; cut/copy/paste with identity remapping + rest normalization;
-    boundary-crossing clip/reconnection rules; node copy/paste id remapping;
-    atomic measure insert/delete.
+  - **8b (done):** ten reversible non-structural metadata/audition-mix
+    commands (`SetProjectName`, `SetStartNode`, `SetProjectDynamic`,
+    `SetTrackGain`/`Pan`/`Mute`/`Solo`, `SetNodeColor`/`Notes`/`Position`).
+    See delivery note above.
+  - **8c..f (remaining):** reversible commands for every graph/notation/tempo/
+    track/metadata edit beyond the 8a+8b set; all selection kinds;
+    toolkit-independent clipboard fragments; cut/copy/paste with identity
+    remapping + rest normalization; boundary-crossing clip/reconnection
+    rules; node copy/paste id remapping; atomic measure insert/delete.
 - **Phase 9 — Validation service:** fast incremental + complete validation;
   diagnostics with stable ids/severity/machine code/user text; validates
   rhythmic completeness, UUID uniqueness, references, track alignment, signature

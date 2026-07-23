@@ -51,6 +51,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [x] Adaptive playback semantics specified
 - [x] Normative playback specification completed
 - [x] &nbsp;&nbsp;Phase 8a foundational command/history/transaction increment completed<br>&nbsp;&nbsp;&nbsp;&nbsp;(non-throwing `Command` protocol, standalone `CommandHistory`, atomic `CommandTransaction` with<br>&nbsp;&nbsp;&nbsp;&nbsp;best-effort rollback, three stable-ID proving commands; 734 tests. Remaining Phase 8<br>&nbsp;&nbsp;&nbsp;&nbsp;edit commands, selection, clipboard, clipping/remapping, and measure ops still unchecked.)
+- [x] &nbsp;&nbsp;Phase 8b metadata/audition-mix command increment completed<br>&nbsp;&nbsp;&nbsp;&nbsp;(ten reversible non-structural commands: `SetProjectName`, `SetStartNode`, `SetProjectDynamic`,<br>&nbsp;&nbsp;&nbsp;&nbsp;`SetTrackGain`, `SetTrackPan`, `SetTrackMute`, `SetTrackSolo`, `SetNodeColor`, `SetNodeNotes`,<br>&nbsp;&nbsp;&nbsp;&nbsp;`SetNodePosition`; stable-ID lookup, noexcept/allocation-safe, deterministic replay; 798 tests.<br>&nbsp;&nbsp;&nbsp;&nbsp;Selection, clipboard, plugin-chain, structural, graph, timeline, and notation commands remain.)
 - [ ] Command and selection model completed
 - [ ] Validation service completed
 - [ ] Acceptance criteria passed

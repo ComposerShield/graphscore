@@ -58,7 +58,7 @@ class Node {
 
   [[nodiscard]] const std::string& notes() const noexcept { return notes_; }
 
-  void set_notes(std::string notes) { notes_ = std::move(notes); }
+  void set_notes(std::string notes) noexcept { notes_ = std::move(notes); }
 
   [[nodiscard]] const GraphPosition& position() const noexcept {
     return position_;

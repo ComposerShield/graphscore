@@ -31,14 +31,14 @@ class Project {
 
   [[nodiscard]] const std::string& name() const noexcept { return name_; }
 
-  void set_name(std::string name) { name_ = std::move(name); }
+  void set_name(std::string name) noexcept { name_ = std::move(name); }
 
   [[nodiscard]] std::optional<NodeId> start_node() const noexcept {
     return start_node_;
   }
 
   // Fails if `node_id` does not reference a node this project owns.
-  [[nodiscard]] Result set_start_node(NodeId node_id);
+  [[nodiscard]] Result set_start_node(NodeId node_id) noexcept;
 
   void clear_start_node() noexcept { start_node_.reset(); }
 
