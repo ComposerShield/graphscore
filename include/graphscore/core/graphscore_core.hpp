@@ -16,6 +16,8 @@
 #include <graphscore/core/strong_id.hpp>
 #include <graphscore/core/strong_index.hpp>
 #include <graphscore/core/tempo.hpp>
+#include <graphscore/core/tempo_curve.hpp>
+#include <graphscore/core/tempo_point.hpp>
 #include <graphscore/core/time_signature.hpp>
 #include <graphscore/core/tuplet_ratio.hpp>
 #include <graphscore/core/uuid.hpp>

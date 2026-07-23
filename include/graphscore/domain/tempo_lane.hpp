@@ -3,34 +3,13 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <vector>
 
 #include <graphscore/core/graphscore_core.hpp>
+#include <graphscore/core/tempo_point.hpp>
 
 namespace graphscore {
-
-// Interpolation applied to the tempo segment that starts at a TempoPoint's
-// position and runs to the next point's position (or to the lane's end,
-// for the lane's final point).
-enum class TempoSegmentKind : std::uint8_t {
-  kStep = 0,
-  kLinear,
-  kSmooth,
-};
-
-// One tempo lane anchor: an exact whole-note position (see measure_map.hpp
-// for the canonical whole-note position unit), a BPM/beat-unit pair reusing
-// the validated core Tempo type, and the interpolation kind governing the
-// segment that starts here.
-struct TempoPoint {
-  Rational         position;
-  Tempo            tempo;
-  TempoSegmentKind segment_kind = TempoSegmentKind::kStep;
-
-  [[nodiscard]] bool operator==(const TempoPoint&) const = default;
-};
 
 // A node-wide continuous tempo lane, spanning the main region and any
 // pickdown (product decision: "Tempo is a node-wide continuous lane
@@ -39,13 +18,14 @@ struct TempoPoint {
 //
 // This models only the point/segment DATA and its structural validity:
 // strictly ordered positions, the lane starting exactly at its declared
-// start, and full coverage through its declared end. Evaluating a kSmooth
-// segment — the cubic curve equations, legal control handles, deterministic
-// integration/inversion tolerances, and integer sample rounding at
-// boundaries — is the Phase 7 normative playback specification.
-//
-// TODO(Phase 7): cubic smooth-tempo curve integration/inversion, tolerances,
-// and integer sample rounding at segment boundaries.
+// start, and full coverage through its declared end. Evaluating a segment
+// — the cubic curve equations, legal control handles, deterministic
+// integration/inversion, and integer sample rounding at boundaries — is
+// graphscore/core/tempo_curve.hpp's concern: tempo_rate_at(),
+// integrate_elapsed_seconds(), and invert_elapsed_seconds() there operate
+// directly on this class's points() (and, for inversion, end()) once a
+// caller has resolved which segment governs a position via
+// segment_index_at() below.
 class TempoLane {
  public:
   TempoLane() = delete;
@@ -70,10 +50,9 @@ class TempoLane {
   // point whose position() is <= `position`. This identifies WHICH
   // segment's data (tempo, beat unit, TempoSegmentKind) applies at
   // `position` -- it does not evaluate the BPM that segment actually
-  // produces there, which for TempoSegmentKind::kSmooth is Phase 7's
-  // cubic-curve integration (see the TODO(Phase 7) above); a kStep/
-  // kLinear segment's value is likewise left for that same evaluation
-  // layer, deliberately not this purely structural lookup. Returns
+  // produces there, which is graphscore/core/tempo_curve.hpp's
+  // tempo_rate_at() for every TempoSegmentKind, kStep and kLinear included,
+  // deliberately not this purely structural lookup. Returns
   // std::nullopt if `position` is outside [start(), end()) -- the lane's
   // own declared coverage -- since create()'s own invariants (points()
   // non-empty, strictly ordered, and the first point exactly at start())

@@ -2,6 +2,7 @@
 
 add_library(graphscore_core STATIC
   core.cpp
+  tempo_curve.cpp
   uuid.cpp
 )
 

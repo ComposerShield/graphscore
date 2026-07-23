@@ -88,8 +88,9 @@ namespace graphscore {
 // playback back around for a second tail before the first tail's real
 // elapsed time has caught up. Proving or bounding that requires
 // integrating real time over the cubic smooth-tempo curve
-// (tempo_lane.hpp's TODO(Phase 7)), which is Phase 7's concern, not this
-// increment's. PickdownBoundStatus::kUnbounded (below) is retained --
+// (graphscore/core/tempo_curve.hpp's integrate_elapsed_seconds(), landed
+// in Phase 7), which is a timing-analysis concern this increment does not
+// take on. PickdownBoundStatus::kUnbounded (below) is retained --
 // unreachable from any structural input today -- as the verdict Phase 7's
 // timing analysis is expected to report if it ever finds such a case.
 //

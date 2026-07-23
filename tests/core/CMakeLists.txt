@@ -9,6 +9,7 @@ add_executable(graphscore_core_test
   rational_test.cpp
   spelled_pitch_test.cpp
   strong_id_test.cpp
+  tempo_curve_test.cpp
 )
 
 target_compile_features(graphscore_core_test PRIVATE cxx_std_23)
