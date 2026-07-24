@@ -2,10 +2,13 @@
 
 add_library(graphscore_domain STATIC
   archive_track_command.cpp
+  bind_output_event_command.cpp
   clef_lane.cpp
   command_history.cpp
   command_transaction.cpp
+  connect_command.cpp
   connector.cpp
+  disconnect_command.cpp
   event_queue.cpp
   event_registry.cpp
   event_state_machine.cpp
@@ -22,8 +25,10 @@ add_library(graphscore_domain STATIC
   pickdown_coordinates.cpp
   pickdown_ownership.cpp
   project.cpp
+  reset_route_command.cpp
   restore_track_command.cpp
   route_geometry.cpp
+  set_custom_route_command.cpp
   set_input_connector_name_command.cpp
   set_listener_policy_command.cpp
   set_node_color_command.cpp

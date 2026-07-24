@@ -6,11 +6,14 @@
 #include <graphscore/domain/archive_track_command.hpp>
 #include <graphscore/domain/articulation.hpp>
 #include <graphscore/domain/audition_mix.hpp>
+#include <graphscore/domain/bind_output_event_command.hpp>
 #include <graphscore/domain/clef_lane.hpp>
 #include <graphscore/domain/command.hpp>
 #include <graphscore/domain/command_history.hpp>
 #include <graphscore/domain/command_transaction.hpp>
+#include <graphscore/domain/connect_command.hpp>
 #include <graphscore/domain/connector.hpp>
+#include <graphscore/domain/disconnect_command.hpp>
 #include <graphscore/domain/event_listener.hpp>
 #include <graphscore/domain/event_occurrence.hpp>
 #include <graphscore/domain/event_queue.hpp>
@@ -31,8 +34,10 @@
 #include <graphscore/domain/pickdown_ownership.hpp>
 #include <graphscore/domain/plugin_chain.hpp>
 #include <graphscore/domain/project.hpp>
+#include <graphscore/domain/reset_route_command.hpp>
 #include <graphscore/domain/restore_track_command.hpp>
 #include <graphscore/domain/route_geometry.hpp>
+#include <graphscore/domain/set_custom_route_command.hpp>
 #include <graphscore/domain/set_input_connector_name_command.hpp>
 #include <graphscore/domain/set_listener_policy_command.hpp>
 #include <graphscore/domain/set_node_color_command.hpp>
