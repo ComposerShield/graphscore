@@ -98,8 +98,9 @@ only when the whole section is approved.
 | 8d-i | Add/remove connector commands + `Node::restore_input`/`restore_output` | ✅ done | `910d250` |
 | 8d-ii | Register/remove event commands + `EventRegistry::add_event_with_id` | ✅ done | `273e0b9` |
 | 8d-iii | Add-track command + `add_track_with_id` / undo-only `hard_remove_track` / `Node::remove_lane` | ✅ done | `da7e0cb` |
-| 8d-iv | Add/remove node commands (full Node aggregate snapshot + cross-graph cascade) | ⬜ next | — |
-| 8e..f | Selection model, clipboard, cut/copy/paste + clip/reconnect, node copy/paste id remapping, measure ops | ⬜ remaining | — |
+| 8d-iv | Add/remove node commands (full Node aggregate snapshot + cross-graph cascade) | ✅ done | `fd83039` |
+| **8d complete** | Add/remove of connectors, events, tracks, nodes — all reversible with stable ids | ✅ **done** | — |
+| 8e..f | Selection model, clipboard, cut/copy/paste + clip/reconnect, node copy/paste id remapping, measure ops; plus the remaining notation/tempo edit commands | ⬜ next | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
 
@@ -393,6 +394,33 @@ top-level "Milestone 02 complete".
 
   **Orchestration stopped after 8c per Adam's instruction to check in and
   update docs before proceeding to Phase 8d.**
+- **Phase 8d (`domain`) — reversible add/remove of graph entities (done, split
+  8d-i..iv):** the structural add/remove commands that need new restore-with-id
+  domain API, per the locked mechanism (snapshot + restore-with-id, guarding
+  id-uniqueness on every new primitive). **8d-i (`910d250`)** connectors:
+  `Node::restore_input`/`restore_output` + `AddInputConnector`,
+  `AddOutputConnector`, `RemoveOutputConnector` (snapshots the destroyed
+  listener), `RemoveInputConnector` (snapshots + reconnects every cross-node
+  inbound edge and its route). **8d-ii (`273e0b9`)** events:
+  `EventRegistry::add_event_with_id` + `RegisterEventCommand`,
+  `RemoveEventCommand` (snapshots definition + every binding + each node's
+  listener policy/capacity, restores all on undo). **8d-iii (`da7e0cb`)**
+  tracks: `Project::add_track_with_id` + undo-only `hard_remove_track` +
+  `Node::remove_lane` + `AddTrackCommand` (archive stays the user-facing
+  removal, so no `RemoveTrackCommand`). **8d-iv (`fd83039`)** nodes:
+  `Project::add_node_with_id`/`remove_node`/`restore_node` + `AddNodeCommand`,
+  `RemoveNodeCommand` (full Node-aggregate snapshot + cross-graph inbound-edge/
+  route/start-node cascade; self-loops restored via the Node value, not the
+  cascade; **resolves the Phase-2 dangling designated start-node deferral**).
+  Plus the family-wide `bind_output_event` allocation hardening (`7297bca`).
+  Each increment: fresh worker + independent reviewer, all five gates
+  (clang-tidy now enforced at commit). 976 tests total after 8d-iv
+  (`CommandTest.*` 222→280 across 8d). Every reviewer APPROVED; 8d-i took two
+  fix rounds (allocation guards, then clang-tidy optional-access), 8d-ii..iv
+  landed clean on first review. **Still unchecked in the section:** the
+  remaining notation/tempo edit commands (need `VoiceContent`/`TempoLane`
+  fine-grained mutators), selection, clipboard, cut/copy/paste + clip/
+  reconnect rules, node copy/paste id remapping, and measure ops — all 8e..f.
 
 ## Plan for the remaining phases
 
