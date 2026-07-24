@@ -95,7 +95,8 @@ only when the whole section is approved.
 | 8b | Metadata/audition-mix reversible commands | ✅ done | `ffc9f2c` |
 | 8c-i | Reversible track-archive + connector-config commands (9) | ✅ done | `54543c1` |
 | 8c-ii | Reversible connection/route/event-binding commands (5) | ✅ done | `138458d` |
-| 8d | Add/remove of graph entities (new restore-with-id domain API + commands); scoped, split 8d-i connectors → 8d-ii events → 8d-iii tracks → 8d-iv nodes | ⬜ next | — |
+| 8d-i | Add/remove connector commands + `Node::restore_input`/`restore_output` | ✅ done | `910d250` |
+| 8d-ii..iv | Add/remove of events → tracks → nodes (new restore-with-id domain API + commands) | ⬜ next | — |
 | 8e..f | Selection model, clipboard, cut/copy/paste + clip/reconnect, node copy/paste id remapping, measure ops | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
@@ -823,6 +824,35 @@ implement (Phase 5).
 
 ## Environment quirks (every worker/reviewer brief should mention these)
 
+- **clang-tidy is now a PRE-COMMIT gate (Adam, `ae81f5d` "Run clang-tidy
+  before commits").** `.githooks/pre-commit` runs the clang-tidy 18 analysis
+  (incrementally, reusing `build/tidy`) and **blocks the commit on any
+  finding** — it is no longer only a CI/pre-push gate. Consequence: **the
+  standard gate set is now FIVE, not four** — every worker must run clang-tidy
+  and every reviewer must verify it clean before the orchestrator commits, or
+  the commit will fail at the hook. This bit Phase 8d-i: its `std::optional`
+  snapshot members (needed because `InputConnector`/`OutputConnector` have no
+  default ctor) tripped `bugprone-unchecked-optional-access`; the fix was an
+  explicit `has_value()` guard (returning `ResultCode::kInternalError`, a
+  should-be-unreachable branch under the command state machine) before every
+  optional dereference, plus hoisting a doubled `event_binding()` call into a
+  local. 8d-ii..iv will reuse the same optional-snapshot pattern for
+  `Node`/`Track`/event aggregates and must apply the same guards up front.
+  Run clang-tidy the AGENTS.md way in a **dedicated** build dir so it does not
+  slow `build/debug`: `cmake -S . -B build/tidy-fix -G Ninja -DCMAKE_BUILD_TYPE=Debug
+  -DGRAPHSCORE_BUILD_WRITER=OFF -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON
+  -DCMAKE_CXX_FLAGS="-isysroot $(xcrun --show-sdk-path)"` then
+  `cmake --build build/tidy-fix -- -k 0` (clang-tidy 18 at
+  `/opt/homebrew/opt/llvm@18/bin/clang-tidy`; a non-Apple clang-tidy needs the
+  `-isysroot` flag to find libc++). Because the hook runs clang-tidy, **commits
+  now take longer** — give `git commit` a generous timeout (the first full
+  `build/tidy` population can exceed 2 min; incremental re-commits are fast).
+- **Watch for Adam's out-of-band commits.** Adam committed `33a9a29 "Handle
+  route command allocation failures"` (hardening the 8c route commands' undo/
+  redo allocation paths — same direction as our fix rounds) and `ae81f5d`
+  above while 8d-i agents were running. They landed cleanly under the 8d-i
+  work (no shared files). Before committing an increment, `git log`/`git show
+  --stat` to confirm HEAD is where you expect and nothing you touch overlaps.
 - **cpplint** is not on the default PATH; it lives at
   `/Users/adamshield/Library/Python/3.9/bin`. Prepend it before
   `cmake --preset debug` so `find_program` locates it, then run the lint target.
