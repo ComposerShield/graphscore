@@ -17,6 +17,7 @@
 
 using graphscore::AddInputConnectorCommand;
 using graphscore::AddOutputConnectorCommand;
+using graphscore::AddTrackCommand;
 using graphscore::ArchiveTrackCommand;
 using graphscore::BindOutputEventCommand;
 using graphscore::Command;
@@ -31,9 +32,12 @@ using graphscore::EventId;
 using graphscore::EventListener;
 using graphscore::Graph;
 using graphscore::GraphPosition;
+using graphscore::KeySignature;
+using graphscore::Measure;
 using graphscore::MidiChannel;
 using graphscore::Node;
 using graphscore::NodeId;
+using graphscore::NodeTimeline;
 using graphscore::NoteValue;
 using graphscore::OutputConnector;
 using graphscore::Project;
@@ -73,6 +77,7 @@ using graphscore::SetTrackPanCommand;
 using graphscore::SetTrackSoloCommand;
 using graphscore::StaffLayout;
 using graphscore::Tempo;
+using graphscore::TimeSignature;
 using graphscore::TrackId;
 
 namespace {
@@ -5897,4 +5902,207 @@ TEST(CommandTest, DeterministicReplay8dii) {
   EXPECT_EQ(second.events().find_by_name("Attack"), nullptr);
   EXPECT_NE(first.events().find_by_id(first_release), nullptr);
   EXPECT_NE(second.events().find_by_id(second_release), nullptr);
+}
+
+// =========================================================================
+// Phase 8d-iii — AddTrackCommand
+// =========================================================================
+
+TEST(CommandTest, AddTrackRoundTripPreservesId) {
+  Project project = make_project();
+  NodeId  node_id = project.add_node("Node");
+
+  auto cmd = std::make_unique<AddTrackCommand>(
+      "Track", StaffLayout::single_staff(), *MidiChannel::create(0));
+
+  ASSERT_TRUE(cmd->execute(project).ok());
+  ASSERT_EQ(project.active_tracks().size(), 1u);
+  const TrackId created_id = project.active_tracks().front().id();
+  EXPECT_EQ(project.active_tracks().front().name(), "Track");
+  EXPECT_TRUE(project.find_node(node_id)->has_lane(created_id));
+
+  ASSERT_TRUE(cmd->undo(project).ok());
+  EXPECT_EQ(project.find_active_track(created_id), nullptr);
+  EXPECT_EQ(project.find_archived_track(created_id), nullptr);
+  EXPECT_EQ(project.active_tracks().size(), 0u);
+  EXPECT_FALSE(project.find_node(node_id)->has_lane(created_id));
+
+  ASSERT_TRUE(cmd->redo(project).ok());
+  ASSERT_NE(project.find_active_track(created_id), nullptr);
+  EXPECT_EQ(project.find_active_track(created_id)->id(), created_id);
+  EXPECT_TRUE(project.find_node(node_id)->has_lane(created_id));
+  EXPECT_EQ(project.active_tracks().size(), 1u);
+}
+
+TEST(CommandTest, AddTrackDoubleExecuteRejected) {
+  Project project = make_project();
+
+  auto cmd = std::make_unique<AddTrackCommand>(
+      "Track", StaffLayout::single_staff(), *MidiChannel::create(0));
+  ASSERT_TRUE(cmd->execute(project).ok());
+  EXPECT_EQ(cmd->execute(project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(project.active_tracks().size(), 1u);
+}
+
+TEST(CommandTest, AddTrackUndoWithoutExecuteRejected) {
+  Project project = make_project();
+
+  auto cmd = std::make_unique<AddTrackCommand>(
+      "Track", StaffLayout::single_staff(), *MidiChannel::create(0));
+  EXPECT_EQ(cmd->undo(project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(project.active_tracks().size(), 0u);
+}
+
+TEST(CommandTest, AddTrackRedoWithoutUndoRejected) {
+  Project project = make_project();
+
+  auto cmd = std::make_unique<AddTrackCommand>(
+      "Track", StaffLayout::single_staff(), *MidiChannel::create(0));
+  ASSERT_TRUE(cmd->execute(project).ok());
+  EXPECT_EQ(cmd->redo(project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(project.active_tracks().size(), 1u);
+}
+
+TEST(CommandTest, AddTrackAtCapFailsNoMutation) {
+  Project project = make_project();
+  for (int i = 0; i < 64; ++i) {
+    ASSERT_TRUE(
+        project
+            .add_track("Track " + std::to_string(i),
+                       StaffLayout::single_staff(),
+                       *MidiChannel::create(static_cast<std::uint8_t>(i % 16)))
+            .has_value());
+  }
+
+  auto cmd = std::make_unique<AddTrackCommand>(
+      "Overflow", StaffLayout::single_staff(), *MidiChannel::create(0));
+  EXPECT_EQ(cmd->execute(project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(project.active_tracks().size(), 64u);
+}
+
+// Linear-history safety: a later command must undo before the AddTrack does,
+// so hard_remove_track always runs against an empty, just-added lane.
+TEST(CommandTest, AddTrackLinearHistoryUndoLeavesNoOrphanState) {
+  Project project = make_project();
+  NodeId  node_id = project.add_node("Node");
+
+  CommandHistory history;
+  ASSERT_TRUE(history
+                  .execute_new(std::make_unique<AddTrackCommand>(
+                                   "Track", StaffLayout::single_staff(),
+                                   *MidiChannel::create(0)),
+                               project)
+                  .ok());
+  const TrackId track_id = project.active_tracks().front().id();
+
+  ASSERT_TRUE(
+      history
+          .execute_new(std::make_unique<SetNodeNameCommand>(node_id, "Renamed"),
+                       project)
+          .ok());
+
+  EXPECT_EQ(project.active_tracks().size(), 1u);
+  EXPECT_EQ(project.find_node(node_id)->name(), "Renamed");
+
+  ASSERT_TRUE(history.undo(project).ok());
+  EXPECT_EQ(project.find_node(node_id)->name(), "Node");
+  EXPECT_EQ(project.active_tracks().size(), 1u);
+
+  ASSERT_TRUE(history.undo(project).ok());
+  EXPECT_EQ(project.active_tracks().size(), 0u);
+  EXPECT_EQ(project.find_active_track(track_id), nullptr);
+  EXPECT_FALSE(project.find_node(node_id)->has_lane(track_id));
+}
+
+// 64-track/64-measure practicality: AddTrackCommand at the cap fails
+// cleanly, and archive/restore of an existing track still round-trips.
+TEST(CommandTest, SixtyFourTrackAndMeasureNodePracticality) {
+  Project project = make_project();
+
+  for (int i = 0; i < 64; ++i) {
+    ASSERT_TRUE(
+        project
+            .add_track("Track " + std::to_string(i),
+                       StaffLayout::single_staff(),
+                       *MidiChannel::create(static_cast<std::uint8_t>(i % 16)))
+            .has_value());
+  }
+  ASSERT_EQ(project.active_tracks().size(), 64u);
+
+  NodeId node_id = project.add_node("Node");
+  Node*  node    = project.find_node(node_id);
+  ASSERT_EQ(node->lane_count(), 64u);
+
+  std::vector<Measure> measures;
+  measures.reserve(64);
+  for (int i = 0; i < 64; ++i) {
+    measures.push_back(
+        Measure{*TimeSignature::create(4, 4), *KeySignature::create(0)});
+  }
+  auto timeline = NodeTimeline::create(std::move(measures), {});
+  ASSERT_TRUE(timeline.has_value());
+  EXPECT_EQ(timeline->measures().measure_count(), 64u);
+  node->set_timeline(std::move(*timeline));
+
+  auto add_cmd = std::make_unique<AddTrackCommand>(
+      "Overflow", StaffLayout::single_staff(), *MidiChannel::create(0));
+  EXPECT_EQ(add_cmd->execute(project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(project.active_tracks().size(), 64u);
+
+  const TrackId archive_id  = project.active_tracks().front().id();
+  auto          archive_cmd = std::make_unique<ArchiveTrackCommand>(archive_id);
+  ASSERT_TRUE(archive_cmd->execute(project).ok());
+  EXPECT_EQ(project.find_active_track(archive_id), nullptr);
+
+  ASSERT_TRUE(archive_cmd->undo(project).ok());
+  EXPECT_NE(project.find_active_track(archive_id), nullptr);
+  EXPECT_EQ(project.active_tracks().size(), 64u);
+}
+
+// =========================================================================
+// Phase 8d-iii — deterministic replay
+// =========================================================================
+
+TEST(CommandTest, DeterministicReplay8diii) {
+  auto run_sequence = [](Project& project) {
+    CommandHistory history;
+
+    EXPECT_TRUE(history
+                    .execute_new(std::make_unique<AddTrackCommand>(
+                                     "First", StaffLayout::single_staff(),
+                                     *MidiChannel::create(0)),
+                                 project)
+                    .ok());
+    const TrackId first_id = project.active_tracks().front().id();
+
+    EXPECT_TRUE(history
+                    .execute_new(std::make_unique<AddTrackCommand>(
+                                     "Second", StaffLayout::single_staff(),
+                                     *MidiChannel::create(1)),
+                                 project)
+                    .ok());
+
+    EXPECT_TRUE(
+        history
+            .execute_new(std::make_unique<ArchiveTrackCommand>(first_id),
+                         project)
+            .ok());
+
+    return project.active_tracks().front().id();
+  };
+
+  Project first  = make_project();
+  Project second = make_project();
+
+  const TrackId first_survivor  = run_sequence(first);
+  const TrackId second_survivor = run_sequence(second);
+
+  EXPECT_EQ(first.active_tracks().size(), 1u);
+  EXPECT_EQ(second.active_tracks().size(), 1u);
+  EXPECT_EQ(first.archived_tracks().size(), 1u);
+  EXPECT_EQ(second.archived_tracks().size(), 1u);
+  EXPECT_EQ(first.active_tracks().front().name(), "Second");
+  EXPECT_EQ(second.active_tracks().front().name(), "Second");
+  EXPECT_NE(first.find_active_track(first_survivor), nullptr);
+  EXPECT_NE(second.find_active_track(second_survivor), nullptr);
 }

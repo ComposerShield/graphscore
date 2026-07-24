@@ -77,6 +77,15 @@ class Node {
   // an archived track's lane is never disturbed by re-alignment.
   void ensure_lane(TrackId track_id);
 
+  // Erases the lane for `track_id`, if one is present; a no-op otherwise.
+  // Used by Project::hard_remove_track to fully remove a just-added track's
+  // lane when an AddTrackCommand is undone. Unlike ensure_lane and unlike
+  // archiving a track (Project::archive_track, which deliberately keeps
+  // every lane already recorded), this call is destructive: it is never
+  // reachable from a user-facing "remove track" action, only from undoing
+  // an add.
+  void remove_lane(TrackId track_id) noexcept;
+
   [[nodiscard]] std::size_t lane_count() const noexcept {
     return lanes_.size();
   }

@@ -3,6 +3,7 @@
 add_library(graphscore_domain STATIC
   add_input_connector_command.cpp
   add_output_connector_command.cpp
+  add_track_command.cpp
   archive_track_command.cpp
   bind_output_event_command.cpp
   clef_lane.cpp

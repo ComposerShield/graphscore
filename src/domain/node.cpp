@@ -29,6 +29,10 @@ void Node::ensure_lane(TrackId track_id) {
   lanes_.try_emplace(track_id);
 }
 
+void Node::remove_lane(TrackId track_id) noexcept {
+  lanes_.erase(track_id);
+}
+
 ConnectorId Node::add_input(std::string name) {
   inputs_.emplace_back(std::move(name));
   return inputs_.back().id();

@@ -63,6 +63,16 @@ class Project {
                                                  StaffLayout layout,
                                                  MidiChannel channel);
 
+  // Reversible-undo substrate mirroring add_track, but with a caller-
+  // supplied id rather than a freshly minted one, so a command's redo can
+  // restore the exact same TrackId. Fails, leaving the project unchanged,
+  // if the project already has kMaxActiveTracks active tracks, or if `id`
+  // already identifies a track in either the active or archived set
+  // (id-uniqueness across both).
+  [[nodiscard]] Result add_track_with_id(TrackId id, std::string name,
+                                         StaffLayout layout,
+                                         MidiChannel channel);
+
   // Archives an active track: it moves out of the active-track set (so it
   // is excluded from playback/export), but every lane already recorded for
   // it, in every node, is left untouched and therefore recoverable.
@@ -74,6 +84,15 @@ class Project {
   // `track_id` is not archived, or if restoring it would exceed
   // kMaxActiveTracks.
   [[nodiscard]] Result restore_track(TrackId track_id);
+
+  // Undo-only inverse of add_track: fully erases an active track and its
+  // lane from every node, rather than moving it to the archived set. This
+  // is NOT the user-facing "remove track" action -- that is
+  // Project::archive_track, which is recoverable. hard_remove_track exists
+  // solely so AddTrackCommand's undo can leave the project exactly as it
+  // was before the track was added. Fails if `track_id` is not currently
+  // active.
+  [[nodiscard]] Result hard_remove_track(TrackId track_id);
 
   [[nodiscard]] const std::vector<Track>& active_tracks() const noexcept {
     return active_tracks_;

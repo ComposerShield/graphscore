@@ -9,14 +9,19 @@
 
 using graphscore::Dynamic;
 using graphscore::MidiChannel;
+using graphscore::Node;
 using graphscore::NodeId;
 using graphscore::NoteValue;
 using graphscore::Project;
 using graphscore::ProjectId;
 using graphscore::Rational;
+using graphscore::Result;
+using graphscore::ResultCode;
 using graphscore::StaffLayout;
+using graphscore::StaveId;
 using graphscore::Tempo;
 using graphscore::TrackId;
+using graphscore::TrackLane;
 
 namespace {
 
@@ -111,6 +116,113 @@ TEST(ProjectTrackTest, RestoreFailsWhenActiveSetIsFull) {
 TEST(ProjectTrackTest, RestoreUnknownTrackFails) {
   Project project = make_project();
   EXPECT_FALSE(project.restore_track(TrackId::generate()).ok());
+}
+
+TEST(ProjectTrackTest, AddTrackWithIdPreservesSuppliedIdAndAlignsLanes) {
+  Project project = make_project();
+  NodeId  node_a  = project.add_node("A");
+  NodeId  node_b  = project.add_node("B");
+
+  const TrackId id     = TrackId::generate();
+  const Result  result = project.add_track_with_id(
+      id, "Restored", StaffLayout::single_staff(), *MidiChannel::create(0));
+
+  ASSERT_TRUE(result.ok());
+  ASSERT_NE(project.find_active_track(id), nullptr);
+  EXPECT_EQ(project.find_active_track(id)->name(), "Restored");
+  EXPECT_TRUE(project.find_node(node_a)->has_lane(id));
+  EXPECT_TRUE(project.find_node(node_b)->has_lane(id));
+}
+
+TEST(ProjectTrackTest, AddTrackWithIdRejectsDuplicateActiveId) {
+  Project    project = make_project();
+  const auto id = project.add_track("Existing", StaffLayout::single_staff(),
+                                    *MidiChannel::create(0));
+  ASSERT_TRUE(id.has_value());
+
+  const Result result = project.add_track_with_id(
+      *id, "Duplicate", StaffLayout::single_staff(), *MidiChannel::create(1));
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(project.active_tracks().size(), 1u);
+}
+
+TEST(ProjectTrackTest, AddTrackWithIdRejectsDuplicateArchivedId) {
+  Project    project = make_project();
+  const auto id = project.add_track("Existing", StaffLayout::single_staff(),
+                                    *MidiChannel::create(0));
+  ASSERT_TRUE(id.has_value());
+  ASSERT_TRUE(project.archive_track(*id).ok());
+
+  const Result result = project.add_track_with_id(
+      *id, "Duplicate", StaffLayout::single_staff(), *MidiChannel::create(1));
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(project.find_active_track(*id), nullptr);
+  EXPECT_EQ(project.active_tracks().size(), 0u);
+  EXPECT_EQ(project.archived_tracks().size(), 1u);
+}
+
+TEST(ProjectTrackTest, AddTrackWithIdRejectsWhenActiveSetIsFull) {
+  Project project = make_project();
+  for (int i = 0; i < 64; ++i) {
+    ASSERT_TRUE(
+        project
+            .add_track("Track " + std::to_string(i),
+                       StaffLayout::single_staff(),
+                       *MidiChannel::create(static_cast<std::uint8_t>(i % 16)))
+            .has_value());
+  }
+
+  const TrackId id     = TrackId::generate();
+  const Result  result = project.add_track_with_id(
+      id, "Overflow", StaffLayout::single_staff(), *MidiChannel::create(0));
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(project.find_active_track(id), nullptr);
+  EXPECT_EQ(project.active_tracks().size(), 64u);
+}
+
+TEST(ProjectTrackTest, HardRemoveTrackErasesTrackReindexesAndRemovesLanes) {
+  Project    project = make_project();
+  const auto first   = project.add_track("First", StaffLayout::single_staff(),
+                                         *MidiChannel::create(0));
+  const auto second  = project.add_track("Second", StaffLayout::single_staff(),
+                                         *MidiChannel::create(1));
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+  NodeId node_id = project.add_node("Node");
+  ASSERT_TRUE(project.find_node(node_id)->has_lane(*first));
+  ASSERT_TRUE(project.find_node(node_id)->has_lane(*second));
+
+  EXPECT_TRUE(project.hard_remove_track(*first).ok());
+
+  EXPECT_EQ(project.find_active_track(*first), nullptr);
+  EXPECT_EQ(project.find_archived_track(*first), nullptr);
+  EXPECT_EQ(project.active_tracks().size(), 1u);
+  EXPECT_FALSE(project.find_node(node_id)->has_lane(*first));
+  EXPECT_EQ(project.find_node(node_id)->lane_count(), 1u);
+  EXPECT_EQ(project.find_active_track(*second)->index().value(), 0u);
+}
+
+TEST(ProjectTrackTest, HardRemoveTrackFailsForNonActiveId) {
+  Project project = make_project();
+  EXPECT_EQ(project.hard_remove_track(TrackId::generate()).code(),
+            ResultCode::kInvalidArgument);
+}
+
+TEST(ProjectTrackTest, HardRemoveTrackRemovesLaneEvenWithNotationContent) {
+  Project    project = make_project();
+  const auto id      = project.add_track("Track", StaffLayout::single_staff(),
+                                         *MidiChannel::create(0));
+  ASSERT_TRUE(id.has_value());
+  NodeId node_id = project.add_node("Node");
+
+  Node*      node = project.find_node(node_id);
+  TrackLane* lane = node->lane(*id);
+  ASSERT_NE(lane, nullptr);
+  lane->ensure_stave(StaveId::generate());
+  EXPECT_EQ(lane->stave_count(), 1u);
+
+  EXPECT_TRUE(project.hard_remove_track(*id).ok());
+  EXPECT_FALSE(node->has_lane(*id));
 }
 
 TEST(ProjectTrackTest, StartNodeMustBeOwnedByProject) {

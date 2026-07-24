@@ -36,6 +36,24 @@ std::optional<TrackId> Project::add_track(std::string name, StaffLayout layout,
   return id;
 }
 
+Result Project::add_track_with_id(TrackId id, std::string name,
+                                  StaffLayout layout, MidiChannel channel) {
+  if (active_tracks_.size() >= kMaxActiveTracks)
+    return Result(ResultCode::kInvalidArgument);
+  if (find_active_track(id) != nullptr || find_archived_track(id) != nullptr)
+    return Result(ResultCode::kInvalidArgument);
+
+  active_tracks_.emplace_back(id, TrackIndex(0), std::move(name),
+                              std::move(layout), channel);
+  reindex_active_tracks();
+
+  for (Node& node : nodes_) {
+    node.ensure_lane(id);
+  }
+
+  return Result();
+}
+
 Result Project::archive_track(TrackId track_id) {
   const auto it = std::find_if(
       active_tracks_.begin(), active_tracks_.end(),
@@ -65,6 +83,23 @@ Result Project::restore_track(TrackId track_id) {
 
   for (Node& node : nodes_) {
     node.ensure_lane(track_id);
+  }
+
+  return Result();
+}
+
+Result Project::hard_remove_track(TrackId track_id) {
+  const auto it = std::find_if(
+      active_tracks_.begin(), active_tracks_.end(),
+      [track_id](const Track& track) { return track.id() == track_id; });
+  if (it == active_tracks_.end())
+    return Result(ResultCode::kInvalidArgument);
+
+  active_tracks_.erase(it);
+  reindex_active_tracks();
+
+  for (Node& node : nodes_) {
+    node.remove_lane(track_id);
   }
 
   return Result();
