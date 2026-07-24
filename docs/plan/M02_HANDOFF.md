@@ -100,7 +100,8 @@ only when the whole section is approved.
 | 8d-iii | Add-track command + `add_track_with_id` / undo-only `hard_remove_track` / `Node::remove_lane` | ✅ done | `da7e0cb` |
 | 8d-iv | Add/remove node commands (full Node aggregate snapshot + cross-graph cascade) | ✅ done | `fd83039` |
 | **8d complete** | Add/remove of connectors, events, tracks, nodes — all reversible with stable ids | ✅ **done** | — |
-| 8e..f | Selection model, clipboard, cut/copy/paste + clip/reconnect, node copy/paste id remapping, measure ops; plus the remaining notation/tempo edit commands | ⬜ next | — |
+| 8e | Notation + tempo edit commands (scoped, split 8e-i core voice-events → 8e-ii markings → 8e-iii tempo points); closes line 77 | ⬜ next | — |
+| 8f..h | Selection model → clipboard/cut/copy/paste + node copy/paste id remapping → measure insert/delete | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
 
@@ -578,15 +579,49 @@ top-level "Milestone 02 complete".
     **Per-increment gate:** the four standard gates + reversibility/cascade
     tests + a deterministic-replay test; a 64-track/64-measure practicality
     check on the track and node increments (acceptance criterion).
-  - **8e..f (remaining, after 8d):** all selection kinds; toolkit-independent
-    clipboard fragments; cut/copy/paste with identity remapping + rest
-    normalization; boundary-crossing clip/reconnection rules; node copy/paste
-    id remapping; atomic measure insert/delete (measure ops also need new
-    `MeasureMap`/`NodeTimeline` mutators — none exist today, confirmed in the
-    Phase 3 note). Notation and tempo edit commands beyond metadata likewise
-    need the append/clear-only `VoiceContent` and whole-lane-replace
-    `TempoLane` surfaces extended before fine-grained reversible commands are
-    possible.
+  - **8e (next — scoped with Adam, notation + tempo edit commands):**
+    completes line 77's notation and tempo edits. **Locked decisions (Adam):**
+    (1) 8e = **notation edit commands** (the editing core, foundation for the
+    later clipboard cluster); (2) **core voice-events first**, markings
+    deferred to a following sub-increment; (3) **tempo edits folded in** as
+    8e-iii so line 77 fully closes within this phase. **Reversibility
+    approach:** whole-`VoiceContent` snapshot (copy the voice before the edit,
+    restore on undo) — same robust pattern as 8d-iv's whole-`Node` snapshot,
+    avoiding fragile per-edit inverses; every edit must leave the voice
+    **rhythmically complete** (validate via the existing `VoiceContent::
+    normalize`/`check_complete`). **New domain API** = a minimal set of
+    positional `VoiceContent`/`TrackLane` mutators (today they are
+    append/clear-only — `append`, `clear`, `add_dynamic`/`add_hairpin`/
+    `add_slur`/`add_beam_override`/`add_grace_group`, `ensure_stave`,
+    `add_pedal_span`, `normalize`; no positional insert/remove/replace, no
+    marking removal), **worker-proposed and reviewer-checked** (as with the 8d
+    restore APIs and the 7a/7b constants). **Sub-increments:**
+    - **8e-i — core voice-event edits:** new positional `VoiceContent`
+      mutators (insert/remove/replace an event at a position with automatic
+      rest normalization) + reversible commands to set/replace an event
+      (note↔rest↔chord, duration change, chord-build), convert-event-to-rest
+      (the `R` op), and tie/untie. Prerequisite for clipboard/paste.
+    - **8e-ii — marking edits:** add **and remove** dynamics, hairpins,
+      slurs, beam overrides, grace groups, pedal spans (new marking-removal
+      mutators) as reversible commands.
+    - **8e-iii — tempo-point edits:** add/remove/move tempo points via
+      `NodeTimeline::set_tempo` (command builds the new point vector, snapshots
+      the old — **no new domain API**). Closes line 77.
+  - **8f..h (remaining, after 8e):** **8f** the toolkit-independent selection
+    model (notehead/chord/measure/arbitrary-range/node/connector/route-segment/
+    staff-focus/insertion-caret kinds + explicit staff/track/voice scope — all
+    new representation, no mutators). **8g** clipboard fragments (relative
+    positions, staff/voice mapping, no source UUIDs) + reversible cut/copy/paste
+    (identity remapping + destination rest normalization + boundary-crossing
+    clip/reconnection rules) + node copy/paste id remapping (duplicate with
+    **fresh** ids — the inverse of 8d's id-preserving restore). Depends on 8e
+    (notation mutators) + 8f (selection). **8h** atomic measure insert/delete —
+    **the heaviest**: `MeasureMap` has no mutator at all and `NodeTimeline` has
+    no `set_measures`, so this needs new domain API plus an atomic cascade
+    across the measure map, time/key-signature and clef lanes, tempo anchors,
+    pedal spans, pickdown, and re-normalization of every voice in every track's
+    lane. Transaction grouping (line 78 — `CommandTransaction` already exists
+    from 8a) is exercised by the multi-measure/drag operations in 8g/8h.
 - **Phase 9 — Validation service:** fast incremental + complete validation;
   diagnostics with stable ids/severity/machine code/user text; validates
   rhythmic completeness, UUID uniqueness, references, track alignment, signature
