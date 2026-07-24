@@ -95,7 +95,8 @@ only when the whole section is approved.
 | 8b | Metadata/audition-mix reversible commands | ✅ done | `ffc9f2c` |
 | 8c-i | Reversible track-archive + connector-config commands (9) | ✅ done | `54543c1` |
 | 8c-ii | Reversible connection/route/event-binding commands (5) | ✅ done | `138458d` |
-| 8d..f | Add/remove structural commands (need new domain API first), selection, clipboard, clip/reconnect, node copy/paste, measure ops | ⬜ remaining | — |
+| 8d | Add/remove of graph entities (new restore-with-id domain API + commands); scoped, split 8d-i connectors → 8d-ii events → 8d-iii tracks → 8d-iv nodes | ⬜ next | — |
+| 8e..f | Selection model, clipboard, cut/copy/paste + clip/reconnect, node copy/paste id remapping, measure ops | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
 
@@ -465,31 +466,87 @@ top-level "Milestone 02 complete".
     reversible-today structural/config commands (graph connections, connector
     config, route geometry, event binding, track archive/restore) that need
     no new domain API. See the delivery note above.
-  - **8d (next — REQUIRES NEW DOMAIN API):** reversible **add/remove** of
-    nodes, tracks, connectors, and events. Adam's ruling (recorded when 8c
-    was scoped): these are NOT expressible as exactly-reversible commands
-    ("undo/redo exactly / stable intended IDs", `02-domain-model.md`
-    acceptance criteria) with today's domain layer, because —
-    - `Project::add_node` mints a `NodeId` and there is **no `remove_node`**
-      anywhere; undo of an add has nothing to call.
-    - tracks have only the soft `archive_track` (reversed in-place by 8c's
-      Archive/Restore commands), **no hard remove**; an `AddTrackCommand`
-      undo cannot remove the track it added.
-    - `Node::add_input`/`add_output` **mint fresh `ConnectorId`s with no
-      restore-with-id path**, so undo of a remove (or redo of an add) cannot
-      reproduce the original id.
-    - `EventRegistry::add_event` mints a fresh `EventId` with **no
-      register-with-id**, so a removed event cannot be restored with its
-      identity, and its cross-node output/listener cascade cannot be rebound
-      to the same id.
+  - **8d (next — scoped with Adam, REQUIRES NEW DOMAIN API):** reversible
+    **add/remove** of nodes, tracks, connectors, and events. These are NOT
+    expressible as exactly-reversible commands ("undo/redo exactly / stable
+    intended IDs", `02-domain-model.md` acceptance criteria) with today's
+    domain layer, because `Project::add_node` mints a `NodeId` and there is
+    **no `remove_node`**; tracks have only soft `archive_track` (reversed
+    in-place by 8c) and **no hard remove**; `Node::add_input`/`add_output`
+    **mint fresh `ConnectorId`s with no restore-with-id path**; and
+    `EventRegistry::add_event` mints a fresh `EventId` with **no
+    register-with-id** and its cascade cannot be rebound to the same id. So
+    8d adds the minimal new domain API first, then the commands wrapping it.
 
-    8d must therefore **first add the domain API** (e.g. a `remove_node` +
-    node restore-with-id, hard `remove_track` + restore-with-id, connector
-    insert/restore-with-id, `EventRegistry` register-with-id) — each landed
-    behind its own worker+reviewer and respecting the id-uniqueness
-    invariants — **before** the add/remove commands wrapping them. This is a
-    domain-layer change, larger and riskier than 8a–8c, and should be scoped
-    with Adam before starting.
+    **Locked scoping decisions (Adam, interactively, before 8d-i):**
+    1. **Reversibility mechanism = snapshot + restore-with-id** (not
+       tombstone/soft-delete). *Add* commands mint the id on first execute,
+       remember it, and redo re-inserts with the remembered id; undo removes
+       by id. *Remove* commands snapshot the full removed entity **plus every
+       piece of state their cascade clears**, remove, and reverse all of it
+       on undo; redo removes again. Every new insert/restore-with-id domain
+       primitive **must guard id-uniqueness** (reject a duplicate id) so the
+       new surface cannot corrupt the model. Tombstoning was rejected as too
+       invasive (every iterator/query/validation/persistence path would have
+       to skip removed entities); track *archive* stays the one legitimate
+       product-visible soft-remove, distinct from generic undo.
+    2. **Tracks: `AddTrackCommand` + an undo-only hard remove.** The product's
+       only user-facing track "removal" is archive (`06-graph-canvas.md:31`,
+       "removed-track music remains archived and recoverable"), already
+       reversible via 8c's Archive/Restore. But adding a track is a normal
+       undoable edit whose undo must **fully erase** the just-created track,
+       so 8d adds an undo-only `hard_remove_track` (erases the track and its
+       lane in every node) used ONLY as `AddTrackCommand`'s inverse — never
+       exposed as a user delete. No standalone `RemoveTrackCommand`.
+    3. **One 8d, split into per-entity sub-increments, lowest-risk first**
+       (each adds its domain primitive + command together, own
+       worker+reviewer+commit; the CHECKLIST "Command and selection model"
+       box is checked only when *all* of Phase 8's remaining deliverables —
+       through selection/clipboard/measure ops — are done, not at the end of
+       8d).
+
+    **Per-entity increments:**
+    - **8d-i — Connectors** (lowest risk; `Graph::remove_input` cross-node
+      cascade already exists). Domain: `restore_input`/`restore_output`
+      reinserting a full connector *value* preserving its id and every field
+      (type/priority/weight/export/destination/route/event_binding),
+      guarding dup id. Commands: `AddInputConnectorCommand`,
+      `AddOutputConnectorCommand`, `RemoveOutputConnectorCommand`,
+      `RemoveInputConnectorCommand`. Reversibility hazards to snapshot:
+      `remove_output` can destroy the node's `EventListener` when it removes
+      the last output bound to an event (same hazard as 8c
+      `BindOutputEventCommand` → snapshot the listener policy/capacity);
+      `Graph::remove_input` clears every *other* node's output that targeted
+      the removed input → snapshot that (node, output) list and reconnect
+      each on undo.
+    - **8d-ii — Events** (`register-with-id` + existing `remove_event`
+      cascade). Domain: `EventRegistry::add_event_with_id` guarding dup id
+      **and** dup name. Commands: `RegisterEventCommand`,
+      `RemoveEventCommand`. `RemoveEventCommand` snapshots the
+      `EventDefinition` + every bound (node, output) + each affected node's
+      listener policy/capacity, and reverses register + rebind + listener
+      config on undo.
+    - **8d-iii — Tracks** (`AddTrackCommand` + undo-only hard remove per
+      decision 2). Domain: `add_track_with_id` (guard dup id + 64-active
+      cap) and undo-only `hard_remove_track`. Command: `AddTrackCommand`
+      only. Test that undo is safe after intervening lane edits — linear
+      `CommandHistory` guarantees the added track's lanes are back to empty
+      before its add can be undone; pin it.
+    - **8d-iv — Nodes** (heaviest). Domain: `add_node_with_id`, a public
+      `remove_node` (cascade: clear every other node's output targeting the
+      removed node's inputs; clear `start_node` if it referenced the removed
+      node — resolves the Phase-2 "dangling designated start-node" deferral),
+      and `restore_node` reinserting the full `Node` value (it carries its
+      own lanes). Commands: `AddNodeCommand`, `RemoveNodeCommand` (full
+      Node-aggregate snapshot + the inbound-destination and start-node
+      cascade snapshot). Ids are **preserved** on restore — the
+      "deterministic connector remapping" of `06-graph-canvas.md:63` applies
+      to copy/paste/duplicate, NOT delete, so no remapping here. Verify
+      `Node` is cleanly copy/move-constructible before dispatch.
+
+    **Per-increment gate:** the four standard gates + reversibility/cascade
+    tests + a deterministic-replay test; a 64-track/64-measure practicality
+    check on the track and node increments (acceptance criterion).
   - **8e..f (remaining, after 8d):** all selection kinds; toolkit-independent
     clipboard fragments; cut/copy/paste with identity remapping + rest
     normalization; boundary-crossing clip/reconnection rules; node copy/paste
