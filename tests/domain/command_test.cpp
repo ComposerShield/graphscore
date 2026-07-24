@@ -40,6 +40,8 @@ using graphscore::Project;
 using graphscore::ProjectId;
 using graphscore::QueuePolicy;
 using graphscore::Rational;
+using graphscore::RegisterEventCommand;
+using graphscore::RemoveEventCommand;
 using graphscore::RemoveInputConnectorCommand;
 using graphscore::RemoveOutputConnectorCommand;
 using graphscore::ResetRouteCommand;
@@ -5698,4 +5700,201 @@ TEST(CommandTest, DeterministicReplay8di) {
   EXPECT_EQ(second_node_ptr->find_output(second_out)->name(), "Out");
   EXPECT_EQ(first_node_ptr->find_output(first_out)->type(),
             second_node_ptr->find_output(second_out)->type());
+}
+
+// =========================================================================
+// Phase 8d-ii — RegisterEventCommand
+// =========================================================================
+
+TEST(CommandTest, RegisterEventRoundTripPreservesId) {
+  Project project = make_project();
+
+  auto cmd = std::make_unique<RegisterEventCommand>("Attack");
+
+  ASSERT_TRUE(cmd->execute(project).ok());
+  const auto* registered = project.events().find_by_name("Attack");
+  ASSERT_NE(registered, nullptr);
+  const EventId created_id = registered->id;
+  EXPECT_EQ(project.events().size(), 1u);
+
+  ASSERT_TRUE(cmd->undo(project).ok());
+  EXPECT_EQ(project.events().find_by_id(created_id), nullptr);
+  EXPECT_EQ(project.events().size(), 0u);
+
+  ASSERT_TRUE(cmd->redo(project).ok());
+  const auto* restored = project.events().find_by_id(created_id);
+  ASSERT_NE(restored, nullptr);
+  EXPECT_EQ(restored->name, "Attack");
+  EXPECT_EQ(project.events().size(), 1u);
+}
+
+TEST(CommandTest, RegisterEventDuplicateNameFailsNoMutation) {
+  Project project = make_project();
+  ASSERT_TRUE(project.events().add_event("Attack").has_value());
+
+  auto cmd = std::make_unique<RegisterEventCommand>("Attack");
+  EXPECT_EQ(cmd->execute(project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(project.events().size(), 1u);
+}
+
+TEST(CommandTest, RegisterEventDoubleExecuteRejected) {
+  Project project = make_project();
+
+  auto cmd = std::make_unique<RegisterEventCommand>("Attack");
+  ASSERT_TRUE(cmd->execute(project).ok());
+  EXPECT_EQ(cmd->execute(project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(project.events().size(), 1u);
+}
+
+TEST(CommandTest, RegisterEventUndoWithoutExecuteRejected) {
+  Project project = make_project();
+
+  auto cmd = std::make_unique<RegisterEventCommand>("Attack");
+  EXPECT_EQ(cmd->undo(project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(project.events().size(), 0u);
+}
+
+TEST(CommandTest, RegisterEventRedoWithoutUndoRejected) {
+  Project project = make_project();
+
+  auto cmd = std::make_unique<RegisterEventCommand>("Attack");
+  ASSERT_TRUE(cmd->execute(project).ok());
+  EXPECT_EQ(cmd->redo(project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(project.events().size(), 1u);
+}
+
+// =========================================================================
+// Phase 8d-ii — RemoveEventCommand
+// =========================================================================
+
+TEST(CommandTest, RemoveEventRoundTripRestoresBindingsAndListeners) {
+  Project    project  = make_project();
+  const auto event_id = *project.events().add_event("Attack");
+
+  const auto node_a = project.add_node("A");
+  const auto node_b = project.add_node("B");
+  Node*      a      = project.find_node(node_a);
+  Node*      b      = project.find_node(node_b);
+  const auto out_a  = a->add_output("Out", ConnectorType::kSequential);
+  const auto out_b  = b->add_output("Out", ConnectorType::kSequential);
+
+  Graph graph(project);
+  ASSERT_TRUE(graph.bind_output_event(node_a, out_a, event_id).ok());
+  ASSERT_TRUE(graph.bind_output_event(node_b, out_b, event_id).ok());
+  ASSERT_TRUE(a->set_listener_policy(event_id, QueuePolicy::kFifo, 4).ok());
+  ASSERT_TRUE(
+      b->set_listener_policy(event_id, QueuePolicy::kFirstWins, 1).ok());
+
+  auto cmd = std::make_unique<RemoveEventCommand>(event_id);
+
+  ASSERT_TRUE(cmd->execute(project).ok());
+  EXPECT_EQ(project.events().find_by_id(event_id), nullptr);
+  EXPECT_FALSE(a->find_output(out_a)->event_binding().has_value());
+  EXPECT_FALSE(b->find_output(out_b)->event_binding().has_value());
+  EXPECT_EQ(a->find_listener(event_id), nullptr);
+  EXPECT_EQ(b->find_listener(event_id), nullptr);
+
+  ASSERT_TRUE(cmd->undo(project).ok());
+  const auto* restored_def = project.events().find_by_id(event_id);
+  ASSERT_NE(restored_def, nullptr);
+  EXPECT_EQ(restored_def->name, "Attack");
+  ASSERT_TRUE(a->find_output(out_a)->event_binding().has_value());
+  EXPECT_EQ(*a->find_output(out_a)->event_binding(), event_id);
+  ASSERT_TRUE(b->find_output(out_b)->event_binding().has_value());
+  EXPECT_EQ(*b->find_output(out_b)->event_binding(), event_id);
+  const auto* a_listener = a->find_listener(event_id);
+  ASSERT_NE(a_listener, nullptr);
+  EXPECT_EQ(a_listener->policy(), QueuePolicy::kFifo);
+  EXPECT_EQ(a_listener->capacity(), 4u);
+  const auto* b_listener = b->find_listener(event_id);
+  ASSERT_NE(b_listener, nullptr);
+  EXPECT_EQ(b_listener->policy(), QueuePolicy::kFirstWins);
+  EXPECT_EQ(b_listener->capacity(), 1u);
+
+  ASSERT_TRUE(cmd->redo(project).ok());
+  EXPECT_EQ(project.events().find_by_id(event_id), nullptr);
+  EXPECT_FALSE(a->find_output(out_a)->event_binding().has_value());
+  EXPECT_FALSE(b->find_output(out_b)->event_binding().has_value());
+  EXPECT_EQ(a->find_listener(event_id), nullptr);
+  EXPECT_EQ(b->find_listener(event_id), nullptr);
+}
+
+TEST(CommandTest, RemoveEventMissingIdFailsNoMutation) {
+  Project project = make_project();
+
+  auto cmd = std::make_unique<RemoveEventCommand>(EventId::generate());
+  EXPECT_EQ(cmd->execute(project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(cmd->undo(project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(cmd->redo(project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, RemoveEventDoubleExecuteRejected) {
+  Project    project  = make_project();
+  const auto event_id = *project.events().add_event("Attack");
+
+  auto cmd = std::make_unique<RemoveEventCommand>(event_id);
+  ASSERT_TRUE(cmd->execute(project).ok());
+  EXPECT_EQ(cmd->execute(project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, RemoveEventUndoWithoutExecuteRejected) {
+  Project    project  = make_project();
+  const auto event_id = *project.events().add_event("Attack");
+
+  auto cmd = std::make_unique<RemoveEventCommand>(event_id);
+  EXPECT_EQ(cmd->undo(project).code(), ResultCode::kInvalidArgument);
+  EXPECT_NE(project.events().find_by_id(event_id), nullptr);
+}
+
+TEST(CommandTest, RemoveEventRedoWithoutUndoRejected) {
+  Project    project  = make_project();
+  const auto event_id = *project.events().add_event("Attack");
+
+  auto cmd = std::make_unique<RemoveEventCommand>(event_id);
+  ASSERT_TRUE(cmd->execute(project).ok());
+  EXPECT_EQ(cmd->redo(project).code(), ResultCode::kInvalidArgument);
+}
+
+// =========================================================================
+// Phase 8d-ii — deterministic replay
+// =========================================================================
+
+TEST(CommandTest, DeterministicReplay8dii) {
+  auto run_sequence = [](Project& project) {
+    CommandHistory history;
+
+    EXPECT_TRUE(
+        history
+            .execute_new(std::make_unique<RegisterEventCommand>("Attack"),
+                         project)
+            .ok());
+    const EventId first_event = project.events().find_by_name("Attack")->id;
+
+    EXPECT_TRUE(
+        history
+            .execute_new(std::make_unique<RegisterEventCommand>("Release"),
+                         project)
+            .ok());
+
+    EXPECT_TRUE(
+        history
+            .execute_new(std::make_unique<RemoveEventCommand>(first_event),
+                         project)
+            .ok());
+
+    return project.events().find_by_name("Release")->id;
+  };
+
+  Project first  = make_project();
+  Project second = make_project();
+
+  const EventId first_release  = run_sequence(first);
+  const EventId second_release = run_sequence(second);
+
+  EXPECT_EQ(first.events().size(), 1u);
+  EXPECT_EQ(second.events().size(), 1u);
+  EXPECT_EQ(first.events().find_by_name("Attack"), nullptr);
+  EXPECT_EQ(second.events().find_by_name("Attack"), nullptr);
+  EXPECT_NE(first.events().find_by_id(first_release), nullptr);
+  EXPECT_NE(second.events().find_by_id(second_release), nullptr);
 }

@@ -30,6 +30,15 @@ class EventRegistry {
   // "Attack" and "attack" are distinct, independently valid names.
   [[nodiscard]] std::optional<EventId> add_event(std::string name);
 
+  // Reversible-undo substrate mirroring add_event, but with a caller-
+  // supplied id rather than a freshly minted one: RegisterEventCommand's
+  // redo and RemoveEventCommand's undo (command headers) call this to
+  // restore a snapshot taken before the event was removed, preserving its
+  // original EventId rather than minting a fresh one. Fails, leaving the
+  // registry unchanged, if `id` is already registered or if `name` is
+  // already registered under a different id.
+  [[nodiscard]] Result add_event_with_id(EventId id, std::string name);
+
   // Fails if `id` is unknown, or if `new_name` collides with a different
   // event's name.
   [[nodiscard]] Result rename_event(EventId id, std::string new_name);

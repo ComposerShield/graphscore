@@ -36,6 +36,8 @@
 #include <graphscore/domain/pickdown_ownership.hpp>
 #include <graphscore/domain/plugin_chain.hpp>
 #include <graphscore/domain/project.hpp>
+#include <graphscore/domain/register_event_command.hpp>
+#include <graphscore/domain/remove_event_command.hpp>
 #include <graphscore/domain/remove_input_connector_command.hpp>
 #include <graphscore/domain/remove_output_connector_command.hpp>
 #include <graphscore/domain/reset_route_command.hpp>

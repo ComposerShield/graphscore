@@ -27,6 +27,8 @@ add_library(graphscore_domain STATIC
   pickdown_coordinates.cpp
   pickdown_ownership.cpp
   project.cpp
+  register_event_command.cpp
+  remove_event_command.cpp
   remove_input_connector_command.cpp
   remove_output_connector_command.cpp
   reset_route_command.cpp

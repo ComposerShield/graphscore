@@ -89,3 +89,52 @@ TEST(EventRegistryTest, RemovedNameCanBeReused) {
   ASSERT_TRUE(registry.remove_event(*id).ok());
   EXPECT_TRUE(registry.add_event("Reuse").has_value());
 }
+
+TEST(EventRegistryTest, AddEventWithIdPreservesGivenId) {
+  EventRegistry registry;
+  const auto    id = EventId::generate();
+
+  ASSERT_TRUE(registry.add_event_with_id(id, "Attack").ok());
+  const auto* by_id = registry.find_by_id(id);
+  ASSERT_NE(by_id, nullptr);
+  EXPECT_EQ(by_id->name, "Attack");
+  EXPECT_EQ(registry.size(), 1u);
+}
+
+TEST(EventRegistryTest, AddEventWithIdRejectsDuplicateIdNoMutation) {
+  EventRegistry registry;
+  const auto    id = EventId::generate();
+  ASSERT_TRUE(registry.add_event_with_id(id, "Attack").ok());
+
+  EXPECT_FALSE(registry.add_event_with_id(id, "Other").ok());
+  EXPECT_EQ(registry.size(), 1u);
+  EXPECT_EQ(registry.find_by_id(id)->name, "Attack");
+  EXPECT_EQ(registry.find_by_name("Other"), nullptr);
+}
+
+TEST(EventRegistryTest, AddEventWithIdRejectsDuplicateNameNoMutation) {
+  EventRegistry registry;
+  const auto    first = registry.add_event("Attack");
+  ASSERT_TRUE(first.has_value());
+
+  const auto second = EventId::generate();
+  EXPECT_FALSE(registry.add_event_with_id(second, "Attack").ok());
+  EXPECT_EQ(registry.size(), 1u);
+  EXPECT_EQ(registry.find_by_id(second), nullptr);
+  EXPECT_EQ(registry.find_by_name("Attack")->id, *first);
+}
+
+TEST(EventRegistryTest, RegisterRemoveRestoreWithIdRoundTripKeepsId) {
+  EventRegistry registry;
+  const auto    id = registry.add_event("Attack");
+  ASSERT_TRUE(id.has_value());
+
+  ASSERT_TRUE(registry.remove_event(*id).ok());
+  EXPECT_EQ(registry.find_by_id(*id), nullptr);
+
+  ASSERT_TRUE(registry.add_event_with_id(*id, "Attack").ok());
+  const auto* restored = registry.find_by_id(*id);
+  ASSERT_NE(restored, nullptr);
+  EXPECT_EQ(restored->name, "Attack");
+  EXPECT_EQ(registry.size(), 1u);
+}

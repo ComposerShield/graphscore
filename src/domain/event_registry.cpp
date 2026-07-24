@@ -17,6 +17,19 @@ std::optional<EventId> EventRegistry::add_event(std::string name) {
   return id;
 }
 
+Result EventRegistry::add_event_with_id(EventId id, std::string name) {
+  if (events_.count(id) != 0)
+    return Result(ResultCode::kInvalidArgument);
+
+  const auto collision = name_to_id_.find(name);
+  if (collision != name_to_id_.end() && collision->second != id)
+    return Result(ResultCode::kInvalidArgument);
+
+  name_to_id_.emplace(name, id);
+  events_.emplace(id, EventDefinition{id, std::move(name)});
+  return Result();
+}
+
 Result EventRegistry::rename_event(EventId id, std::string new_name) {
   const auto it = events_.find(id);
   if (it == events_.end())
