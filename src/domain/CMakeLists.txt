@@ -2,6 +2,7 @@
 
 add_library(graphscore_domain STATIC
   add_input_connector_command.cpp
+  add_node_command.cpp
   add_output_connector_command.cpp
   add_track_command.cpp
   archive_track_command.cpp
@@ -31,6 +32,7 @@ add_library(graphscore_domain STATIC
   register_event_command.cpp
   remove_event_command.cpp
   remove_input_connector_command.cpp
+  remove_node_command.cpp
   remove_output_connector_command.cpp
   reset_route_command.cpp
   restore_track_command.cpp

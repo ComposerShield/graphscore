@@ -112,6 +112,42 @@ class Project {
   // active track.
   NodeId add_node(std::string name = {});
 
+  // Reversible-undo substrate mirroring add_node, but with a caller-
+  // supplied id rather than a freshly minted one, so a command's redo can
+  // restore the exact same NodeId. Fails, leaving the project unchanged,
+  // if `id` already identifies a node this project owns.
+  [[nodiscard]] Result add_node_with_id(NodeId id, std::string name);
+
+  // Permanently deletes a node identified by `id` -- unlike a track, a
+  // node has no archived state; this is the genuine user-facing delete
+  // (docs/plan/06-graph-canvas.md: "delete nodes with deterministic
+  // connector remapping"). First clears (to no destination) every OTHER
+  // node's output connector whose destination targets one of `id`'s input
+  // connectors -- clearing a destination also resets that output's
+  // RouteGeometry to automatic (OutputConnector::set_destination) -- then
+  // clears the project's start node if it currently references `id`, then
+  // erases the node itself. The removed node's own outputs (including any
+  // self-loop targeting one of its own inputs) are left untouched by the
+  // cascade and simply vanish with the node. Fails, leaving the project
+  // unchanged, if `id` does not reference a node this project owns.
+  [[nodiscard]] Result remove_node(NodeId id);
+
+  // Reinserts a previously removed node, a complete Node value (lanes,
+  // timeline, connectors and their destinations, listeners) preserving
+  // its exact id, rather than aligning lanes as add_node/add_node_with_id
+  // do. Fails, leaving the project unchanged, if `node`'s id already
+  // identifies a node this project owns.
+  //
+  // Deliberately does not call ensure_lane for the current active-track
+  // set: `node` is a snapshot taken before it was removed, and
+  // CommandHistory's linear undo/redo guarantees the active-track set is
+  // unchanged between a RemoveNodeCommand's execute and its undo, so the
+  // snapshot's lanes are already exactly the aligned set. Re-aligning here
+  // would be redundant at best and, if a lane were ever removed from the
+  // snapshot for some other reason, would silently paper over that rather
+  // than surfacing it.
+  [[nodiscard]] Result restore_node(Node node);
+
   [[nodiscard]] const std::vector<Node>& nodes() const noexcept {
     return nodes_;
   }

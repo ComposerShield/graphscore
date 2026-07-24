@@ -4,6 +4,7 @@
 
 #include <graphscore/core/graphscore_core.hpp>
 #include <graphscore/domain/add_input_connector_command.hpp>
+#include <graphscore/domain/add_node_command.hpp>
 #include <graphscore/domain/add_output_connector_command.hpp>
 #include <graphscore/domain/add_track_command.hpp>
 #include <graphscore/domain/archive_track_command.hpp>
@@ -40,6 +41,7 @@
 #include <graphscore/domain/register_event_command.hpp>
 #include <graphscore/domain/remove_event_command.hpp>
 #include <graphscore/domain/remove_input_connector_command.hpp>
+#include <graphscore/domain/remove_node_command.hpp>
 #include <graphscore/domain/remove_output_connector_command.hpp>
 #include <graphscore/domain/reset_route_command.hpp>
 #include <graphscore/domain/restore_track_command.hpp>

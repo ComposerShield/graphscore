@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace graphscore {
 
@@ -135,6 +136,56 @@ NodeId Project::add_node(std::string name) {
   }
 
   return id;
+}
+
+Result Project::add_node_with_id(NodeId id, std::string name) {
+  if (find_node(id) != nullptr)
+    return Result(ResultCode::kInvalidArgument);
+
+  nodes_.emplace_back(id, std::move(name));
+
+  for (const Track& track : active_tracks_) {
+    nodes_.back().ensure_lane(track.id());
+  }
+
+  return Result();
+}
+
+Result Project::remove_node(NodeId id) {
+  const Node* node = find_node(id);
+  if (node == nullptr)
+    return Result(ResultCode::kInvalidArgument);
+
+  std::vector<ConnectorId> input_ids;
+  input_ids.reserve(node->inputs().size());
+  for (const InputConnector& input : node->inputs())
+    input_ids.push_back(input.id());
+
+  for (Node& other : nodes_) {
+    if (other.id() == id)
+      continue;
+    for (const ConnectorId input_id : input_ids)
+      other.clear_destinations_to(id, input_id);
+  }
+
+  const std::optional<NodeId> start = start_node_;
+  if (start.has_value() && *start == id)
+    clear_start_node();
+
+  const auto it = std::find_if(
+      nodes_.begin(), nodes_.end(),
+      [id](const Node& candidate) { return candidate.id() == id; });
+  nodes_.erase(it);
+
+  return Result();
+}
+
+Result Project::restore_node(Node node) {
+  if (find_node(node.id()) != nullptr)
+    return Result(ResultCode::kInvalidArgument);
+
+  nodes_.push_back(std::move(node));
+  return Result();
 }
 
 Node* Project::find_node(NodeId node_id) {
