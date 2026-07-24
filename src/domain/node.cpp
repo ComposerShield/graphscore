@@ -64,6 +64,30 @@ Result Node::remove_output(ConnectorId id) {
   return Result();
 }
 
+Result Node::restore_input(InputConnector input) {
+  if (find_input(input.id()) != nullptr)
+    return Result(ResultCode::kInvalidArgument);
+
+  inputs_.push_back(std::move(input));
+  return Result();
+}
+
+Result Node::restore_output(OutputConnector              output,
+                            std::optional<EventListener> listener) {
+  if (find_output(output.id()) != nullptr)
+    return Result(ResultCode::kInvalidArgument);
+
+  const std::optional<EventId> event = output.event_binding();
+  outputs_.push_back(std::move(output));
+
+  if (event.has_value() && listener.has_value() &&
+      listeners_.find(*event) == listeners_.end()) {
+    listeners_.emplace(*event, *listener);
+  }
+
+  return Result();
+}
+
 InputConnector* Node::find_input(ConnectorId id) {
   for (InputConnector& input : inputs_) {
     if (input.id() == id)

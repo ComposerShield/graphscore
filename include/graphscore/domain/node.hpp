@@ -108,6 +108,34 @@ class Node {
 
   [[nodiscard]] Result remove_output(ConnectorId id);
 
+  // Re-inserts a previously removed input connector, preserving its exact
+  // id and every other field. Fails, leaving inputs unchanged, if a
+  // connector with `input`'s id already exists on this node (id-uniqueness
+  // guard). Reversible-undo substrate: AddInputConnectorCommand's redo and
+  // RemoveInputConnectorCommand's undo (command headers) call this to
+  // restore a snapshot taken before the connector was removed, preserving
+  // its original ConnectorId rather than minting a fresh one.
+  [[nodiscard]] Result restore_input(InputConnector input);
+
+  // Re-inserts a previously removed output connector, preserving its exact
+  // id and every other field (destination, route, event binding, priority,
+  // weight, export_enabled). Fails, leaving outputs unchanged, if a
+  // connector with `output`'s id already exists on this node (id-uniqueness
+  // guard). If the restored output has an event_binding() and no
+  // EventListener currently exists on this node for that event, inserts
+  // `listener` (if provided) as that event's listener -- this recreates a
+  // listener that remove_output (see cleanup_listener_if_unused) destroyed
+  // because the removed output was the last one bound to it. If a listener
+  // for that event already exists (the removal was not the sole binding),
+  // `listener` is ignored and the surviving listener is left untouched.
+  // Reversible-undo substrate: AddOutputConnectorCommand's redo and
+  // RemoveOutputConnectorCommand's undo (command headers) call this to
+  // restore a snapshot taken before the connector (and, if destroyed, its
+  // listener) was removed, preserving its original ConnectorId rather than
+  // minting a fresh one.
+  [[nodiscard]] Result restore_output(OutputConnector              output,
+                                      std::optional<EventListener> listener);
+
   [[nodiscard]] const std::vector<InputConnector>& inputs() const noexcept {
     return inputs_;
   }

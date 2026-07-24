@@ -11,9 +11,11 @@
 using graphscore::ConnectorId;
 using graphscore::ConnectorType;
 using graphscore::EventId;
+using graphscore::EventListener;
 using graphscore::InputConnector;
 using graphscore::Node;
 using graphscore::NodeId;
+using graphscore::OutputConnector;
 using graphscore::QueuePolicy;
 using graphscore::Rational;
 
@@ -346,4 +348,81 @@ TEST(ConnectorTest, SetOutputTypeIsANoOpWhenTypeIsUnchanged) {
   EXPECT_TRUE(node.set_output_type(out, ConnectorType::kSequential).ok());
   EXPECT_EQ(node.find_listener(event)->bound_type(),
             ConnectorType::kSequential);
+}
+
+// =========================================================================
+// Phase 8d-i — Node::restore_input / Node::restore_output
+// =========================================================================
+
+TEST(ConnectorTest, RestoreInputRejectsDuplicateIdWithNoMutation) {
+  Node        node   = make_node();
+  const auto  in_id  = node.add_input("In");
+  const auto* before = node.find_input(in_id);
+  ASSERT_NE(before, nullptr);
+  const InputConnector snapshot = *before;
+
+  EXPECT_FALSE(node.restore_input(snapshot).ok());
+  EXPECT_EQ(node.inputs().size(), 1u);
+  EXPECT_EQ(node.find_input(in_id)->name(), "In");
+}
+
+TEST(ConnectorTest, RestoreOutputRejectsDuplicateIdWithNoMutation) {
+  Node        node   = make_node();
+  const auto  out_id = node.add_output("Out");
+  const auto* before = node.find_output(out_id);
+  ASSERT_NE(before, nullptr);
+  const OutputConnector snapshot = *before;
+
+  EXPECT_FALSE(node.restore_output(snapshot, std::nullopt).ok());
+  EXPECT_EQ(node.outputs().size(), 1u);
+  EXPECT_EQ(node.find_output(out_id)->name(), "Out");
+}
+
+TEST(ConnectorTest, RestoreOutputRecreatesDestroyedListenerExactly) {
+  Node       node   = make_node();
+  const auto event  = EventId::generate();
+  const auto out_id = node.add_output("Out", ConnectorType::kVertical);
+  ASSERT_TRUE(node.bind_output_event(out_id, event).ok());
+  ASSERT_TRUE(node.set_listener_policy(event, QueuePolicy::kFifo, 5).ok());
+
+  const OutputConnector removed  = *node.find_output(out_id);
+  const EventListener   listener = *node.find_listener(event);
+
+  ASSERT_TRUE(node.remove_output(out_id).ok());
+  ASSERT_EQ(node.find_listener(event), nullptr);
+
+  ASSERT_TRUE(node.restore_output(removed, listener).ok());
+  const auto* restored = node.find_output(out_id);
+  ASSERT_NE(restored, nullptr);
+  EXPECT_EQ(restored->event_binding(), event);
+
+  const auto* restored_listener = node.find_listener(event);
+  ASSERT_NE(restored_listener, nullptr);
+  EXPECT_EQ(restored_listener->policy(), QueuePolicy::kFifo);
+  EXPECT_EQ(restored_listener->capacity(), 5u);
+  EXPECT_EQ(restored_listener->bound_type(), ConnectorType::kVertical);
+}
+
+TEST(ConnectorTest, RestoreOutputLeavesSurvivingListenerUntouched) {
+  Node       node   = make_node();
+  const auto event  = EventId::generate();
+  const auto first  = node.add_output("First", ConnectorType::kVertical);
+  const auto second = node.add_output("Second", ConnectorType::kVertical);
+  ASSERT_TRUE(node.bind_output_event(first, event).ok());
+  ASSERT_TRUE(node.bind_output_event(second, event).ok());
+  ASSERT_TRUE(node.set_listener_policy(event, QueuePolicy::kFifo, 3).ok());
+
+  const OutputConnector removed = *node.find_output(first);
+  ASSERT_TRUE(node.remove_output(first).ok());
+
+  const auto* surviving = node.find_listener(event);
+  ASSERT_NE(surviving, nullptr);
+  EXPECT_EQ(surviving->policy(), QueuePolicy::kFifo);
+  EXPECT_EQ(surviving->capacity(), 3u);
+
+  ASSERT_TRUE(node.restore_output(removed, std::nullopt).ok());
+  const auto* after_restore = node.find_listener(event);
+  ASSERT_NE(after_restore, nullptr);
+  EXPECT_EQ(after_restore->policy(), QueuePolicy::kFifo);
+  EXPECT_EQ(after_restore->capacity(), 3u);
 }
