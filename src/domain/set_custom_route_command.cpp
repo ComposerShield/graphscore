@@ -2,6 +2,11 @@
 
 #include <graphscore/domain/set_custom_route_command.hpp>
 
+#include <new>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
 #include <graphscore/core/result.hpp>
 #include <graphscore/domain/connector.hpp>
 #include <graphscore/domain/node.hpp>
@@ -12,13 +17,28 @@ namespace graphscore {
 
 namespace {
 
-Result restore_route(OutputConnector&     output,
-                     const RouteGeometry& saved) noexcept {
+Result prepare_route_restore(const RouteGeometry&     saved,
+                             std::vector<RoutePoint>* prepared) noexcept {
+  if (saved.is_automatic())
+    return Result();
+
+  try {
+    *prepared = saved.waypoints();
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  return Result();
+}
+
+Result restore_route(OutputConnector& output, const RouteGeometry& saved,
+                     std::vector<RoutePoint> prepared) noexcept {
   if (saved.is_automatic()) {
     output.route().reset_to_automatic();
     return Result();
   }
-  return output.route().set_custom_route(saved.waypoints());
+  return output.route().set_custom_route(std::move(prepared));
 }
 
 }  // namespace
@@ -35,12 +55,30 @@ Result SetCustomRouteCommand::execute(Project& project) noexcept {
   if (output == nullptr)
     return Result(ResultCode::kInvalidArgument);
 
-  const RouteGeometry saved_route = output->route();
-  const Result        result = output->route().set_custom_route(new_waypoints_);
+  RouteGeometry saved_route;
+  try {
+    saved_route = output->route();
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+
+  std::vector<RoutePoint> prepared_waypoints;
+  try {
+    prepared_waypoints = new_waypoints_;
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+
+  const Result result =
+      output->route().set_custom_route(std::move(prepared_waypoints));
   if (!result.ok())
     return result;
 
-  old_route_ = saved_route;
+  old_route_ = std::move(saved_route);
   state_     = State::kDone;
   return Result();
 }
@@ -57,7 +95,14 @@ Result SetCustomRouteCommand::undo(Project& project) noexcept {
   if (output == nullptr)
     return Result(ResultCode::kInvalidArgument);
 
-  const Result result = restore_route(*output, old_route_);
+  std::vector<RoutePoint> prepared_route;
+  const Result            prepare_result =
+      prepare_route_restore(old_route_, &prepared_route);
+  if (!prepare_result.ok())
+    return prepare_result;
+
+  const Result result =
+      restore_route(*output, old_route_, std::move(prepared_route));
   if (!result.ok())
     return result;
 
@@ -77,7 +122,17 @@ Result SetCustomRouteCommand::redo(Project& project) noexcept {
   if (output == nullptr)
     return Result(ResultCode::kInvalidArgument);
 
-  const Result result = output->route().set_custom_route(new_waypoints_);
+  std::vector<RoutePoint> prepared_waypoints;
+  try {
+    prepared_waypoints = new_waypoints_;
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+
+  const Result result =
+      output->route().set_custom_route(std::move(prepared_waypoints));
   if (!result.ok())
     return result;
 
