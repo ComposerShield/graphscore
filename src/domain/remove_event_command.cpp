@@ -79,9 +79,16 @@ Result RemoveEventCommand::undo(Project& project) noexcept {
     return register_result;
 
   for (const BoundOutput& bound : bound_outputs_) {
-    Graph        graph(project);
-    const Result bind_result =
-        graph.bind_output_event(bound.node_id, bound.output_id, event_id_);
+    Graph  graph(project);
+    Result bind_result;
+    try {
+      bind_result =
+          graph.bind_output_event(bound.node_id, bound.output_id, event_id_);
+    } catch (const std::bad_alloc&) {
+      return Result(ResultCode::kOutOfMemory);
+    } catch (const std::length_error&) {
+      return Result(ResultCode::kOutOfMemory);
+    }
     if (!bind_result.ok())
       return bind_result;
   }

@@ -2,6 +2,9 @@
 
 #include <graphscore/domain/bind_output_event_command.hpp>
 
+#include <new>
+#include <stdexcept>
+
 #include <graphscore/core/result.hpp>
 #include <graphscore/domain/connector.hpp>
 #include <graphscore/domain/event_listener.hpp>
@@ -36,9 +39,15 @@ Result BindOutputEventCommand::execute(Project& project) noexcept {
     }
   }
 
-  Graph        graph(project);
-  const Result result =
-      graph.bind_output_event(node_id_, output_id_, new_event_);
+  Graph  graph(project);
+  Result result;
+  try {
+    result = graph.bind_output_event(node_id_, output_id_, new_event_);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
   if (!result.ok())
     return result;
 
@@ -54,9 +63,15 @@ Result BindOutputEventCommand::undo(Project& project) noexcept {
   if (state_ != State::kDone)
     return Result(ResultCode::kInvalidArgument);
 
-  Graph        graph(project);
-  const Result result =
-      graph.bind_output_event(node_id_, output_id_, old_event_);
+  Graph  graph(project);
+  Result result;
+  try {
+    result = graph.bind_output_event(node_id_, output_id_, old_event_);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
   if (!result.ok())
     return result;
 
@@ -79,9 +94,15 @@ Result BindOutputEventCommand::redo(Project& project) noexcept {
   if (state_ != State::kUndone)
     return Result(ResultCode::kInvalidArgument);
 
-  Graph        graph(project);
-  const Result result =
-      graph.bind_output_event(node_id_, output_id_, new_event_);
+  Graph  graph(project);
+  Result result;
+  try {
+    result = graph.bind_output_event(node_id_, output_id_, new_event_);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
   if (!result.ok())
     return result;
 
