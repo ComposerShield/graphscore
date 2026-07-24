@@ -97,7 +97,8 @@ only when the whole section is approved.
 | 8c-ii | Reversible connection/route/event-binding commands (5) | ✅ done | `138458d` |
 | 8d-i | Add/remove connector commands + `Node::restore_input`/`restore_output` | ✅ done | `910d250` |
 | 8d-ii | Register/remove event commands + `EventRegistry::add_event_with_id` | ✅ done | `273e0b9` |
-| 8d-iii..iv | Add/remove of tracks → nodes (new restore-with-id domain API + commands) | ⬜ next | — |
+| 8d-iii | Add-track command + `add_track_with_id` / undo-only `hard_remove_track` / `Node::remove_lane` | ✅ done | `da7e0cb` |
+| 8d-iv | Add/remove node commands (full Node aggregate snapshot + cross-graph cascade) | ⬜ next | — |
 | 8e..f | Selection model, clipboard, cut/copy/paste + clip/reconnect, node copy/paste id remapping, measure ops | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
