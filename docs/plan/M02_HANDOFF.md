@@ -848,19 +848,17 @@ implement (Phase 5).
   `-isysroot` flag to find libc++). Because the hook runs clang-tidy, **commits
   now take longer** — give `git commit` a generous timeout (the first full
   `build/tidy` population can exceed 2 min; incremental re-commits are fast).
-- **→ family-wide hardening (open, recommended, 8d-ii review):** commands
-  that call `Graph::bind_output_event` inside a `noexcept` `undo`/`redo`
-  leave that call **unguarded**, so a `std::bad_alloc` from the listener
+- **→ family-wide hardening (DONE, `7297bca` "Handle event-binding command
+  allocation failures"):** commands calling `Graph::bind_output_event` inside
+  a `noexcept` phase were unguarded, so a `std::bad_alloc` from the listener
   `try_emplace` (`node.cpp`) would cross the noexcept boundary and
   `std::terminate` rather than translate to `kOutOfMemory` per the `Command`
-  contract (`command.hpp`). Affects `RemoveEventCommand::undo` (8d-ii, the
-  rebind loop) and the pre-existing committed `BindOutputEventCommand::undo`/
-  `redo` (8c-ii). 8d-ii was accepted as-is (reviewer MEDIUM, non-blocking)
-  **because guarding only the new command would create a fresh inconsistency
-  with the committed convention** — the right fix is one family-wide pass
-  wrapping every `bind_output_event` call in these commands, mirroring
-  Adam's own `33a9a29 "Handle route command allocation failures"`. Surfaced
-  to Adam; do it as its own hardening commit, not folded into an increment.
+  contract. Fixed family-wide (Adam's call) as its own hardening commit
+  mirroring `33a9a29`: all four sites now guarded —
+  `BindOutputEventCommand::execute`/`undo`/`redo` (8c-ii) and
+  `RemoveEventCommand::undo`'s rebind loop (8d-ii). Precedent for future
+  command increments: **any `bind_output_event` (or other listener-
+  allocating) call on a noexcept command path must be wrapped**.
 - **Watch for Adam's out-of-band commits.** Adam committed `33a9a29 "Handle
   route command allocation failures"` (hardening the 8c route commands' undo/
   redo allocation paths — same direction as our fix rounds) and `ae81f5d`
