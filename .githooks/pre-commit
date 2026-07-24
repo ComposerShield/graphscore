@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # GraphScore pre-commit hook. Runs cpplint and a clang-format verification
-# pass over the staged GraphScore-owned sources only, using the same
-# CPPLINT.cfg and .clang-format that the `lint` CMake target and CI use.
+# pass over staged GraphScore-owned sources, then runs the const-correctness
+# clang-tidy analysis. All checks use the same configuration as CI.
 #
 # Install with:  ./scripts/bootstrap.sh
 #
-# CI runs the same two checks over the whole tree independently of this hook,
-# so a contributor who has not installed it — or who bypasses it with
+# CI runs the same checks over the whole tree independently of this hook, so
+# a contributor who has not installed it — or who bypasses it with
 # `git commit --no-verify` — still cannot merge unformatted code.
 #
 # POSIX sh, no bashisms: Git invokes hooks with /bin/sh.
@@ -60,6 +60,16 @@ if [ -n "$clang_format" ]; then
   fi
 else
   echo "pre-commit: clang-format not found, skipping (install LLVM)." >&2
+fi
+
+# --- clang-tidy ------------------------------------------------------------
+
+# Run the same incremental const-correctness analysis used by pre-push after
+# the faster staged-file checks have passed.
+if [ "$status" -eq 0 ]; then
+  if ! "$repo_root/.githooks/pre-push"; then
+    status=1
+  fi
 fi
 
 if [ "$status" -ne 0 ]; then
