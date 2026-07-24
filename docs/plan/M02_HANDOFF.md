@@ -96,7 +96,8 @@ only when the whole section is approved.
 | 8c-i | Reversible track-archive + connector-config commands (9) | ✅ done | `54543c1` |
 | 8c-ii | Reversible connection/route/event-binding commands (5) | ✅ done | `138458d` |
 | 8d-i | Add/remove connector commands + `Node::restore_input`/`restore_output` | ✅ done | `910d250` |
-| 8d-ii..iv | Add/remove of events → tracks → nodes (new restore-with-id domain API + commands) | ⬜ next | — |
+| 8d-ii | Register/remove event commands + `EventRegistry::add_event_with_id` | ✅ done | `273e0b9` |
+| 8d-iii..iv | Add/remove of tracks → nodes (new restore-with-id domain API + commands) | ⬜ next | — |
 | 8e..f | Selection model, clipboard, cut/copy/paste + clip/reconnect, node copy/paste id remapping, measure ops | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
@@ -847,6 +848,19 @@ implement (Phase 5).
   `-isysroot` flag to find libc++). Because the hook runs clang-tidy, **commits
   now take longer** — give `git commit` a generous timeout (the first full
   `build/tidy` population can exceed 2 min; incremental re-commits are fast).
+- **→ family-wide hardening (open, recommended, 8d-ii review):** commands
+  that call `Graph::bind_output_event` inside a `noexcept` `undo`/`redo`
+  leave that call **unguarded**, so a `std::bad_alloc` from the listener
+  `try_emplace` (`node.cpp`) would cross the noexcept boundary and
+  `std::terminate` rather than translate to `kOutOfMemory` per the `Command`
+  contract (`command.hpp`). Affects `RemoveEventCommand::undo` (8d-ii, the
+  rebind loop) and the pre-existing committed `BindOutputEventCommand::undo`/
+  `redo` (8c-ii). 8d-ii was accepted as-is (reviewer MEDIUM, non-blocking)
+  **because guarding only the new command would create a fresh inconsistency
+  with the committed convention** — the right fix is one family-wide pass
+  wrapping every `bind_output_event` call in these commands, mirroring
+  Adam's own `33a9a29 "Handle route command allocation failures"`. Surfaced
+  to Adam; do it as its own hardening commit, not folded into an increment.
 - **Watch for Adam's out-of-band commits.** Adam committed `33a9a29 "Handle
   route command allocation failures"` (hardening the 8c route commands' undo/
   redo allocation paths — same direction as our fix rounds) and `ae81f5d`
