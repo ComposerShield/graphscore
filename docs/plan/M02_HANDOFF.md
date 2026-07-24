@@ -1,7 +1,12 @@
 # Milestone 02 (Domain And Command Model) — Orchestration Handoff
 
-**Status as of this doc:** Phases 1–7 complete. Phases 8a (command foundation)
-and 8b (metadata/audition-mix commands) are complete and committed. Phase 7
+**Status as of this doc:** Phases 1–7 complete. Phases 8a (command foundation),
+8b (metadata/audition-mix commands), and 8c (fourteen reversible
+structural/config commands, split 8c-i + 8c-ii) are complete and committed.
+Phase 8's remaining work — add/remove structural commands, selection,
+clipboard, and measure ops — is Phase 8d onward; the add/remove commands need
+new domain restore-with-id/removal API before they can be exactly reversible
+(see the Phase 8c row and the "Plan for the remaining phases" 8d entry). Phase 7
 (Normative playback specification) was split into 7a/7b/7c per Adam's locked
 scoping rulings (see "Plan for the remaining phases"). 7a is committed
 (`063f1af`) after three review rounds that caught a false continuity claim, a
@@ -87,19 +92,25 @@ only when the whole section is approved.
 | 7b | Normative playback specification — articulation/dynamic/grace mapping | ✅ done | `dc7550a` |
 | 7c | Normative playback specification — simultaneous MIDI ordering (spec only) | ✅ done | — |
 | 8a | Command foundation (protocol, history, transaction, proving commands) | ✅ done | (this commit) |
-| 8b | Metadata/audition-mix reversible commands | ✅ done | (next commit) |
-| 8c..f | Command and selection model (remaining edit commands, selection, clipboard, etc.) | ⬜ remaining | — |
+| 8b | Metadata/audition-mix reversible commands | ✅ done | `ffc9f2c` |
+| 8c-i | Reversible track-archive + connector-config commands (9) | ✅ done | `54543c1` |
+| 8c-ii | Reversible connection/route/event-binding commands (5) | ✅ done | `138458d` |
+| 8d..f | Add/remove structural commands (need new domain API first), selection, clipboard, clip/reconnect, node copy/paste, measure ops | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
 
-Test suite currently: **798 tests, 100% pass** after Phase 8b; ASan/UBSan
-clean with 798/798 and zero findings.
+Test suite currently: **896 tests, 100% pass** after Phase 8c (`CommandTest.*`
+105→222); debug + ASan/UBSan clean with zero findings across both 8c
+increments' review rounds.
 
 CHECKLIST.md M02 boxes checked so far: Dependencies, Identity and value types,
 Project and track model, Node timeline, Notation model, Graph model, Adaptive
-playback semantics, Normative playback specification. Remaining M02 boxes:
-Command and selection model, Validation service, Acceptance criteria, Test
-focus, and the top-level "Milestone 02 complete".
+playback semantics, Normative playback specification (plus the 8a/8b/8c
+descriptive sub-boxes). Remaining M02 boxes: **Command and selection model**
+(still unchecked — 8c completed the reversible-today subset but the section's
+add/remove structural, selection, clipboard, and measure-op deliverables are
+not done), Validation service, Acceptance criteria, Test focus, and the
+top-level "Milestone 02 complete".
 
 ## What each completed phase delivered (so the next agent knows what exists)
 
@@ -337,6 +348,47 @@ focus, and the top-level "Milestone 02 complete".
 
   **Orchestration must stop after this commit until Adam says continue.
   Do not begin Phase 8c.**
+- **Phase 8c (`domain`) — fourteen reversible structural/config commands
+  (approved, split 8c-i + 8c-ii):** the "reversible-today subset" — every
+  graph/connector/track edit that is exactly undo/redo-able with stable ids
+  using the domain mutators that already exist, wrapping-only, **no new
+  domain API**. Same noexcept-snapshot-once shape as 8a/8b. **8c-i
+  (`54543c1`)**, nine commands: `ArchiveTrackCommand`/`RestoreTrackCommand`
+  (inverse pair, restore in place, no value snapshot), `SetOutputTypeCommand`
+  (restores the shared `EventListener::bound_type()`; propagates the
+  vertical/sequential clash rejection), `SetListenerPolicyCommand` (snapshots
+  and restores both policy and capacity; execute fails `kInvalidArgument`
+  when no listener exists), `SetOutputPriorityCommand`,
+  `SetOutputWeightCommand` (propagates the negative-weight rejection),
+  `SetOutputExportEnabledCommand`, `SetInputConnectorNameCommand`,
+  `SetOutputConnectorNameCommand` (string commands guard allocation as
+  `kOutOfMemory`). **8c-ii (`138458d`)**, five commands with genuine
+  reversibility subtleties: `ConnectCommand` and `DisconnectCommand` — each
+  snapshots the source output's `RouteGeometry` and restores it after any
+  `disconnect`, because `OutputConnector::set_destination(nullopt)` (which
+  `disconnect` triggers) also resets a customized route to automatic;
+  `DisconnectCommand` also snapshots the exact `ConnectorDestination`;
+  `BindOutputEventCommand` — snapshots the old event's listener existence +
+  policy + capacity before binding, and on undo rebinds then restores that
+  config via `set_listener_policy`, so a listener destroyed when the last
+  bound output is rebound away is recreated exactly (**resolves the
+  `TODO(Phase 8)` at `node.hpp:145`**, though the comment itself was left in
+  place — a candidate for a later docs pass); `SetCustomRouteCommand`
+  (propagates the axis-aligned/finite/no-zero-length waypoint validation);
+  `ResetRouteCommand`. Both increments: reviewer independently ran all four
+  gates green, verified snapshot-once discipline, the two hazard tests
+  (route-preservation across undo; sole-listener destroy-and-restore to
+  `kFifo`/capacity 5), and no scope creep. 112 new command test cases
+  (896 total). **Two LOW non-blocking observations, accepted:** the
+  anonymous-namespace `restore_route` helper is duplicated verbatim across
+  four `.cpp` (internal linkage, no ODR issue; a domain-internal header
+  could dedupe later); and there is no dedicated 8c-ii test for a wrapped
+  call failing at undo/redo (saved dest input removed meanwhile) — the
+  commands correctly propagate the failure without faulting the project, and
+  the generic `CommandHistory` undo-failure tests exercise that mechanism.
+
+  **Orchestration stopped after 8c per Adam's instruction to check in and
+  update docs before proceeding to Phase 8d.**
 
 ## Plan for the remaining phases
 
@@ -409,11 +461,44 @@ focus, and the top-level "Milestone 02 complete".
     commands (`SetProjectName`, `SetStartNode`, `SetProjectDynamic`,
     `SetTrackGain`/`Pan`/`Mute`/`Solo`, `SetNodeColor`/`Notes`/`Position`).
     See delivery note above.
-  - **8c..f (remaining):** reversible commands for every graph/notation/tempo/
-    track/metadata edit beyond the 8a+8b set; all selection kinds;
-    toolkit-independent clipboard fragments; cut/copy/paste with identity
-    remapping + rest normalization; boundary-crossing clip/reconnection
-    rules; node copy/paste id remapping; atomic measure insert/delete.
+  - **8c (done, split 8c-i `54543c1` + 8c-ii `138458d`):** the fourteen
+    reversible-today structural/config commands (graph connections, connector
+    config, route geometry, event binding, track archive/restore) that need
+    no new domain API. See the delivery note above.
+  - **8d (next — REQUIRES NEW DOMAIN API):** reversible **add/remove** of
+    nodes, tracks, connectors, and events. Adam's ruling (recorded when 8c
+    was scoped): these are NOT expressible as exactly-reversible commands
+    ("undo/redo exactly / stable intended IDs", `02-domain-model.md`
+    acceptance criteria) with today's domain layer, because —
+    - `Project::add_node` mints a `NodeId` and there is **no `remove_node`**
+      anywhere; undo of an add has nothing to call.
+    - tracks have only the soft `archive_track` (reversed in-place by 8c's
+      Archive/Restore commands), **no hard remove**; an `AddTrackCommand`
+      undo cannot remove the track it added.
+    - `Node::add_input`/`add_output` **mint fresh `ConnectorId`s with no
+      restore-with-id path**, so undo of a remove (or redo of an add) cannot
+      reproduce the original id.
+    - `EventRegistry::add_event` mints a fresh `EventId` with **no
+      register-with-id**, so a removed event cannot be restored with its
+      identity, and its cross-node output/listener cascade cannot be rebound
+      to the same id.
+
+    8d must therefore **first add the domain API** (e.g. a `remove_node` +
+    node restore-with-id, hard `remove_track` + restore-with-id, connector
+    insert/restore-with-id, `EventRegistry` register-with-id) — each landed
+    behind its own worker+reviewer and respecting the id-uniqueness
+    invariants — **before** the add/remove commands wrapping them. This is a
+    domain-layer change, larger and riskier than 8a–8c, and should be scoped
+    with Adam before starting.
+  - **8e..f (remaining, after 8d):** all selection kinds; toolkit-independent
+    clipboard fragments; cut/copy/paste with identity remapping + rest
+    normalization; boundary-crossing clip/reconnection rules; node copy/paste
+    id remapping; atomic measure insert/delete (measure ops also need new
+    `MeasureMap`/`NodeTimeline` mutators — none exist today, confirmed in the
+    Phase 3 note). Notation and tempo edit commands beyond metadata likewise
+    need the append/clear-only `VoiceContent` and whole-lane-replace
+    `TempoLane` surfaces extended before fine-grained reversible commands are
+    possible.
 - **Phase 9 — Validation service:** fast incremental + complete validation;
   diagnostics with stable ids/severity/machine code/user text; validates
   rhythmic completeness, UUID uniqueness, references, track alignment, signature
