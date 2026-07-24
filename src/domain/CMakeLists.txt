@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 add_library(graphscore_domain STATIC
+  archive_track_command.cpp
   clef_lane.cpp
   command_history.cpp
   command_transaction.cpp
@@ -21,11 +22,19 @@ add_library(graphscore_domain STATIC
   pickdown_coordinates.cpp
   pickdown_ownership.cpp
   project.cpp
+  restore_track_command.cpp
   route_geometry.cpp
+  set_input_connector_name_command.cpp
+  set_listener_policy_command.cpp
   set_node_color_command.cpp
   set_node_name_command.cpp
   set_node_notes_command.cpp
   set_node_position_command.cpp
+  set_output_connector_name_command.cpp
+  set_output_export_enabled_command.cpp
+  set_output_priority_command.cpp
+  set_output_type_command.cpp
+  set_output_weight_command.cpp
   set_project_dynamic_command.cpp
   set_project_name_command.cpp
   set_project_tempo_command.cpp
