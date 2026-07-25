@@ -17,6 +17,7 @@
 #include <graphscore/domain/command_transaction.hpp>
 #include <graphscore/domain/connect_command.hpp>
 #include <graphscore/domain/connector.hpp>
+#include <graphscore/domain/convert_event_to_rest_command.hpp>
 #include <graphscore/domain/disconnect_command.hpp>
 #include <graphscore/domain/event_listener.hpp>
 #include <graphscore/domain/event_occurrence.hpp>
@@ -47,6 +48,7 @@
 #include <graphscore/domain/restore_track_command.hpp>
 #include <graphscore/domain/route_geometry.hpp>
 #include <graphscore/domain/set_custom_route_command.hpp>
+#include <graphscore/domain/set_event_command.hpp>
 #include <graphscore/domain/set_input_connector_name_command.hpp>
 #include <graphscore/domain/set_listener_policy_command.hpp>
 #include <graphscore/domain/set_node_color_command.hpp>
@@ -62,6 +64,7 @@
 #include <graphscore/domain/set_project_name_command.hpp>
 #include <graphscore/domain/set_project_tempo_command.hpp>
 #include <graphscore/domain/set_start_node_command.hpp>
+#include <graphscore/domain/set_tie_command.hpp>
 #include <graphscore/domain/set_track_gain_command.hpp>
 #include <graphscore/domain/set_track_mute_command.hpp>
 #include <graphscore/domain/set_track_name_command.hpp>

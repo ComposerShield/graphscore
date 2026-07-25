@@ -217,6 +217,41 @@ void append_tuplet_diagnostics(const std::vector<VoiceEvent>&   events,
   }
 }
 
+void append_dynamic_diagnostics(
+    const std::vector<DynamicMarking>&                       dynamics,
+    const std::unordered_map<NotationEntityId, std::size_t>& positions,
+    std::vector<NotationDiagnostic>&                         diagnostics) {
+  for (const DynamicMarking& dyn : dynamics) {
+    if (!positions.contains(dyn.at_event)) {
+      diagnostics.push_back(
+          {dyn.id, NotationDiagnosticCode::kDynamicDanglingReference,
+           "dynamic marking references an event not in this voice"});
+    }
+  }
+}
+
+void append_grace_group_diagnostics(
+    const std::vector<GraceGroup>&                           groups,
+    const std::vector<VoiceEvent>&                           events,
+    const std::unordered_map<NotationEntityId, std::size_t>& positions,
+    std::vector<NotationDiagnostic>&                         diagnostics) {
+  for (const GraceGroup& group : groups) {
+    const auto it = positions.find(group.principal_event);
+    if (it == positions.end()) {
+      diagnostics.push_back(
+          {group.id, NotationDiagnosticCode::kGraceGroupPrincipalNotSounding,
+           "grace group principal event is not in this voice"});
+      continue;
+    }
+    const VoiceEvent& principal = events[it->second];
+    if (std::holds_alternative<Rest>(principal)) {
+      diagnostics.push_back(
+          {group.id, NotationDiagnosticCode::kGraceGroupPrincipalNotSounding,
+           "grace group principal event must be a Note or Chord, not a Rest"});
+    }
+  }
+}
+
 }  // namespace
 
 std::vector<NotationDiagnostic> validate_voice_references(
@@ -234,6 +269,9 @@ std::vector<NotationDiagnostic> validate_voice_references(
   append_beam_override_diagnostics(voice.beam_overrides(), events, positions,
                                    diagnostics);
   append_tuplet_diagnostics(events, diagnostics);
+  append_dynamic_diagnostics(voice.dynamics(), positions, diagnostics);
+  append_grace_group_diagnostics(voice.grace_groups(), events, positions,
+                                 diagnostics);
 
   return diagnostics;
 }

@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -30,8 +31,62 @@ class VoiceContent {
   }
 
   // Appends `event` to the end of the voice. Fails, leaving the voice
-  // unchanged, if `event` holds a Chord with fewer than two notes.
+  // unchanged, if `event` holds a Chord with fewer than two notes, or
+  // if its NotationEntityId duplicates an id already present in the voice.
   [[nodiscard]] Result append(VoiceEvent event);
+
+  // Returns the index of the event whose start position exactly equals
+  // `position`, or std::nullopt if no event starts there. An empty voice
+  // returns std::nullopt for every position including Rational(0).
+  [[nodiscard]] std::optional<std::size_t> find_event_index_at(
+      Rational position) const;
+
+  // Inserts `event` at `position`, which must be an exact event boundary
+  // (the start of an existing event), or total_length() (an append).
+  //
+  // Instead of shifting later events right, the insertion consumes
+  // exactly `event`'s duration from the *contiguous Rest coverage*
+  // beginning at `position` — consuming whole rests and decomposing the
+  // final Rest remainder as needed.  Insertion before a sounding event
+  // (Note/Chord) is rejected.  Insertion at total_length() is a plain
+  // append (no consumption).  All later sounding-event onsets are
+  // preserved.
+  //
+  // Fails, leaving the voice unchanged, if `position` is not a boundary,
+  // if the boundary event is sounding, if contiguous Rest coverage is
+  // insufficient to cover `event`'s duration, if `event` holds a Chord
+  // with fewer than two notes, if its NotationEntityId duplicates an id
+  // already present in the voice, if the new total length would exceed
+  // `target_length`, or if normalization fails.
+  [[nodiscard]] Result insert_event(Rational position, VoiceEvent event,
+                                    Rational target_length);
+
+  // Removes the event starting at `position`: replaces it with normalized
+  // Rests of the same duration at the same position, preserving every
+  // later event's onset.  The voice is then normalized to `target_length`.
+  // Fails, leaving the voice unchanged, if no event starts at `position`
+  // or if normalization fails.
+  [[nodiscard]] Result remove_event(Rational position, Rational target_length);
+
+  // Replaces the event starting at `position` with `event` and normalizes
+  // the voice to `target_length`.
+  //
+  // Duration contraction (new_dur < old_dur): inserts `old_dur - new_dur`
+  // worth of normalized Rests immediately after the replacement, so every
+  // later event's onset is preserved.
+  //
+  // Duration expansion (new_dur > old_dur): consumes immediately
+  // following Rest coverage greedily, splitting the final consumed Rest's
+  // remainder if needed.  The original Rest ID is preserved on surviving
+  // remainders when possible.
+  //
+  // Fails, leaving the voice unchanged, if no event starts at `position`,
+  // if `event` holds a Chord with fewer than two notes, if its
+  // NotationEntityId duplicates an id held by another event (reusing the
+  // target event's own id is permitted), if the new total length would
+  // exceed `target_length`, or if normalization fails.
+  [[nodiscard]] Result replace_event(Rational position, VoiceEvent event,
+                                     Rational target_length);
 
   void clear() noexcept { events_.clear(); }
 
@@ -85,6 +140,9 @@ class VoiceContent {
   // leaving the voice unchanged, if the voice already exceeds
   // `target_length`, or if the gap cannot be expressed exactly as plain
   // dotted rests within the whole-through-sixty-fourth duration range.
+  //
+  // Transactional: builds a complete temp vector and swaps only on
+  // success; on failure events_ is unchanged.
   [[nodiscard]] Result normalize(Rational target_length);
 
   // Structural, intra-voice tie check; see validate_ties in

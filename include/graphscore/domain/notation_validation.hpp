@@ -29,6 +29,8 @@ enum class NotationDiagnosticCode : std::uint8_t {
   kPedalSpanOutOfRange,
   kIncompleteTupletGroup,
   kInvalidBeamOverride,
+  kDynamicDanglingReference,
+  kGraceGroupPrincipalNotSounding,
 };
 
 // One referential validation finding: the offending NotationEntityId (the
@@ -70,6 +72,10 @@ struct NotationDiagnostic {
 //   - Beam overrides: every referenced event must exist in this voice, be
 //     beamable (event_is_beamable), and the full set of referenced events
 //     must occupy a contiguous, adjacent run in voice order.
+//   - Dynamics: every DynamicMarking's at_event must resolve to a
+//     VoiceEvent in this voice.
+//   - Grace groups: every GraceGroup's principal_event must resolve to a
+//     Note or Chord in this voice, not a Rest.
 [[nodiscard]] std::vector<NotationDiagnostic> validate_voice_references(
     const VoiceContent& voice);
 

@@ -21,24 +21,37 @@ using graphscore::AddOutputConnectorCommand;
 using graphscore::AddTrackCommand;
 using graphscore::ArchiveTrackCommand;
 using graphscore::BindOutputEventCommand;
+using graphscore::Chord;
+using graphscore::ChordNote;
 using graphscore::Command;
 using graphscore::CommandHistory;
 using graphscore::CommandTransaction;
 using graphscore::ConnectCommand;
 using graphscore::ConnectorId;
 using graphscore::ConnectorType;
+using graphscore::ConvertEventToRestCommand;
 using graphscore::DisconnectCommand;
+using graphscore::Duration;
 using graphscore::Dynamic;
 using graphscore::EventId;
 using graphscore::EventListener;
+using graphscore::GraceNote;
+using graphscore::GraceNoteType;
 using graphscore::Graph;
 using graphscore::GraphPosition;
 using graphscore::KeySignature;
+using graphscore::Letter;
+using graphscore::make_chord;
+using graphscore::make_grace_group;
+using graphscore::make_note;
+using graphscore::make_rest;
 using graphscore::Measure;
 using graphscore::MidiChannel;
 using graphscore::Node;
 using graphscore::NodeId;
 using graphscore::NodeTimeline;
+using graphscore::NotationEntityId;
+using graphscore::Note;
 using graphscore::NoteValue;
 using graphscore::OutputConnector;
 using graphscore::Project;
@@ -51,12 +64,14 @@ using graphscore::RemoveInputConnectorCommand;
 using graphscore::RemoveNodeCommand;
 using graphscore::RemoveOutputConnectorCommand;
 using graphscore::ResetRouteCommand;
+using graphscore::Rest;
 using graphscore::RestoreTrackCommand;
 using graphscore::Result;
 using graphscore::ResultCode;
 using graphscore::RouteGeometry;
 using graphscore::RoutePoint;
 using graphscore::SetCustomRouteCommand;
+using graphscore::SetEventCommand;
 using graphscore::SetInputConnectorNameCommand;
 using graphscore::SetListenerPolicyCommand;
 using graphscore::SetNodeColorCommand;
@@ -72,16 +87,21 @@ using graphscore::SetProjectDynamicCommand;
 using graphscore::SetProjectNameCommand;
 using graphscore::SetProjectTempoCommand;
 using graphscore::SetStartNodeCommand;
+using graphscore::SetTieCommand;
 using graphscore::SetTrackGainCommand;
 using graphscore::SetTrackMuteCommand;
 using graphscore::SetTrackNameCommand;
 using graphscore::SetTrackPanCommand;
 using graphscore::SetTrackSoloCommand;
+using graphscore::SpelledPitch;
 using graphscore::StaffLayout;
 using graphscore::StaveId;
 using graphscore::Tempo;
 using graphscore::TimeSignature;
 using graphscore::TrackId;
+using graphscore::Voice;
+using graphscore::VoiceContent;
+using graphscore::VoiceEvent;
 
 namespace {
 
@@ -309,6 +329,78 @@ class TwoPhaseUndoFailCommand : public Command {
   bool                      was_redone_ = false;
   State                     state_      = State::kFresh;
 };
+
+// Builds a project with one active track, one node with a single 4/4
+// measure timeline, and one stave whose voices are fillable.  Returns the
+// project, node end, and the stable ids needed to address specific voices.
+struct NotationSetup {
+  Project  project;
+  NodeId   node_id;
+  TrackId  track_id;
+  StaveId  stave_id;
+  Rational node_end;
+};
+
+NotationSetup make_notation_setup() {
+  Project    project = make_project();
+  const auto t       = project.add_track("Track", StaffLayout::single_staff(),
+                                         *MidiChannel::create(0));
+  assert(t.has_value());
+  const TrackId track_id = *t;
+
+  const NodeId node_id = project.add_node("Node");
+
+  std::vector<Measure> measures = {
+      Measure{*TimeSignature::create(4, 4), *KeySignature::create(0)}};
+  auto tl = NodeTimeline::create(std::move(measures), {});
+  assert(tl.has_value());
+  project.find_node(node_id)->set_timeline(std::move(*tl));
+  const Rational node_end(1);  // One 4/4 measure = 1 whole note
+
+  Node*                    node  = project.find_node(node_id);
+  const graphscore::Track* track = project.find_active_track(track_id);
+  StaveId                  stave_id;
+  for (const graphscore::StaveDefinition& stave_def :
+       track->layout().staves()) {
+    node->lane(track_id)->ensure_stave(stave_def.id);
+    stave_id = stave_def.id;
+  }
+
+  return NotationSetup{std::move(project), node_id, track_id, stave_id,
+                       node_end};
+}
+
+SpelledPitch pitch_c4() {
+  return *SpelledPitch::create(Letter::kC, 4);
+}
+
+SpelledPitch pitch_d4() {
+  return *SpelledPitch::create(Letter::kD, 4);
+}
+
+SpelledPitch pitch_e4() {
+  return *SpelledPitch::create(Letter::kE, 4);
+}
+
+Duration quarter() {
+  return *Duration::create(NoteValue::kQuarter, 0);
+}
+
+Duration half() {
+  return *Duration::create(NoteValue::kHalf, 0);
+}
+
+Duration whole() {
+  return *Duration::create(NoteValue::kWhole, 0);
+}
+
+Duration eighth() {
+  return *Duration::create(NoteValue::kEighth, 0);
+}
+
+Duration dotted_half() {
+  return *Duration::create(NoteValue::kHalf, 1);
+}
 
 }  // namespace
 
@@ -6413,4 +6505,2415 @@ TEST(CommandTest, DeterministicReplay8div) {
   EXPECT_EQ(second.nodes().front().name(), "B");
   EXPECT_NE(first.find_node(first_survivor), nullptr);
   EXPECT_NE(second.find_node(second_survivor), nullptr);
+}
+
+// =========================================================================
+// Phase 8e-i — SetEventCommand
+// =========================================================================
+
+TEST(CommandTest, SetEventNoteToRestRoundTrip) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const VoiceEvent note = make_note(pitch_c4(), quarter());
+  ASSERT_TRUE(voice->append(note).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const VoiceEvent rest = make_rest(quarter());
+  auto             cmd =
+      std::make_unique<SetEventCommand>(fx.node_id, fx.track_id, fx.stave_id,
+                                        *Voice::create(1), Rational(0), rest);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  ASSERT_GE(voice->events().size(),
+            2u);  // quarter rest + dotted-half rest (3/4)
+  EXPECT_TRUE(voice->check_complete(fx.node_end).ok());
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  ASSERT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+}
+
+TEST(CommandTest, SetEventRestToNoteRoundTrip) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_rest(quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const VoiceEvent note = make_note(pitch_c4(), quarter());
+  auto             cmd =
+      std::make_unique<SetEventCommand>(fx.node_id, fx.track_id, fx.stave_id,
+                                        *Voice::create(1), Rational(0), note);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+}
+
+TEST(CommandTest, SetEventNoteToChordRoundTrip) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const Chord chord =
+      make_chord(quarter(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  auto cmd = std::make_unique<SetEventCommand>(fx.node_id, fx.track_id,
+                                               fx.stave_id, *Voice::create(1),
+                                               Rational(0), VoiceEvent(chord));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Chord>(voice->events()[0]));
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Chord>(voice->events()[0]));
+}
+
+TEST(CommandTest, SetEventChordToNoteRoundTrip) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const Chord chord =
+      make_chord(half(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const VoiceEvent note = make_note(pitch_c4(), half());
+  auto             cmd =
+      std::make_unique<SetEventCommand>(fx.node_id, fx.track_id, fx.stave_id,
+                                        *Voice::create(1), Rational(0), note);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Chord>(voice->events()[0]));
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+}
+
+TEST(CommandTest, SetEventDurationChangeRenormalizes) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  // Fill with a half note + a half rest → exactly 1 whole note.
+  const VoiceEvent half_note = make_note(pitch_c4(), half());
+  ASSERT_TRUE(voice->append(half_note).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  ASSERT_EQ(voice->total_length(), Rational(1));
+
+  // Replace half note with quarter note — creates a gap that normalise
+  // fills with a quarter rest.
+  const VoiceEvent quarter_note = make_note(pitch_c4(), quarter());
+  auto cmd = std::make_unique<SetEventCommand>(fx.node_id, fx.track_id,
+                                               fx.stave_id, *Voice::create(1),
+                                               Rational(0), quarter_note);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->total_length(), Rational(1));
+  EXPECT_TRUE(voice->check_complete(fx.node_end).ok());
+  EXPECT_GE(voice->events().size(), 2u);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->total_length(), Rational(1));
+  EXPECT_EQ(voice->events().size(), 2u);  // restored half note + half rest
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_GE(voice->events().size(), 2u);  // quarter note + rest fill
+}
+
+// Replace a rest with a whole note exactly filling an empty measure.
+TEST(CommandTest, SetEventRestToWholeNoteFillsMeasure) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  ASSERT_EQ(voice->total_length(), Rational(1));
+  ASSERT_GE(voice->events().size(), 1u);
+
+  const VoiceEvent whole_note = make_note(pitch_c4(), whole());
+  auto cmd = std::make_unique<SetEventCommand>(fx.node_id, fx.track_id,
+                                               fx.stave_id, *Voice::create(1),
+                                               Rational(0), whole_note);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  // Whole note fills the measure, but any remaining rests that overflow
+  // will cause normalize to fail → the command rolls back.
+  // With len=1 and a whole note at pos 0, the prev events (rests) get
+  // pushed past node_end, so this should succeed only if there was
+  // exactly 1 event and it was a rest of duration 1.
+  // In practice, decompose_rest(1) gives [whole_rest], so this works.
+  EXPECT_EQ(voice->total_length(), Rational(1));
+  EXPECT_TRUE(voice->check_complete(fx.node_end).ok());
+  ASSERT_GE(voice->events().size(), 1u);
+  const graphscore::Note* n =
+      std::get_if<graphscore::Note>(&voice->events()[0]);
+  ASSERT_NE(n, nullptr);
+  EXPECT_EQ(n->duration.resolved(), whole().resolved());
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->total_length(), Rational(1));
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(voice->total_length(), Rational(1));
+}
+
+TEST(CommandTest, SetEventChordBuildAddNotehead) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const Chord chord2 =
+      make_chord(quarter(), {ChordNote{pitch_c4()}, ChordNote{pitch_d4()}});
+  ASSERT_TRUE(voice->append(VoiceEvent(chord2)).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const Chord chord3 = make_chord(
+      quarter(),
+      {ChordNote{pitch_c4()}, ChordNote{pitch_d4()}, ChordNote{pitch_e4()}});
+  auto cmd = std::make_unique<SetEventCommand>(fx.node_id, fx.track_id,
+                                               fx.stave_id, *Voice::create(1),
+                                               Rational(0), VoiceEvent(chord3));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const Chord* result = std::get_if<Chord>(&voice->events()[0]);
+  ASSERT_NE(result, nullptr);
+  EXPECT_EQ(result->notes.size(), 3u);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  const Chord* undone = std::get_if<Chord>(&voice->events()[0]);
+  ASSERT_NE(undone, nullptr);
+  EXPECT_EQ(undone->notes.size(), 2u);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  const Chord* redone = std::get_if<Chord>(&voice->events()[0]);
+  ASSERT_NE(redone, nullptr);
+  EXPECT_EQ(redone->notes.size(), 3u);
+}
+
+TEST(CommandTest, SetEventDoubleExecuteRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_rest(quarter()));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, SetEventUndoWithoutExecuteRejected) {
+  auto fx  = make_notation_setup();
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_rest(quarter()));
+  EXPECT_EQ(cmd->undo(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, SetEventRedoWithoutUndoRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_rest(quarter()));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(cmd->redo(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, SetEventMissingNodeIdFails) {
+  auto   fx      = make_notation_setup();
+  NodeId missing = NodeId::generate();
+  auto   cmd     = std::make_unique<SetEventCommand>(
+      missing, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_rest(quarter()));
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, SetEventMissingTrackIdFails) {
+  auto    fx      = make_notation_setup();
+  TrackId missing = TrackId::generate();
+  auto cmd = std::make_unique<SetEventCommand>(fx.node_id, missing, fx.stave_id,
+                                               *Voice::create(1), Rational(0),
+                                               make_rest(quarter()));
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, SetEventMissingStaveIdFails) {
+  auto    fx      = make_notation_setup();
+  StaveId missing = StaveId::generate();
+  auto cmd = std::make_unique<SetEventCommand>(fx.node_id, fx.track_id, missing,
+                                               *Voice::create(1), Rational(0),
+                                               make_rest(quarter()));
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, SetEventNoTimelineFails) {
+  Project project = make_project();
+  auto    t       = project.add_track("T", StaffLayout::single_staff(),
+                                      *MidiChannel::create(0));
+  ASSERT_TRUE(t.has_value());
+  NodeId nid = project.add_node("N");
+  Node*  n   = project.find_node(nid);
+
+  StaveId            sid;
+  graphscore::Track* tr = project.find_active_track(*t);
+  for (const graphscore::StaveDefinition& sd : tr->layout().staves()) {
+    n->lane(*t)->ensure_stave(sd.id);
+    sid = sd.id;
+  }
+
+  auto cmd = std::make_unique<SetEventCommand>(
+      nid, *t, sid, *Voice::create(1), Rational(0), make_rest(quarter()));
+  EXPECT_EQ(cmd->execute(project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, SetEventInvalidPositionFails) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  // Position 1/8 is inside the first quarter note — not a boundary.
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1),
+      *Rational::create(1, 8), make_rest(eighth()));
+
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  // Voice must be unchanged.
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+}
+
+TEST(CommandTest, SetEventSingleNoteChordRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const Chord bad_chord =
+      make_chord(quarter(), {ChordNote{pitch_c4()}});  // only 1 note
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      VoiceEvent(bad_chord));
+
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+}
+
+TEST(CommandTest, SetEventPreservesNotationEntityIdsOnRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const VoiceEvent original = make_note(pitch_c4(), quarter());
+  ASSERT_TRUE(voice->append(original).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const VoiceEvent replacement = make_rest(quarter());
+  NotationEntityId first_pass_id;
+
+  auto cmd = std::make_unique<SetEventCommand>(fx.node_id, fx.track_id,
+                                               fx.stave_id, *Voice::create(1),
+                                               Rational(0), replacement);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  first_pass_id = graphscore::event_id(voice->events()[0]);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+
+  EXPECT_EQ(graphscore::event_id(voice->events()[0]), first_pass_id);
+}
+
+TEST(CommandTest, SetEventUnrelatedVoicePreserved) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* v1 =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+  VoiceContent* v2 =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(2));
+
+  ASSERT_TRUE(v1->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(v1->normalize(fx.node_end).ok());
+  ASSERT_TRUE(v2->append(make_note(pitch_d4(), half())).ok());
+  ASSERT_TRUE(v2->normalize(fx.node_end).ok());
+
+  const VoiceContent saved_v2 = *v2;
+
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_rest(quarter()));
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+
+  EXPECT_EQ(*v2, saved_v2);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*v2, saved_v2);
+}
+
+// =========================================================================
+// Phase 8e-i — ConvertEventToRestCommand
+// =========================================================================
+
+TEST(CommandTest, ConvertNoteToRestRoundTrip) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  NotationEntityId note_id = graphscore::event_id(voice->events()[0]);
+
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+  EXPECT_EQ(voice->total_length(), fx.node_end);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+  EXPECT_EQ(graphscore::event_id(voice->events()[0]), note_id);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+}
+
+TEST(CommandTest, ConvertChordToRestRoundTrip) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const Chord chord =
+      make_chord(half(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Chord>(voice->events()[0]));
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+}
+
+TEST(CommandTest, ConvertRestToRestIsIdempotent) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_rest(quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+  const Rest* r = std::get_if<Rest>(&voice->events()[0]);
+  ASSERT_NE(r, nullptr);
+  EXPECT_EQ(r->duration.resolved(), quarter().resolved());
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+}
+
+TEST(CommandTest, ConvertEventToRestDoubleExecuteRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0));
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, ConvertEventToRestMissingNodeFails) {
+  auto fx  = make_notation_setup();
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      NodeId::generate(), fx.track_id, fx.stave_id, *Voice::create(1),
+      Rational(0));
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, ConvertEventToRestInvalidPositionFails) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1),
+      *Rational::create(1, 2));  // no event starts at 1/2
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, ConvertPreservesDuration) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), dotted_half())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const Rest* r = std::get_if<Rest>(&voice->events()[0]);
+  ASSERT_NE(r, nullptr);
+  EXPECT_EQ(r->duration.resolved(), dotted_half().resolved());
+}
+
+// =========================================================================
+// Phase 8e-i — SetTieCommand
+// =========================================================================
+
+TEST(CommandTest, SetTieNoteTieThenUntieRoundTrip) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  // Tie the first note.
+  auto tie_cmd = std::make_unique<SetTieCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      std::nullopt, true);
+
+  ASSERT_TRUE(tie_cmd->execute(fx.project).ok());
+  const Note* n1 = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(n1, nullptr);
+  EXPECT_TRUE(n1->tied_to_next);
+
+  ASSERT_TRUE(tie_cmd->undo(fx.project).ok());
+  const Note* n1u = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(n1u, nullptr);
+  EXPECT_FALSE(n1u->tied_to_next);
+
+  ASSERT_TRUE(tie_cmd->redo(fx.project).ok());
+  const Note* n1r = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(n1r, nullptr);
+  EXPECT_TRUE(n1r->tied_to_next);
+
+  // Untie it.
+  auto untie_cmd = std::make_unique<SetTieCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      std::nullopt, false);
+
+  ASSERT_TRUE(untie_cmd->execute(fx.project).ok());
+  const Note* n1u2 = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(n1u2, nullptr);
+  EXPECT_FALSE(n1u2->tied_to_next);
+}
+
+TEST(CommandTest, SetTieChordNoteheadTieThenUntieRoundTrip) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const Chord chord =
+      make_chord(quarter(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  // Tie notehead index 0 (C4) in the chord.
+  auto tie_cmd = std::make_unique<SetTieCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      std::make_optional<std::size_t>(0), true);
+
+  ASSERT_TRUE(tie_cmd->execute(fx.project).ok());
+  const Chord* c = std::get_if<Chord>(&voice->events()[0]);
+  ASSERT_NE(c, nullptr);
+  EXPECT_TRUE(c->notes[0].tied_to_next);   // C4
+  EXPECT_FALSE(c->notes[1].tied_to_next);  // E4
+
+  ASSERT_TRUE(tie_cmd->undo(fx.project).ok());
+  const Chord* cu = std::get_if<Chord>(&voice->events()[0]);
+  ASSERT_NE(cu, nullptr);
+  EXPECT_FALSE(cu->notes[0].tied_to_next);
+  EXPECT_FALSE(cu->notes[1].tied_to_next);
+
+  ASSERT_TRUE(tie_cmd->redo(fx.project).ok());
+  const Chord* cr = std::get_if<Chord>(&voice->events()[0]);
+  ASSERT_NE(cr, nullptr);
+  EXPECT_TRUE(cr->notes[0].tied_to_next);
+  EXPECT_FALSE(cr->notes[1].tied_to_next);
+}
+
+TEST(CommandTest, SetTieChordNoIndexRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const Chord chord =
+      make_chord(quarter(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
+  const Chord successor =
+      make_chord(quarter(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  ASSERT_TRUE(voice->append(VoiceEvent(successor)).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  // Chord requires an explicit notehead index; nullopt is rejected.
+  auto cmd = std::make_unique<SetTieCommand>(fx.node_id, fx.track_id,
+                                             fx.stave_id, *Voice::create(1),
+                                             Rational(0), std::nullopt, true);
+
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  // Voice unchanged — no tie flags set.
+  const Chord* c = std::get_if<Chord>(&voice->events()[0]);
+  ASSERT_NE(c, nullptr);
+  EXPECT_FALSE(c->notes[0].tied_to_next);
+  EXPECT_FALSE(c->notes[1].tied_to_next);
+}
+
+TEST(CommandTest, SetTieChordNoteheadMismatchedRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const Chord chord =
+      make_chord(quarter(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
+  // Successor has C4 but not E4 — tying E4 (index 1) is invalid.
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetTieCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      std::make_optional<std::size_t>(1), true);
+
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  // Voice unchanged — no tie flags set.
+  const Chord* c = std::get_if<Chord>(&voice->events()[0]);
+  ASSERT_NE(c, nullptr);
+  EXPECT_FALSE(c->notes[0].tied_to_next);
+  EXPECT_FALSE(c->notes[1].tied_to_next);
+}
+
+TEST(CommandTest, SetTieRestFails) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_rest(quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetTieCommand>(fx.node_id, fx.track_id,
+                                             fx.stave_id, *Voice::create(1),
+                                             Rational(0), std::nullopt, true);
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  // Voice unchanged.
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+}
+
+TEST(CommandTest, SetTieChordMissingNoteheadFails) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const Chord chord =
+      make_chord(quarter(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  // Index 2 is out of range (chord has only 2 notes).
+  auto cmd = std::make_unique<SetTieCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      std::make_optional<std::size_t>(2), true);
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, SetTieNoteRejectsExplicitNoteheadIndex) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  // A Note carries a single tie flag; supplying an explicit notehead index
+  // is rejected.
+  auto cmd = std::make_unique<SetTieCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      std::make_optional<std::size_t>(0), true);
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  // Voice unchanged.
+  const Note* n = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(n, nullptr);
+  EXPECT_FALSE(n->tied_to_next);
+}
+
+TEST(CommandTest, SetTieDoubleExecuteRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetTieCommand>(fx.node_id, fx.track_id,
+                                             fx.stave_id, *Voice::create(1),
+                                             Rational(0), std::nullopt, true);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, SetTieUndoWithoutExecuteRejected) {
+  auto fx  = make_notation_setup();
+  auto cmd = std::make_unique<SetTieCommand>(fx.node_id, fx.track_id,
+                                             fx.stave_id, *Voice::create(1),
+                                             Rational(0), std::nullopt, true);
+  EXPECT_EQ(cmd->undo(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, SetTieRedoWithoutUndoRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetTieCommand>(fx.node_id, fx.track_id,
+                                             fx.stave_id, *Voice::create(1),
+                                             Rational(0), std::nullopt, true);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(cmd->redo(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, SetTieMissingNodeFails) {
+  auto fx  = make_notation_setup();
+  auto cmd = std::make_unique<SetTieCommand>(NodeId::generate(), fx.track_id,
+                                             fx.stave_id, *Voice::create(1),
+                                             Rational(0), std::nullopt, true);
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, SetTieInvalidPositionFails) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetTieCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1),
+      *Rational::create(1, 2), std::nullopt, true);
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, SetTiePreservesOtherEventFields) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const VoiceEvent note    = make_note(pitch_d4(), half(), false,
+                                       {graphscore::Articulation::kStaccato});
+  NotationEntityId note_id = graphscore::event_id(note);
+  ASSERT_TRUE(voice->append(note).ok());
+  // A valid tie needs a successor that sounds the same pitch.
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetTieCommand>(fx.node_id, fx.track_id,
+                                             fx.stave_id, *Voice::create(1),
+                                             Rational(0), std::nullopt, true);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const Note* n = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(n, nullptr);
+  EXPECT_TRUE(n->tied_to_next);
+  EXPECT_EQ(n->pitch, pitch_d4());
+  EXPECT_EQ(n->duration.resolved(), half().resolved());
+  EXPECT_EQ(n->id, note_id);
+  ASSERT_EQ(n->articulations.size(), 1u);
+  EXPECT_EQ(n->articulations[0], graphscore::Articulation::kStaccato);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  const Note* nu = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(nu, nullptr);
+  EXPECT_FALSE(nu->tied_to_next);
+  EXPECT_EQ(nu->id, note_id);
+}
+
+// =========================================================================
+// Phase 8e-i — Deterministic replay and ordering
+// =========================================================================
+
+TEST(CommandTest, DeterministicReplay8ei) {
+  auto run_sequence =
+      [](Project& project) -> std::pair<NotationEntityId, VoiceEvent> {
+    CommandHistory history;
+
+    const auto   t   = project.add_track("Track", StaffLayout::single_staff(),
+                                         *MidiChannel::create(0));
+    const NodeId nid = project.add_node("Node");
+    Node*        n   = project.find_node(nid);
+
+    std::vector<Measure> measures = {
+        Measure{*TimeSignature::create(4, 4), *KeySignature::create(0)}};
+    auto tl = NodeTimeline::create(std::move(measures), {});
+    n->set_timeline(std::move(*tl));
+
+    StaveId sid;
+    for (const graphscore::StaveDefinition& sd :
+         project.find_active_track(*t)->layout().staves()) {
+      n->lane(*t)->ensure_stave(sd.id);
+      sid = sd.id;
+    }
+
+    VoiceContent* voice = &n->lane(*t)->stave(sid)->voice(*Voice::create(1));
+    static_cast<void>(voice->append(make_note(pitch_c4(), quarter())));
+    static_cast<void>(voice->normalize(Rational(1)));
+
+    NotationEntityId first_id = graphscore::event_id(voice->events()[0]);
+    const VoiceEvent rest     = make_rest(quarter());
+
+    static_cast<void>(history.execute_new(
+        std::make_unique<SetEventCommand>(nid, *t, sid, *Voice::create(1),
+                                          Rational(0), rest),
+        project));
+    static_cast<void>(
+        history.execute_new(std::make_unique<ConvertEventToRestCommand>(
+                                nid, *t, sid, *Voice::create(1), Rational(0)),
+                            project));
+
+    return std::make_pair(first_id, voice->events()[0]);
+  };
+
+  Project first  = make_project();
+  Project second = make_project();
+
+  auto [fid, f_ev] = run_sequence(first);
+  auto [sid, s_ev] = run_sequence(second);
+
+  EXPECT_TRUE(std::holds_alternative<Rest>(f_ev));
+  EXPECT_TRUE(std::holds_alternative<Rest>(s_ev));
+  // Ids are independently generated, so should differ between projects.
+  EXPECT_NE(fid, sid);
+}
+
+// =========================================================================
+// Phase 8e-i — Tie validation (rejection of invalid ties)
+// =========================================================================
+
+TEST(CommandTest, SetTieLastEventRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  // The only event is the last one — tying it has no successor.
+  auto cmd = std::make_unique<SetTieCommand>(fx.node_id, fx.track_id,
+                                             fx.stave_id, *Voice::create(1),
+                                             Rational(0), std::nullopt, true);
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  const Note* n = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(n, nullptr);
+  EXPECT_FALSE(n->tied_to_next);
+}
+
+TEST(CommandTest, SetTieMismatchedSuccessorRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  // Tie C4 → successor is D4 — pitch mismatch.
+  auto cmd = std::make_unique<SetTieCommand>(fx.node_id, fx.track_id,
+                                             fx.stave_id, *Voice::create(1),
+                                             Rational(0), std::nullopt, true);
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  const Note* n = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(n, nullptr);
+  EXPECT_FALSE(n->tied_to_next);
+}
+
+// =========================================================================
+// Phase 8e-i — ConvertEventToRestCommand ID stability
+// =========================================================================
+
+TEST(CommandTest, ConvertNoteToRestPreservesIdOnRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId original_id = graphscore::event_id(voice->events()[0]);
+
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const NotationEntityId first_rest_id =
+      graphscore::event_id(voice->events()[0]);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  const NotationEntityId second_rest_id =
+      graphscore::event_id(voice->events()[0]);
+
+  // The rest preserves the original note's id.
+  EXPECT_EQ(first_rest_id, original_id);
+  // Redo produces the exact same id.
+  EXPECT_EQ(second_rest_id, first_rest_id);
+}
+
+TEST(CommandTest, ConvertChordToRestPreservesIdOnRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const Chord chord =
+      make_chord(half(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  const NotationEntityId original_id = graphscore::event_id(voice->events()[0]);
+
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const NotationEntityId first_id = graphscore::event_id(voice->events()[0]);
+  EXPECT_EQ(first_id, original_id);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(graphscore::event_id(voice->events()[0]), first_id);
+}
+
+// =========================================================================
+// Phase 8e-i — Predecessor-tie preservation (no dangling references)
+// =========================================================================
+
+TEST(CommandTest, SetEventBreaksPredecessorTieRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const VoiceEvent n1 = make_note(pitch_c4(), quarter(), true);
+  const VoiceEvent n2 = make_note(pitch_c4(), quarter());
+  ASSERT_TRUE(voice->append(n1).ok());
+  ASSERT_TRUE(voice->append(n2).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  // Replace the second note (the tie target) with D4 — tie from C4 breaks.
+  const VoiceEvent replacement = make_note(pitch_d4(), quarter());
+  auto             cmd         = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1),
+      *Rational::create(1, 4), replacement);
+
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  // Voice unchanged: first note still tied_to_next, second note still C4.
+  const Note* n1_after = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(n1_after, nullptr);
+  EXPECT_TRUE(n1_after->tied_to_next);
+  const Note* n2_after = std::get_if<Note>(&voice->events()[1]);
+  ASSERT_NE(n2_after, nullptr);
+  EXPECT_EQ(n2_after->pitch, pitch_c4());
+}
+
+TEST(CommandTest, ConvertEventToRestBreaksPredecessorTieRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const VoiceEvent n1 = make_note(pitch_c4(), quarter(), true);
+  const VoiceEvent n2 = make_note(pitch_c4(), quarter());
+  ASSERT_TRUE(voice->append(n1).ok());
+  ASSERT_TRUE(voice->append(n2).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  // Convert the second note to rest — predecessor tie breaks.
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1),
+      *Rational::create(1, 4));
+
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  const Note* n1_after = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(n1_after, nullptr);
+  EXPECT_TRUE(n1_after->tied_to_next);
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[1]));
+}
+
+// =========================================================================
+// Phase 8e-i — Overflow rejection (duration expansion cannot silently
+//                clip later content)
+// =========================================================================
+
+TEST(CommandTest, SetEventDurationExpansionOverflowRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const VoiceContent saved = *voice;
+
+  // Replace the quarter at 0 with a whole note — would exceed
+  // target_length(1).
+  const VoiceEvent whole_note = make_note(pitch_c4(), whole());
+  auto cmd = std::make_unique<SetEventCommand>(fx.node_id, fx.track_id,
+                                               fx.stave_id, *Voice::create(1),
+                                               Rational(0), whole_note);
+
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(*voice, saved);
+}
+
+// =========================================================================
+// Phase 8e-i — Full VoiceContent equality with IDs on execute→undo→redo
+// =========================================================================
+
+TEST(CommandTest, SetEventFullEqualityWithIdsOnUndoRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  const VoiceContent original = *voice;
+
+  const VoiceEvent replacement = make_rest(quarter());
+  auto cmd = std::make_unique<SetEventCommand>(fx.node_id, fx.track_id,
+                                               fx.stave_id, *Voice::create(1),
+                                               Rational(0), replacement);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent after_execute = *voice;
+  EXPECT_NE(after_execute, original);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*voice, original);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, after_execute);
+}
+
+TEST(CommandTest, ConvertEventToRestFullEqualityWithIdsOnUndoRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  const VoiceContent original = *voice;
+
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent after_execute = *voice;
+  EXPECT_NE(after_execute, original);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*voice, original);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, after_execute);
+}
+
+TEST(CommandTest, SetTieFullEqualityWithIdsOnUndoRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  const VoiceContent original = *voice;
+
+  auto cmd = std::make_unique<SetTieCommand>(fx.node_id, fx.track_id,
+                                             fx.stave_id, *Voice::create(1),
+                                             Rational(0), std::nullopt, true);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent after_execute = *voice;
+  EXPECT_NE(after_execute, original);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*voice, original);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, after_execute);
+}
+
+// =========================================================================
+// VoiceContent positional-mutator tests
+// =========================================================================
+
+TEST(CommandTest, VoiceContentInsertIntoRestCoverageAtBeginning) {
+  VoiceContent voice;
+  // Rest coverage at position 0: R(q), N(q).
+  ASSERT_TRUE(voice.append(make_rest(quarter())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), quarter())).ok());
+
+  // Insert eighth note at position 0 consuming part of the quarter rest.
+  ASSERT_TRUE(voice
+                  .insert_event(Rational(0), make_note(pitch_c4(), eighth()),
+                                Rational(1))
+                  .ok());
+
+  ASSERT_GE(voice.events().size(), 3u);
+  EXPECT_TRUE(std::holds_alternative<Note>(voice.events()[0]));
+  EXPECT_EQ(voice.total_length(), Rational(1));
+}
+
+TEST(CommandTest, VoiceContentInsertAtEnd) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  const Rational end_pos = voice.total_length();
+  ASSERT_TRUE(
+      voice.insert_event(end_pos, make_rest(eighth()), Rational(1)).ok());
+
+  ASSERT_GE(voice.events().size(), 2u);
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice.events()[1]));
+  EXPECT_EQ(voice.total_length(), Rational(1));
+}
+
+TEST(CommandTest, VoiceContentInsertAtEventBoundary) {
+  VoiceContent voice;
+  // N(q) at 0, R(h) at 1/4, N(q) at 3/4.  Total = 1.0.
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_rest(half())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_EQ(voice.total_length(), Rational(1));
+
+  // Insert a quarter rest at 1/4, consuming into the half rest coverage.
+  ASSERT_TRUE(voice
+                  .insert_event(*Rational::create(1, 4), make_rest(quarter()),
+                                Rational(2))
+                  .ok());
+
+  EXPECT_TRUE(std::holds_alternative<Note>(voice.events()[0]));
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice.events()[1]));
+  // The D4 sounding onset at 3/4 must be preserved somewhere beyond the
+  // inserted + remainder rests.
+  bool found_d4 = false;
+  for (const VoiceEvent& ev : voice.events()) {
+    if (const auto* n = std::get_if<Note>(&ev)) {
+      if (n->pitch == pitch_d4())
+        found_d4 = true;
+    }
+  }
+  EXPECT_TRUE(found_d4);
+  EXPECT_EQ(voice.total_length(), Rational(2));
+}
+
+TEST(CommandTest, VoiceContentInsertInvalidPositionFails) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  EXPECT_FALSE(voice
+                   .insert_event(*Rational::create(1, 8), make_rest(eighth()),
+                                 Rational(1))
+                   .ok());
+}
+
+TEST(CommandTest, VoiceContentInsertOverflowRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), half())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), half())).ok());
+  ASSERT_EQ(voice.total_length(), Rational(1));
+
+  // Inserting anything into an already-full voice exceeds target_length=1.
+  EXPECT_FALSE(
+      voice.insert_event(Rational(0), make_rest(eighth()), Rational(1)).ok());
+  EXPECT_EQ(voice.total_length(), Rational(1));
+}
+
+TEST(CommandTest, VoiceContentRemoveEvent) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), quarter())).ok());
+
+  ASSERT_TRUE(voice.remove_event(*Rational::create(1, 4), Rational(1)).ok());
+  ASSERT_EQ(voice.total_length(), Rational(1));
+  EXPECT_TRUE(std::holds_alternative<Note>(voice.events()[0]));
+}
+
+TEST(CommandTest, VoiceContentRemoveInvalidPositionFails) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  EXPECT_FALSE(voice.remove_event(*Rational::create(1, 2), Rational(1)).ok());
+}
+
+TEST(CommandTest, VoiceContentReplaceEvent) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  ASSERT_TRUE(
+      voice.replace_event(Rational(0), make_rest(quarter()), Rational(1)).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice.events()[0]));
+  EXPECT_EQ(voice.total_length(), Rational(1));
+}
+
+TEST(CommandTest, VoiceContentReplaceInvalidPositionFails) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  EXPECT_FALSE(voice
+                   .replace_event(*Rational::create(1, 2), make_rest(quarter()),
+                                  Rational(1))
+                   .ok());
+}
+
+TEST(CommandTest, VoiceContentReplaceOverflowRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), half())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), half())).ok());
+  ASSERT_EQ(voice.total_length(), Rational(1));
+
+  // Replacing a half note with a whole note overflows target_length=1.
+  EXPECT_FALSE(voice
+                   .replace_event(Rational(0), make_note(pitch_c4(), whole()),
+                                  Rational(1))
+                   .ok());
+  EXPECT_EQ(voice.total_length(), Rational(1));
+}
+
+TEST(CommandTest, VoiceContentFindEventIndexEmptyVoice) {
+  VoiceContent voice;
+  EXPECT_FALSE(voice.find_event_index_at(Rational(0)).has_value());
+}
+
+TEST(CommandTest, VoiceContentFindEventIndexValid) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), half())).ok());
+
+  auto idx0 = voice.find_event_index_at(Rational(0));
+  ASSERT_TRUE(idx0.has_value());
+  EXPECT_EQ(*idx0, 0u);
+
+  auto idx1 = voice.find_event_index_at(*Rational::create(1, 4));
+  ASSERT_TRUE(idx1.has_value());
+  EXPECT_EQ(*idx1, 1u);
+
+  // Position at total_length() has no event starting there.
+  auto idx_end = voice.find_event_index_at(*Rational::create(3, 4));
+  EXPECT_FALSE(idx_end.has_value());
+}
+
+TEST(CommandTest, VoiceContentInsertSingleNoteChordRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  const Chord bad_chord = make_chord(eighth(), {ChordNote{pitch_c4()}});
+  EXPECT_FALSE(
+      voice.insert_event(Rational(0), VoiceEvent(bad_chord), Rational(1)).ok());
+  EXPECT_EQ(voice.events().size(), 1u);
+}
+
+// =========================================================================
+// Cross-command order independence
+// =========================================================================
+
+TEST(CommandTest, SetEventAndSetTieInterleavedUndoRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  // 1. Set event: replace first note with rest.
+  auto set_cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_rest(quarter()));
+  ASSERT_TRUE(set_cmd->execute(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+
+  // 2. Set tie on the second event (the note at 1/4), which has a
+  //    matching successor at 1/2.
+  auto tie_cmd = std::make_unique<SetTieCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1),
+      *Rational::create(1, 4), std::nullopt, true);
+  ASSERT_TRUE(tie_cmd->execute(fx.project).ok());
+  const Note* n2 = std::get_if<Note>(&voice->events()[1]);
+  ASSERT_NE(n2, nullptr);
+  EXPECT_TRUE(n2->tied_to_next);
+
+  // Undo tie first.
+  ASSERT_TRUE(tie_cmd->undo(fx.project).ok());
+  const Note* n2u = std::get_if<Note>(&voice->events()[1]);
+  ASSERT_NE(n2u, nullptr);
+  EXPECT_FALSE(n2u->tied_to_next);
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+
+  // Undo set.
+  ASSERT_TRUE(set_cmd->undo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+  const Note* n2uu = std::get_if<Note>(&voice->events()[1]);
+  ASSERT_NE(n2uu, nullptr);
+  EXPECT_FALSE(n2uu->tied_to_next);  // tie was already undone
+
+  // Redo set.
+  ASSERT_TRUE(set_cmd->redo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+
+  // Redo tie.
+  ASSERT_TRUE(tie_cmd->redo(fx.project).ok());
+  const Note* n2r = std::get_if<Note>(&voice->events()[1]);
+  ASSERT_NE(n2r, nullptr);
+  EXPECT_TRUE(n2r->tied_to_next);
+}
+
+// =========================================================================
+// Phase 8e-i — Duration expansion (consuming following rests)
+// =========================================================================
+
+TEST(CommandTest, SetEventDurationExpansionConsumesWholeRest) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  // Quarter note at 0, quarter rest at 1/4, filled to 1 whole.
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_rest(quarter())).ok());
+  ASSERT_TRUE(voice->normalize(Rational(1)).ok());
+  ASSERT_EQ(voice->total_length(), Rational(1));
+
+  // Replace quarter note with half note -> consumes the following quarter
+  // rest.
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_note(pitch_c4(), half()));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->total_length(), Rational(1));
+  EXPECT_TRUE(voice->check_complete(Rational(1)).ok());
+  // Should now be: half note + normalized rest covering remainder.
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+  EXPECT_EQ(event_duration(voice->events()[0]).resolved(), half().resolved());
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->total_length(), Rational(1));
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+  EXPECT_EQ(event_duration(voice->events()[0]).resolved(),
+            quarter().resolved());
+}
+
+TEST(CommandTest, SetEventDurationExpansionConsumesPartialRest) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  // Quarter note at 0, eighth rest at 1/4, filled.
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_rest(eighth())).ok());
+  ASSERT_TRUE(voice->normalize(Rational(1)).ok());
+
+  // Replace quarter with 3/8 note -> partial rest consumption
+  // (needs an extra 1/8, the eighth rest covers it exactly).
+  // A dotted quarter = 3/8.
+  const Duration dotted_quarter = *Duration::create(NoteValue::kQuarter, 1);
+  auto           cmd            = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_note(pitch_c4(), dotted_quarter));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->total_length(), Rational(1));
+  EXPECT_TRUE(voice->check_complete(Rational(1)).ok());
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+  EXPECT_EQ(event_duration(voice->events()[0]).resolved(),
+            dotted_quarter.resolved());
+}
+
+TEST(CommandTest,
+     SetEventDurationExpansionRejectedWhenFollowingEventIsSounding) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  // Quarter note at 0, another quarter note at 1/4.
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(Rational(1)).ok());
+  const VoiceContent saved = *voice;
+
+  // Replace first quarter with half — would need to consume D4 note.
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_note(pitch_c4(), half()));
+
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(*voice, saved);
+}
+
+TEST(CommandTest,
+     SetEventDurationExpansionRejectedWhenRestCoverageInsufficient) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  // Quarter note at 0, eighth rest at 1/4, then a sounding quarter note at 3/8.
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_rest(eighth())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  // Fill remainder from 5/8 to 1 whole.
+  ASSERT_TRUE(voice->normalize(Rational(1)).ok());
+  ASSERT_EQ(voice->total_length(), Rational(1));
+  const VoiceContent saved = *voice;
+
+  // Replace quarter with half note — needs 1/4 extra, only 1/8 rest
+  // available before the D4 note blocks further consumption.
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_note(pitch_c4(), half()));
+
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(*voice, saved);
+}
+
+TEST(CommandTest, SetEventDurationExpansionConsumesMultipleFollowingRests) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  // Quarter note at 0, two eighth rests, filled.
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_rest(eighth())).ok());
+  ASSERT_TRUE(voice->append(make_rest(eighth())).ok());
+  ASSERT_TRUE(voice->normalize(Rational(1)).ok());
+
+  // Replace quarter with half — consumes both eighth rests.
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_note(pitch_c4(), half()));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->total_length(), Rational(1));
+  EXPECT_TRUE(voice->check_complete(Rational(1)).ok());
+}
+
+// =========================================================================
+// Phase 8e-i — Command rejection of dangling dynamic/grace references
+// =========================================================================
+
+TEST(CommandTest, SetEventRejectsDanglingDynamicReference) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId ev_id = graphscore::event_id(voice->events()[0]);
+  voice->add_dynamic(
+      graphscore::make_dynamic_marking(ev_id, graphscore::Dynamic::kMf));
+
+  // Replace the event — would leave dynamic dangling.
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_rest(quarter()));
+
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  // Voice must be unchanged.
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+}
+
+TEST(CommandTest, ConvertEventToRestRejectsDanglingGraceReference) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId ev_id = graphscore::event_id(voice->events()[0]);
+  voice->add_grace_group(graphscore::make_grace_group(
+      ev_id, {graphscore::GraceNote{pitch_e4(), eighth(),
+                                    graphscore::GraceNoteType::kAppoggiatura,
+                                    false}}));
+
+  // Convert to rest — principal event would become Rest.
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0));
+
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+}
+
+// =========================================================================
+// Phase 8e-i — Stale-context undo/redo rejection
+// =========================================================================
+
+TEST(CommandTest, SetEventUndoRejectedWhenVoiceChanged) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_rest(quarter()));
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+
+  // Manually change the voice — undo should reject.
+  voice->clear();
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), half())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  EXPECT_EQ(cmd->undo(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, SetEventRedoRejectedWhenVoiceChanged) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_rest(quarter()));
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+
+  // Manually change the voice — redo should reject.
+  voice->clear();
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), half())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  EXPECT_EQ(cmd->redo(fx.project).code(), ResultCode::kInvalidArgument);
+}
+
+// =========================================================================
+// Phase 8e-i — Duplicate-pitch chord notehead index targeting
+// =========================================================================
+
+TEST(CommandTest, SetTieDuplicatePitchChordTargetsExactIndex) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  // Chord with two C4 noteheads (unison doublings are permitted).
+  const Chord chord =
+      make_chord(half(), {ChordNote{pitch_c4()}, ChordNote{pitch_c4()}});
+  ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
+  // Successor sounds C4 so the tie is valid.
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  // Tie index 0 only.
+  auto cmd0 = std::make_unique<SetTieCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      std::make_optional<std::size_t>(0), true);
+  ASSERT_TRUE(cmd0->execute(fx.project).ok());
+  const Chord* c0 = std::get_if<Chord>(&voice->events()[0]);
+  ASSERT_NE(c0, nullptr);
+  EXPECT_TRUE(c0->notes[0].tied_to_next);
+  EXPECT_FALSE(c0->notes[1].tied_to_next);
+
+  // Undo, then tie index 1 only.
+  ASSERT_TRUE(cmd0->undo(fx.project).ok());
+  auto cmd1 = std::make_unique<SetTieCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      std::make_optional<std::size_t>(1), true);
+  ASSERT_TRUE(cmd1->execute(fx.project).ok());
+  const Chord* c1 = std::get_if<Chord>(&voice->events()[0]);
+  ASSERT_NE(c1, nullptr);
+  EXPECT_FALSE(c1->notes[0].tied_to_next);
+  EXPECT_TRUE(c1->notes[1].tied_to_next);
+}
+
+// =========================================================================
+// Phase 8e-i — True deterministic replay with whole-VoiceContent equality
+// =========================================================================
+
+TEST(CommandTest, DeterministicReplaySetEventExactEqualityWithIds) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_rest(quarter()));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent after_execute = *voice;
+  EXPECT_NE(after_execute, VoiceContent{});
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  // Redo produces exactly the same voice as the original execute.
+  EXPECT_EQ(*voice, after_execute);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  // Second redo cycle produces the same result.
+  EXPECT_EQ(*voice, after_execute);
+}
+
+TEST(CommandTest, DeterministicReplaySetTieExactEqualityWithIds) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetTieCommand>(fx.node_id, fx.track_id,
+                                             fx.stave_id, *Voice::create(1),
+                                             Rational(0), std::nullopt, true);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent after_execute = *voice;
+  EXPECT_NE(after_execute, VoiceContent{});
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, after_execute);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, after_execute);
+}
+
+// =========================================================================
+// Phase 8e-i — Duration contraction fills with rests
+// =========================================================================
+
+TEST(CommandTest, SetEventDurationContractionFillsWithNormalizedRests) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  // Half note at 0.
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), half())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  ASSERT_EQ(voice->events().size(), 2u);  // half note + half rest
+
+  // Replace with quarter note — gap filled by a quarter rest.
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_note(pitch_c4(), quarter()));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->total_length(), Rational(1));
+  EXPECT_TRUE(voice->check_complete(fx.node_end).ok());
+  // Should have quarter note + quarter rest + half rest (from original
+  // normalize which filled the remainder).
+  ASSERT_GE(voice->events().size(), 2u);
+}
+
+// =========================================================================
+// Phase 8e-i — Remove preserves later event onsets
+// =========================================================================
+
+TEST(CommandTest, RemoveEventPreservesLaterOnsets) {
+  VoiceContent voice;
+  // N(q, C4) at 0, N(q, D4) at 1/4, N(q, E4) at 1/2.  Total 3/4.
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_e4(), quarter())).ok());
+
+  // Remove the D4 at 1/4.  It should be replaced with rests of the same
+  // duration at position 1/4, leaving the E4 at onset 1/2.
+  ASSERT_TRUE(voice.remove_event(*Rational::create(1, 4), Rational(1)).ok());
+
+  EXPECT_EQ(voice.total_length(), Rational(1));
+  // C4 note still at position 0.
+  EXPECT_TRUE(std::holds_alternative<Note>(voice.events()[0]));
+  // E4 note preserved at its original onset.  Find it by scanning.
+  bool     found_e4 = false;
+  Rational cumulative(0);
+  for (const VoiceEvent& ev : voice.events()) {
+    if (cumulative == *Rational::create(1, 2)) {
+      if (const auto* n = std::get_if<Note>(&ev)) {
+        if (n->pitch == pitch_e4())
+          found_e4 = true;
+      }
+    }
+    cumulative = cumulative + event_duration(ev).resolved();
+  }
+  EXPECT_TRUE(found_e4);
+}
+
+TEST(CommandTest, RemovePreservesExactRationalOnsets) {
+  VoiceContent voice;
+  // N(q, C4) at 0, N(e, D4) at 1/4, N(q, E4) at 3/8.  Total 5/8.
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), eighth())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_e4(), quarter())).ok());
+
+  // Remove C4 at 0.  D4 must remain at exact onset 1/4, E4 at 3/8.
+  ASSERT_TRUE(voice.remove_event(Rational(0), Rational(1)).ok());
+  EXPECT_EQ(voice.total_length(), Rational(1));
+
+  Rational cumulative(0);
+  bool     found_d4_at_1_4 = false;
+  bool     found_e4_at_3_8 = false;
+  for (const VoiceEvent& ev : voice.events()) {
+    if (cumulative == *Rational::create(1, 4)) {
+      if (const auto* n = std::get_if<Note>(&ev))
+        found_d4_at_1_4 = (n->pitch == pitch_d4());
+    }
+    if (cumulative == *Rational::create(3, 8)) {
+      if (const auto* n = std::get_if<Note>(&ev))
+        found_e4_at_3_8 = (n->pitch == pitch_e4());
+    }
+    cumulative = cumulative + event_duration(ev).resolved();
+  }
+  EXPECT_TRUE(found_d4_at_1_4) << "D4 onset not preserved at 1/4";
+  EXPECT_TRUE(found_e4_at_3_8) << "E4 onset not preserved at 3/8";
+}
+
+// =========================================================================
+// Phase 8e-i — Contraction inserts rests at position (later onsets preserved)
+// =========================================================================
+
+TEST(CommandTest, ReplaceEventContractionPreservesLaterOnsets) {
+  VoiceContent voice;
+  // N(h, C4) at 0 (half note), N(q, D4) at 1/2.  Total 3/4.
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), half())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), quarter())).ok());
+
+  // Replace half note with quarter note -> gap of 1/4, must be filled
+  // at position 1/4 with a rest, leaving D4 at onset 1/2.
+  ASSERT_TRUE(voice
+                  .replace_event(Rational(0), make_note(pitch_c4(), quarter()),
+                                 Rational(1))
+                  .ok());
+  EXPECT_EQ(voice.total_length(), Rational(1));
+
+  Rational cumulative(0);
+  bool     found_d4_at_1_2 = false;
+  for (const VoiceEvent& ev : voice.events()) {
+    if (cumulative == *Rational::create(1, 2)) {
+      if (const auto* n = std::get_if<Note>(&ev))
+        found_d4_at_1_2 = (n->pitch == pitch_d4());
+    }
+    cumulative = cumulative + event_duration(ev).resolved();
+  }
+  EXPECT_TRUE(found_d4_at_1_2) << "D4 onset not preserved at 1/2";
+}
+
+// =========================================================================
+// Phase 8e-i — Insert into rest coverage of a complete voice
+// =========================================================================
+
+TEST(CommandTest, InsertIntoRestCoverageOfCompleteVoice) {
+  VoiceContent voice;
+  // N(q, C4) at 0, R(q) at 1/4, R(q) at 1/2, R(q) at 3/4.  Total 1.0.
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_rest(quarter())).ok());
+  ASSERT_TRUE(voice.append(make_rest(quarter())).ok());
+  ASSERT_TRUE(voice.append(make_rest(quarter())).ok());
+
+  // Insert a quarter note at 1/4, consuming one quarter rest.
+  ASSERT_TRUE(voice
+                  .insert_event(*Rational::create(1, 4),
+                                make_note(pitch_d4(), quarter()), Rational(1))
+                  .ok());
+  EXPECT_EQ(voice.total_length(), Rational(1));
+  EXPECT_TRUE(voice.check_complete(Rational(1)).ok());
+
+  // C4 at 0, D4 at 1/4, remainder rests at 1/2 and beyond.
+  bool     found_c4_at_0   = false;
+  bool     found_d4_at_1_4 = false;
+  Rational cumulative(0);
+  for (const VoiceEvent& ev : voice.events()) {
+    if (cumulative == Rational(0)) {
+      if (const auto* n = std::get_if<Note>(&ev))
+        found_c4_at_0 = (n->pitch == pitch_c4());
+    }
+    if (cumulative == *Rational::create(1, 4)) {
+      if (const auto* n = std::get_if<Note>(&ev))
+        found_d4_at_1_4 = (n->pitch == pitch_d4());
+    }
+    cumulative = cumulative + event_duration(ev).resolved();
+  }
+  EXPECT_TRUE(found_c4_at_0);
+  EXPECT_TRUE(found_d4_at_1_4);
+}
+
+// =========================================================================
+// Phase 8e-i — Partial final-Rest consumption
+// =========================================================================
+
+TEST(CommandTest, InsertPartialLastRestConsumption) {
+  VoiceContent voice;
+  // R(w) at 0 (whole rest).  Total 1.0.
+  ASSERT_TRUE(voice.append(make_rest(whole())).ok());
+
+  // Insert a quarter note at 0, consuming the first quarter of the whole
+  // rest.  The remainder (3/4) is decomposed from the original rest's id.
+  ASSERT_TRUE(voice
+                  .insert_event(Rational(0), make_note(pitch_c4(), quarter()),
+                                Rational(1))
+                  .ok());
+  EXPECT_EQ(voice.total_length(), Rational(1));
+  EXPECT_TRUE(voice.check_complete(Rational(1)).ok());
+  EXPECT_TRUE(std::holds_alternative<Note>(voice.events()[0]));
+}
+
+TEST(CommandTest, ReplaceEventPartialRestConsumption) {
+  VoiceContent voice;
+  // N(q, C4) at 0, R(h) at 1/4.  Total 3/4.
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_rest(half())).ok());
+
+  const NotationEntityId rest_id = event_id(voice.events()[1]);
+
+  // Replace quarter with dotted quarter (3/8) — needs 1/8 extra, consumes
+  // part of the half rest.  The remainder rest should preserve the original
+  // Rest id so markings referencing it stay valid.
+  const Duration dotted_q = *Duration::create(NoteValue::kQuarter, 1);
+  ASSERT_TRUE(voice
+                  .replace_event(Rational(0), make_note(pitch_c4(), dotted_q),
+                                 Rational(1))
+                  .ok());
+  EXPECT_EQ(voice.total_length(), Rational(1));
+
+  // The remainder rest at the consumed position should carry the original id.
+  bool found_remainder_with_id = false;
+  for (const VoiceEvent& ev : voice.events()) {
+    if (std::holds_alternative<Rest>(ev)) {
+      if (event_id(ev) == rest_id)
+        found_remainder_with_id = true;
+    }
+  }
+  EXPECT_TRUE(found_remainder_with_id)
+      << "Partial rest remainder did not preserve the original Rest id";
+}
+
+// =========================================================================
+// Phase 8e-i — Exact generated-ID redo (complete VoiceContent equality)
+// =========================================================================
+
+TEST(CommandTest, SetEventRedoExactEqualityWithContraction) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  // N(h, C4) at 0, normalize fills remainder.  Total 1.0.
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), half())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_note(pitch_c4(), quarter()));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent after_execute = *voice;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  // Redo produces exactly the same voice — every Rest id identical.
+  EXPECT_EQ(*voice, after_execute);
+
+  // Second redo cycle.
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, after_execute);
+}
+
+TEST(CommandTest, SetEventRedoExactEqualityWithExpansion) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  // N(q, C4) at 0, R(q) at 1/4, normalize remainder.  Total 1.0.
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_rest(quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_note(pitch_c4(), half()));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent after_execute = *voice;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, after_execute);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, after_execute);
+}
+
+TEST(CommandTest, ConvertEventToRestRedoExactEquality) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent after_execute = *voice;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, after_execute);
+}
+
+// =========================================================================
+// Phase 8e-i — Duplicate supplied IDs
+// =========================================================================
+
+TEST(CommandTest, AppendDuplicateIdRejected) {
+  VoiceContent     voice;
+  const VoiceEvent n1 = make_note(pitch_c4(), quarter());
+  ASSERT_TRUE(voice.append(n1).ok());
+
+  // Append the same event again — duplicate id.
+  EXPECT_FALSE(voice.append(n1).ok());
+  EXPECT_EQ(voice.events().size(), 1u);
+}
+
+TEST(CommandTest, InsertDuplicateIdRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_rest(quarter())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  const VoiceEvent dup_rest = voice.events()[0];  // same Rest as at index 0
+  EXPECT_FALSE(
+      voice.insert_event(*Rational::create(1, 4), dup_rest, Rational(1)).ok());
+  EXPECT_EQ(voice.events().size(), 2u);
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice.events()[0]));
+  EXPECT_TRUE(std::holds_alternative<Note>(voice.events()[1]));
+}
+
+TEST(CommandTest, ReplaceDuplicateIdRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), quarter())).ok());
+
+  const VoiceEvent dup = voice.events()[0];  // same id as C4
+  // Try to replace D4 with a copy of C4 — id collision.
+  EXPECT_FALSE(
+      voice.replace_event(*Rational::create(1, 4), dup, Rational(1)).ok());
+}
+
+TEST(CommandTest, ReplaceSelfIdAllowed) {
+  VoiceContent     voice;
+  const VoiceEvent n = make_note(pitch_c4(), quarter());
+  ASSERT_TRUE(voice.append(n).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  // Replace the event with a rest sharing the same id (allowed).
+  const NotationEntityId original_id = event_id(n);
+  VoiceEvent             repl(Rest{original_id, quarter()});
+  ASSERT_TRUE(voice.replace_event(Rational(0), repl, Rational(1)).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice.events()[0]));
+  EXPECT_EQ(event_id(voice.events()[0]), original_id);
+}
+
+// =========================================================================
+// Phase 8e-i — Consumed/split-rest marking references
+// =========================================================================
+
+TEST(CommandTest, SetEventExpansionRejectsDanglingRestReference) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  // N(q, C4) at 0, R(q) at 1/4.  Attach a dynamic to the rest.
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  const VoiceEvent rest_ev = make_rest(quarter());
+  ASSERT_TRUE(voice->append(rest_ev).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId rest_id = event_id(voice->events()[1]);
+  voice->add_dynamic(
+      graphscore::make_dynamic_marking(rest_id, graphscore::Dynamic::kMf));
+
+  const VoiceContent saved = *voice;
+
+  // Replace quarter with half — fully consumes the rest, which has a
+  // dynamic marking.  validate_voice_references should flag the dangling ref.
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_note(pitch_c4(), half()));
+
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(*voice, saved);
+}
+
+TEST(CommandTest, InsertConsumesRestWithMarkingRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  // R(q) at 0, N(q) at 1/4.  Slur references the rest.
+  ASSERT_TRUE(voice->append(make_rest(quarter())).ok());
+  const VoiceEvent note_ev = make_note(pitch_c4(), quarter());
+  ASSERT_TRUE(voice->append(note_ev).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId rest_id = event_id(voice->events()[0]);
+  voice->add_slur(graphscore::Slur{NotationEntityId::generate(), rest_id,
+                                   event_id(voice->events()[1])});
+
+  const VoiceContent saved = *voice;
+
+  // Insert a note at position 0 consuming the rest — the slur's start
+  // endpoint would dangle.
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_note(pitch_d4(), quarter()));
+
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(*voice, saved);
+}
+
+TEST(CommandTest, PartialRestConsumptionPreservesSurvivingReference) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  // N(q, C4) at 0, R(h) at 1/4.  Dynamic marking references the rest.
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_rest(half())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId rest_id = event_id(voice->events()[1]);
+  voice->add_dynamic(
+      graphscore::make_dynamic_marking(rest_id, graphscore::Dynamic::kMf));
+
+  // Replace quarter with 3/8 (dotted quarter) — consumes 1/8 from the
+  // half rest, leaving 3/8 remainder that keeps the original rest id.
+  const Duration dotted_q = *Duration::create(NoteValue::kQuarter, 1);
+  auto           cmd      = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_note(pitch_c4(), dotted_q));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  // The dynamic marking's referenced id should still resolve — the remainder
+  // rest carries the original id.
+  const std::vector<graphscore::NotationDiagnostic> diags =
+      graphscore::validate_voice_references(*voice);
+  EXPECT_TRUE(diags.empty()) << "dynamic marking should still resolve after "
+                                "partial rest consumption";
+}
+
+// =========================================================================
+// Phase 8e-i — Stale-context retryability
+// =========================================================================
+
+TEST(CommandTest, SetEventUndoStaleContextRetryable) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_rest(quarter()));
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+
+  const VoiceContent post_state = *voice;
+
+  // Manually change voice — undo rejected.
+  voice->clear();
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), half())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  EXPECT_EQ(cmd->undo(fx.project).code(), ResultCode::kInvalidArgument);
+  // Model was not corrupted by the rejected undo.
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+  EXPECT_EQ(voice->events().size(), 2u);
+
+  // Restore voice to exact post-snapshot — undo now succeeds and
+  // restores the pre-edit state.
+  *voice = post_state;
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+}
+
+TEST(CommandTest, ConvertEventToRestRedoStaleContextRetryable) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const VoiceContent original = *voice;
+
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0));
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+
+  // Change voice — redo rejected.
+  voice->clear();
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), half())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  EXPECT_EQ(cmd->redo(fx.project).code(), ResultCode::kInvalidArgument);
+
+  // Restore voice to the exact pre-snapshot — redo succeeds.
+  *voice = original;
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+}
+
+// =========================================================================
+// Phase 8e-i — Append after duplicate detection works normally
+// =========================================================================
+
+TEST(CommandTest, AppendWithUniqueIdSucceeds) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), quarter())).ok());
+  EXPECT_EQ(voice.events().size(), 2u);
+  EXPECT_NE(event_id(voice.events()[0]), event_id(voice.events()[1]));
+}
+
+// =========================================================================
+// Phase 8e-i — Insertion at sounding-event boundary is rejected
+// =========================================================================
+
+TEST(CommandTest, InsertionBeforeSoundingEventRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  // Position 0 is the start of a Note — cannot insert before sounding
+  // material.
+  EXPECT_FALSE(
+      voice.insert_event(Rational(0), make_rest(eighth()), Rational(1)).ok());
+}
+
+TEST(CommandTest, InsertionIntoMidSoundingBoundaryRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), half())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), half())).ok());
+
+  // Position 1/2 is the start of the D4 Note — cannot insert there.
+  EXPECT_FALSE(voice
+                   .insert_event(*Rational::create(1, 2), make_rest(eighth()),
+                                 Rational(2))
+                   .ok());
+}
+
+// =========================================================================
+// Phase 8e-i — Changed-timeline rejection and recovery
+// =========================================================================
+
+TEST(CommandTest, SetEventUndoRejectedWhenTimelineShortened) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      make_rest(quarter()));
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+
+  const VoiceContent post_state = *voice;
+
+  // Replace the node's timeline with a shorter 3/4 measure.
+  std::vector<Measure> short_measures = {
+      Measure{*TimeSignature::create(3, 4), *KeySignature::create(0)}};
+  auto short_tl = NodeTimeline::create(std::move(short_measures), {});
+  ASSERT_TRUE(short_tl.has_value());
+  node->set_timeline(std::move(*short_tl));
+
+  // Undo must reject: pre_snapshot fills 1 whole note, but node_end is 3/4.
+  EXPECT_EQ(cmd->undo(fx.project).code(), ResultCode::kInvalidArgument);
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+
+  // Restore the original timeline so undo can succeed.
+  std::vector<Measure> orig_measures = {
+      Measure{*TimeSignature::create(4, 4), *KeySignature::create(0)}};
+  auto orig_tl = NodeTimeline::create(std::move(orig_measures), {});
+  ASSERT_TRUE(orig_tl.has_value());
+  node->set_timeline(std::move(*orig_tl));
+  *voice = post_state;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+}
+
+TEST(CommandTest, ConvertEventToRestRedoRejectedWhenTimelineExtended) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const VoiceContent original = *voice;
+
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0));
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+
+  // Replace the node's timeline with a longer one (one 4/4 + one 3/4).
+  std::vector<Measure> long_measures = {
+      Measure{*TimeSignature::create(4, 4), *KeySignature::create(0)},
+      Measure{*TimeSignature::create(3, 4), *KeySignature::create(0)}};
+  auto long_tl = NodeTimeline::create(std::move(long_measures), {});
+  ASSERT_TRUE(long_tl.has_value());
+  node->set_timeline(std::move(*long_tl));
+
+  // Redo must reject: post_snapshot fills 1 whole note, but node_end is 7/4.
+  EXPECT_EQ(cmd->redo(fx.project).code(), ResultCode::kInvalidArgument);
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+
+  // Restore the original timeline so redo succeeds.
+  std::vector<Measure> orig_measures = {
+      Measure{*TimeSignature::create(4, 4), *KeySignature::create(0)}};
+  auto orig_tl = NodeTimeline::create(std::move(orig_measures), {});
+  ASSERT_TRUE(orig_tl.has_value());
+  node->set_timeline(std::move(*orig_tl));
+  *voice = original;
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+}
+
+TEST(CommandTest, SetTieUndoRejectedWhenTimelineChanged) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetTieCommand>(fx.node_id, fx.track_id,
+                                             fx.stave_id, *Voice::create(1),
+                                             Rational(0), std::nullopt, true);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+
+  const VoiceContent post_state = *voice;
+
+  // Replace timeline with a shorter one.
+  std::vector<Measure> short_measures = {
+      Measure{*TimeSignature::create(2, 4), *KeySignature::create(0)}};
+  auto short_tl = NodeTimeline::create(std::move(short_measures), {});
+  ASSERT_TRUE(short_tl.has_value());
+  node->set_timeline(std::move(*short_tl));
+
+  EXPECT_EQ(cmd->undo(fx.project).code(), ResultCode::kInvalidArgument);
+
+  // Restore timeline and voice; retry succeeds.
+  std::vector<Measure> orig_measures = {
+      Measure{*TimeSignature::create(4, 4), *KeySignature::create(0)}};
+  auto orig_tl = NodeTimeline::create(std::move(orig_measures), {});
+  ASSERT_TRUE(orig_tl.has_value());
+  node->set_timeline(std::move(*orig_tl));
+  *voice = post_state;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  const Note* n = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(n, nullptr);
+  EXPECT_FALSE(n->tied_to_next);
+}
+
+// =========================================================================
+// Phase 8e-i — SetTie stale-context retry
+// =========================================================================
+
+TEST(CommandTest, SetTieUndoStaleContextRetryable) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<SetTieCommand>(fx.node_id, fx.track_id,
+                                             fx.stave_id, *Voice::create(1),
+                                             Rational(0), std::nullopt, true);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+
+  const VoiceContent post_state = *voice;
+
+  // Manually change voice — undo rejected.
+  voice->clear();
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), half())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  EXPECT_EQ(cmd->undo(fx.project).code(), ResultCode::kInvalidArgument);
+
+  // Restore voice to exact post-snapshot — undo succeeds.
+  *voice = post_state;
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  const Note* n = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(n, nullptr);
+  EXPECT_FALSE(n->tied_to_next);
+}
+
+TEST(CommandTest, SetTieRedoStaleContextRetryable) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const VoiceContent original = *voice;
+
+  auto cmd = std::make_unique<SetTieCommand>(fx.node_id, fx.track_id,
+                                             fx.stave_id, *Voice::create(1),
+                                             Rational(0), std::nullopt, true);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+
+  // Manually change voice — redo rejected.
+  voice->clear();
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), half())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  EXPECT_EQ(cmd->redo(fx.project).code(), ResultCode::kInvalidArgument);
+
+  // Restore voice to exact pre-snapshot — redo succeeds.
+  *voice = original;
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  const Note* n = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(n, nullptr);
+  EXPECT_TRUE(n->tied_to_next);
 }

@@ -9,11 +9,20 @@
 
 using graphscore::Articulation;
 using graphscore::BeamOverride;
+using graphscore::Chord;
+using graphscore::ChordNote;
 using graphscore::Duration;
+using graphscore::Dynamic;
 using graphscore::event_id;
+using graphscore::GraceGroup;
+using graphscore::GraceNote;
+using graphscore::GraceNoteType;
 using graphscore::HairpinDirection;
 using graphscore::Letter;
 using graphscore::make_beam_override;
+using graphscore::make_chord;
+using graphscore::make_dynamic_marking;
+using graphscore::make_grace_group;
 using graphscore::make_hairpin;
 using graphscore::make_note;
 using graphscore::make_pedal_span;
@@ -371,4 +380,93 @@ TEST(NotationValidationTest, MutationThatRemovesEventsLeavesStaleSpanFlagged) {
   ASSERT_EQ(diagnostics.size(), 1u);
   EXPECT_EQ(diagnostics[0].code, NotationDiagnosticCode::kSlurDanglingEndpoint);
   EXPECT_EQ(diagnostics[0].entity_id, slur.id);
+}
+
+// Phase 8e-i — dynamics and grace group referential validation
+
+TEST(NotationValidationTest, DynamicMarkingWithValidEventPasses) {
+  VoiceContent     voice;
+  const VoiceEvent note = make_note(pitch(Letter::kC), quarter());
+  ASSERT_TRUE(voice.append(note).ok());
+
+  voice.add_dynamic(make_dynamic_marking(event_id(note), Dynamic::kMf));
+
+  EXPECT_TRUE(validate_voice_references(voice).empty());
+}
+
+TEST(NotationValidationTest, DynamicMarkingWithDanglingEventIsFlagged) {
+  VoiceContent     voice;
+  const VoiceEvent note = make_note(pitch(Letter::kC), quarter());
+  ASSERT_TRUE(voice.append(note).ok());
+
+  const auto marking =
+      make_dynamic_marking(NotationEntityId::generate(), Dynamic::kMf);
+  voice.add_dynamic(marking);
+
+  const auto diagnostics = validate_voice_references(voice);
+  ASSERT_EQ(diagnostics.size(), 1u);
+  EXPECT_EQ(diagnostics[0].code,
+            NotationDiagnosticCode::kDynamicDanglingReference);
+  EXPECT_EQ(diagnostics[0].entity_id, marking.id);
+}
+
+TEST(NotationValidationTest, GraceGroupWithNotePrincipalPasses) {
+  VoiceContent     voice;
+  const VoiceEvent principal = make_note(pitch(Letter::kC), quarter());
+  ASSERT_TRUE(voice.append(principal).ok());
+
+  voice.add_grace_group(make_grace_group(
+      event_id(principal), {GraceNote{pitch(Letter::kD), eighth(),
+                                      GraceNoteType::kAppoggiatura, false}}));
+
+  EXPECT_TRUE(validate_voice_references(voice).empty());
+}
+
+TEST(NotationValidationTest, GraceGroupWithChordPrincipalPasses) {
+  VoiceContent voice;
+  const Chord  chord = make_chord(
+      quarter(), {ChordNote{pitch(Letter::kC)}, ChordNote{pitch(Letter::kE)}});
+  ASSERT_TRUE(voice.append(VoiceEvent(chord)).ok());
+
+  voice.add_grace_group(
+      make_grace_group(event_id(voice.events()[0]),
+                       {GraceNote{pitch(Letter::kD), eighth(),
+                                  GraceNoteType::kAppoggiatura, false}}));
+
+  EXPECT_TRUE(validate_voice_references(voice).empty());
+}
+
+TEST(NotationValidationTest, GraceGroupWithRestPrincipalIsFlagged) {
+  VoiceContent     voice;
+  const VoiceEvent rest_event = make_rest(quarter());
+  ASSERT_TRUE(voice.append(rest_event).ok());
+
+  const auto group = make_grace_group(
+      event_id(rest_event), {GraceNote{pitch(Letter::kD), eighth(),
+                                       GraceNoteType::kAppoggiatura, false}});
+  voice.add_grace_group(group);
+
+  const auto diagnostics = validate_voice_references(voice);
+  ASSERT_EQ(diagnostics.size(), 1u);
+  EXPECT_EQ(diagnostics[0].code,
+            NotationDiagnosticCode::kGraceGroupPrincipalNotSounding);
+  EXPECT_EQ(diagnostics[0].entity_id, group.id);
+}
+
+TEST(NotationValidationTest, GraceGroupWithDanglingPrincipalIsFlagged) {
+  VoiceContent     voice;
+  const VoiceEvent note = make_note(pitch(Letter::kC), quarter());
+  ASSERT_TRUE(voice.append(note).ok());
+
+  const auto group =
+      make_grace_group(NotationEntityId::generate(),
+                       {GraceNote{pitch(Letter::kD), eighth(),
+                                  GraceNoteType::kAppoggiatura, false}});
+  voice.add_grace_group(group);
+
+  const auto diagnostics = validate_voice_references(voice);
+  ASSERT_EQ(diagnostics.size(), 1u);
+  EXPECT_EQ(diagnostics[0].code,
+            NotationDiagnosticCode::kGraceGroupPrincipalNotSounding);
+  EXPECT_EQ(diagnostics[0].entity_id, group.id);
 }

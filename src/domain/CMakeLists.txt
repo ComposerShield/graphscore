@@ -12,6 +12,7 @@ add_library(graphscore_domain STATIC
   command_transaction.cpp
   connect_command.cpp
   connector.cpp
+  convert_event_to_rest_command.cpp
   disconnect_command.cpp
   event_queue.cpp
   event_registry.cpp
@@ -38,6 +39,7 @@ add_library(graphscore_domain STATIC
   restore_track_command.cpp
   route_geometry.cpp
   set_custom_route_command.cpp
+  set_event_command.cpp
   set_input_connector_name_command.cpp
   set_listener_policy_command.cpp
   set_node_color_command.cpp
@@ -53,6 +55,7 @@ add_library(graphscore_domain STATIC
   set_project_name_command.cpp
   set_project_tempo_command.cpp
   set_start_node_command.cpp
+  set_tie_command.cpp
   set_track_gain_command.cpp
   set_track_mute_command.cpp
   set_track_name_command.cpp
