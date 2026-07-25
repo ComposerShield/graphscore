@@ -490,8 +490,8 @@ top-level "Milestone 02 complete".
   new tests bite by deliberately transposing each call site and confirming the
   expected failures. 1211 tests (`CommandTest.*` 500→506).
 
-  **NEW GAP FOUND while checking off line 79 — needs an Adam scope decision
-  before Phase 8 can close.** With 8e done, line 79 ("Reversible commands for
+  **GAP FOUND while checking off line 79 — RESOLVED by Adam: fold into 8h.**
+  With 8e done, line 79 ("Reversible commands for
   every graph, notation, tempo, track, and metadata edit") covers graph (8c/8d),
   tempo (8e-iii), track (8c/8d-iii), metadata (8a/8b), and voice-event +
   marking notation (8e-i/8e-ii) — but **node-timeline edits still have no
@@ -501,11 +501,16 @@ top-level "Milestone 02 complete".
   inspection: there is no `*_clef_command`, `*_pickdown_command`, or
   `*_signature_command` among the 57 command `.cpp` files. These are ordinary
   user edits in the 0.1.0 notation scope, so line 79 was left **unchecked** and
-  the 02-domain-model.md 8e bullet names the gap. Note per-measure signature
-  edits may be entangled with 8h (measure insert/delete), which is the phase
-  that adds `MeasureMap` mutators — `MeasureMap` has no mutator at all today.
-  Candidate resolutions: a new 8e-iv (clef + pickdown commands now, signatures
-  with 8h), or fold all three into 8h.
+  the 02-domain-model.md 8e bullet names the gap.
+
+  **Adam's ruling (product decision, after 8e-iii): fold all three into 8h.**
+  8h is already the phase that adds `MeasureMap` mutators (it has none today),
+  so per-measure time/key-signature commands belong there on dependency
+  grounds, and clef + pickdown commands ride along rather than becoming a
+  separate 8e-iv. Consequence: **line 79 is now an 8h deliverable, not an 8e
+  one** — it stays unchecked until 8h lands, and 8h's own scope grows beyond
+  "measure insert/delete" to "measure insert/delete plus the node-timeline
+  edit commands". 8f (selection) and 8g (clipboard) are unaffected.
 
 ## Plan for the remaining phases
 
@@ -706,13 +711,28 @@ top-level "Milestone 02 complete".
     (identity remapping + destination rest normalization + boundary-crossing
     clip/reconnection rules) + node copy/paste id remapping (duplicate with
     **fresh** ids — the inverse of 8d's id-preserving restore). Depends on 8e
-    (notation mutators) + 8f (selection). **8h** atomic measure insert/delete —
-    **the heaviest**: `MeasureMap` has no mutator at all and `NodeTimeline` has
-    no `set_measures`, so this needs new domain API plus an atomic cascade
-    across the measure map, time/key-signature and clef lanes, tempo anchors,
-    pedal spans, pickdown, and re-normalization of every voice in every track's
-    lane. Transaction grouping (line 78 — `CommandTransaction` already exists
-    from 8a) is exercised by the multi-measure/drag operations in 8g/8h.
+    (notation mutators) + 8f (selection). **8h** atomic measure insert/delete
+    **plus the node-timeline edit commands** — **the heaviest, and now the
+    phase that closes line 79**: `MeasureMap` has no mutator at all and
+    `NodeTimeline` has no `set_measures`, so this needs new domain API plus an
+    atomic cascade across the measure map, time/key-signature and clef lanes,
+    tempo anchors, pedal spans, pickdown, and re-normalization of every voice
+    in every track's lane. Per Adam's post-8e-iii ruling it **also** owns the
+    three missing node-timeline command families that blocked line 79 —
+    per-measure time/key-signature changes (dependent on the new `MeasureMap`
+    mutators, which is why they land here), clef changes (`ClefLane`), and
+    pickdown set/clear (wrapping the existing
+    `NodeTimeline::set_pickdown`/`clear_pickdown`, so reversibility needs
+    care: those mutators already revalidate the tempo lane and reject a change
+    that would invalidate it, and `set_pickdown` has no "restore previous
+    pickdown" inverse beyond calling it again with the old value or
+    `clear_pickdown` — snapshot the old `pickdown_duration()` optional, same
+    optional-means-absent shape as 8e-iii's tempo snapshots). Expect to split
+    8h into sub-increments; the clef and pickdown commands are the
+    lowest-risk starting point since they need no new domain API, mirroring
+    how 8c preceded 8d. Transaction grouping (line 78 — `CommandTransaction`
+    already exists from 8a) is exercised by the multi-measure/drag operations
+    in 8g/8h.
 - **Phase 9 — Validation service:** fast incremental + complete validation;
   diagnostics with stable ids/severity/machine code/user text; validates
   rhythmic completeness, UUID uniqueness, references, track alignment, signature
