@@ -4,8 +4,9 @@
 8b (metadata/audition-mix commands), 8c (fourteen reversible structural/config
 commands, split 8c-i + 8c-ii), and 8d (reversible add/remove of graph entities,
 split 8d-i..iv) are complete and committed. Phase 8e notation/tempo edit
-commands are underway: 8e-i (core voice-event edits) and 8e-ii (marking
-add/remove commands) are complete; 8e-iii (tempo-point edits) is next. Phase 7
+commands are **complete** (8e-i core voice-event edits, 8e-ii marking
+add/remove commands, 8e-iii tempo-point edits); **8f (selection model) is
+next**. Phase 7
 (Normative playback specification) was split into 7a/7b/7c per Adam's locked
 scoping rulings (see "Plan for the remaining phases"). 7a is committed
 (`063f1af`) after three review rounds that caught a false continuity claim, a
@@ -101,13 +102,15 @@ only when the whole section is approved.
 | **8d complete** | Add/remove of connectors, events, tracks, nodes — all reversible with stable ids | ✅ **done** | — |
 | 8e-i | Core voice-event edit commands (set/convert/tie/untie + voice mutators) | ✅ done | `6f428ac` |
 | 8e-ii | Marking add/remove commands (dynamics/hairpins/slurs/beam overrides/grace groups/pedal spans) | ✅ done | `(this commit)` |
-| 8e-iii | Tempo-point edit commands | ⬜ next | — |
+| 8e-iii | Tempo-point edit commands (4 commands + `NodeTimeline::clear_tempo`) | ✅ done | `5b0d32e` |
+| **8e complete** | Notation + tempo edit commands — voice events, markings, tempo points | ✅ **done** | — |
 | 8f..h | Selection model → clipboard/cut/copy/paste + node copy/paste id remapping → measure insert/delete | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
 
-Test suite currently: **1173 tests, 100% pass** after Phase 8e-ii; debug +
-ASan/UBSan clean with zero findings across 8e-i and 8e-ii review rounds.
+Test suite currently: **1211 tests, 100% pass** after Phase 8e-iii
+(`CommandTest.*` = 506); debug + ASan/UBSan clean with zero findings across
+the 8e-i, 8e-ii, and 8e-iii review rounds.
 
 CHECKLIST.md M02 boxes checked so far: Dependencies, Identity and value types,
 Project and track model, Node timeline, Notation model, Graph model, Adaptive
@@ -443,8 +446,66 @@ top-level "Milestone 02 complete".
   target against the project's current timeline (no stale references across
   undo/redo). Transactional pedal APIs: `add_pedal_span`/`remove_pedal_span` on
   `TrackLane` with guard-before-mutate discipline. 1173 tests, all five gates +
-  ASan/UBSan green. **8e-iii tempo remains and line 79/Command and selection box
-  stays unchecked.**
+  ASan/UBSan green.
+- **Phase 8e-iii (`domain`) — tempo-point edit commands (done, `5b0d32e`):**
+  four reversible commands — `AddTempoPointCommand`, `RemoveTempoPointCommand`,
+  `MoveTempoPointCommand`, `SetTempoPointCommand` — each rebuilding the node's
+  `std::vector<TempoPoint>` and revalidating through `NodeTimeline::set_tempo`
+  (atomic on failure, since it validates via `TempoLane::create` before
+  assigning). **One new domain method, `NodeTimeline::clear_tempo() noexcept`**
+  (Adam's ruling, asked interactively): the timeline previously had only
+  `set_tempo`, so creating a node's *first* tempo lane had no inverse and could
+  not be undone exactly — one method mirroring `clear_pickdown` closes that
+  rather than leaving a gap in the "all edits undo/redo exactly" acceptance
+  criterion. Adam also chose the four-command set over the three the plan
+  named, adding `SetTempoPointCommand` (retype a tempo marking in place)
+  because remove+add costs two undo steps and loses point identity.
+  **Snapshot representation is the load-bearing design choice:** both pre- and
+  post-snapshots are `std::optional<std::vector<TempoPoint>>` where an **empty
+  optional means "this node had no tempo lane"** — that is what makes
+  add-first-point (undo removes the lane) and remove-sole-point (execute
+  removes the lane, via an explicit `clear_tempo()` branch since `set_tempo`
+  rejects an empty vector) exactly reversible in both directions. Because
+  `nullopt` is a *meaningful* value here rather than an "unset" marker, the
+  stale-context check compares whole optionals (`current != expected_current`),
+  so lane-exists vs no-lane is itself a detectable divergence — and, unlike
+  8e-i's `set_event_command.cpp`, **no `kInternalError` guards are needed**
+  around optional access (every access is a real `has_value()` branch;
+  reviewer-verified that the `State` machine alone guarantees both snapshots
+  are written before `state_` reaches `kDone`, since the intervening optional
+  move-assignments are `noexcept`). Lane invariants are propagated rather than
+  reimplemented: adding a first point at a nonzero position, and removing the
+  point at position 0 while later points remain, both fail with the model
+  unchanged. All four commands' `undo`/`redo` delegate to
+  `internal::tempo_restore_snapshot` in the domain-internal
+  `src/domain/tempo_command_helpers.hpp` (the `marking_command_helpers.hpp`
+  precedent — under `src/`, not installed, not in the umbrella header).
+  `MoveTempoPointCommand` accepts `from == to` as a no-op (documented; the
+  moved point is erased before the collision scan so it cannot collide with
+  itself). Reviewer APPROVED first time with no HIGH/CRITICAL findings; one
+  fix round closed a MEDIUM test-coverage finding (stale-context coverage was
+  undo-only, leaving a transposition of the mirrored
+  `tempo_restore_snapshot(post, pre, …)` argument order in any of the four
+  `redo` paths undetectable) plus three LOW nits. The fix worker verified the
+  new tests bite by deliberately transposing each call site and confirming the
+  expected failures. 1211 tests (`CommandTest.*` 500→506).
+
+  **NEW GAP FOUND while checking off line 79 — needs an Adam scope decision
+  before Phase 8 can close.** With 8e done, line 79 ("Reversible commands for
+  every graph, notation, tempo, track, and metadata edit") covers graph (8c/8d),
+  tempo (8e-iii), track (8c/8d-iii), metadata (8a/8b), and voice-event +
+  marking notation (8e-i/8e-ii) — but **node-timeline edits still have no
+  commands at all**: clef changes (`ClefLane`), pickdown set/clear
+  (`NodeTimeline::set_pickdown`/`clear_pickdown`, which already exist as domain
+  mutators), and per-measure time/key-signature changes. Verified by
+  inspection: there is no `*_clef_command`, `*_pickdown_command`, or
+  `*_signature_command` among the 57 command `.cpp` files. These are ordinary
+  user edits in the 0.1.0 notation scope, so line 79 was left **unchecked** and
+  the 02-domain-model.md 8e bullet names the gap. Note per-measure signature
+  edits may be entangled with 8h (measure insert/delete), which is the phase
+  that adds `MeasureMap` mutators — `MeasureMap` has no mutator at all today.
+  Candidate resolutions: a new 8e-iv (clef + pickdown commands now, signatures
+  with 8h), or fold all three into 8h.
 
 ## Plan for the remaining phases
 
@@ -627,9 +688,16 @@ top-level "Milestone 02 complete".
     - **8e-ii — marking edits:** add **and remove** dynamics, hairpins,
       slurs, beam overrides, grace groups, pedal spans (new marking-removal
       mutators) as reversible commands.
-    - **8e-iii — tempo-point edits:** add/remove/move tempo points via
-      `NodeTimeline::set_tempo` (command builds the new point vector, snapshots
-      the old — **no new domain API**). Closes line 77.
+    - **8e-iii — tempo-point edits (DONE, `5b0d32e`):** add/remove/move/set
+      tempo points via `NodeTimeline::set_tempo`. The "**no new domain API**"
+      expectation recorded here did **not** survive contact with the code:
+      `NodeTimeline` had no way to clear a tempo lane, so the create-first-lane
+      edit had no inverse. Adam ruled to add the one method
+      (`clear_tempo() noexcept`) rather than ship a documented reversibility
+      gap, and to add a fourth command (`SetTempoPointCommand`) beyond the
+      three named here. See the 8e-iii delivery note above. **Did not close
+      line 79** — node-timeline (clef/pickdown/signature) commands are still
+      missing; see the NEW GAP note in that delivery entry.
   - **8f..h (remaining, after 8e):** **8f** the toolkit-independent selection
     model (notehead/chord/measure/arbitrary-range/node/connector/route-segment/
     staff-focus/insertion-caret kinds + explicit staff/track/voice scope — all
@@ -900,6 +968,12 @@ Recorded here so the owning phase picks them up:
   no invalid-construction path, but inconsistent within the file; worth
   matching if that function is touched again.
 
+- **→ later (advisory only, 8e-iii, tree-wide):** `tests/domain/command_test.cpp`
+  uses `assert(...)` in its setup helpers (lines ~381, ~389, and the new tempo
+  helper) without including `<cassert>`. Pre-existing and consistent within the
+  file, so 8e-iii deliberately did not touch it; add the include in a later
+  tree-wide tidy pass rather than as a one-off.
+
 Accepted-as-designed (no action needed): beam-override contiguity check ignores
 list order (4b #2); `Node::lane_count()` counts archived lanes too (Phase 2);
 `Rational` cross-multiplication can overflow only for non-musical extreme
@@ -926,6 +1000,12 @@ implement (Phase 5).
   optional dereference, plus hoisting a doubled `event_binding()` call into a
   local. 8d-ii..iv will reuse the same optional-snapshot pattern for
   `Node`/`Track`/event aggregates and must apply the same guards up front.
+  **The hook's own `build/tidy` dir is separate from any dedicated dir a worker
+  used** (e.g. `build/tidy-fix`), so the first commit after a batch of new
+  sources re-populates it from scratch and can exceed **7 minutes** — this
+  timed out an orchestrator `git commit` on 8e-iii. Warm it first with
+  `cmake --build build/tidy -- -k 0` (long timeout), then commit; the hook's
+  run is then "ninja: no work to do" and the commit is instant.
   Run clang-tidy the AGENTS.md way in a **dedicated** build dir so it does not
   slow `build/debug`: `cmake -S . -B build/tidy-fix -G Ninja -DCMAKE_BUILD_TYPE=Debug
   -DGRAPHSCORE_BUILD_WRITER=OFF -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON
