@@ -16,6 +16,7 @@
 #include <graphscore/domain/notation_validation.hpp>
 #include <graphscore/domain/project.hpp>
 #include <graphscore/domain/track.hpp>
+#include "command_snapshot_compare.hpp"
 
 namespace graphscore {
 
@@ -114,7 +115,8 @@ Result ConvertEventToRestCommand::undo(Project& project) noexcept {
   if (voice == nullptr)
     return Result(ResultCode::kInvalidArgument);
 
-  if (post_snapshot_.has_value() && !(*voice == *post_snapshot_))
+  if (post_snapshot_.has_value() &&
+      !internal::snapshot_matches(*voice, *post_snapshot_))
     return Result(ResultCode::kInvalidArgument);
 
   Node*               node     = project.find_node(node_id_);
@@ -159,7 +161,8 @@ Result ConvertEventToRestCommand::redo(Project& project) noexcept {
   if (voice == nullptr)
     return Result(ResultCode::kInvalidArgument);
 
-  if (pre_snapshot_.has_value() && !(*voice == *pre_snapshot_))
+  if (pre_snapshot_.has_value() &&
+      !internal::snapshot_matches(*voice, *pre_snapshot_))
     return Result(ResultCode::kInvalidArgument);
 
   Node*               node     = project.find_node(node_id_);

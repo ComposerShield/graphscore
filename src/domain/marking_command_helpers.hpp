@@ -19,6 +19,7 @@
 #include <graphscore/domain/project.hpp>
 #include <graphscore/domain/track.hpp>
 #include <graphscore/domain/voice_content.hpp>
+#include "command_snapshot_compare.hpp"
 
 namespace graphscore {
 namespace internal {
@@ -121,7 +122,7 @@ inline Result voice_restore_snapshot(
   if (vc == nullptr)
     return Result(ResultCode::kInvalidArgument);
 
-  if (expected_current.has_value() && !(*vc == *expected_current))
+  if (expected_current.has_value() && !snapshot_matches(*vc, *expected_current))
     return Result(ResultCode::kInvalidArgument);
 
   Node*               node     = project.find_node(node_id);
@@ -166,7 +167,8 @@ inline Result lane_restore_snapshot(
   if (lane == nullptr)
     return Result(ResultCode::kInvalidArgument);
 
-  if (expected_current.has_value() && !(*lane == *expected_current))
+  if (expected_current.has_value() &&
+      !snapshot_matches(*lane, *expected_current))
     return Result(ResultCode::kInvalidArgument);
 
   const NodeTimeline* timeline = node->timeline();
