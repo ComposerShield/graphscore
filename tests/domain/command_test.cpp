@@ -8977,8 +8977,8 @@ TEST(CommandTest, VoiceContentAppendRejectsMarkingIdCollision) {
   // Add a hairpin with a known id.
   const NotationEntityId id = NotationEntityId::generate();
   ASSERT_TRUE(voice
-                  .add_hairpin(Hairpin(id, id, NotationEntityId::generate(),
-                                       HairpinDirection::kCrescendo))
+                  .add_hairpin(Hairpin{id, id, NotationEntityId::generate(),
+                                       HairpinDirection::kCrescendo})
                   .ok());
 
   // Try to append an event that reuses the hairpin's id.
@@ -9000,7 +9000,7 @@ TEST(CommandTest, VoiceContentInsertEventRejectsMarkingIdCollision) {
   const NotationEntityId id      = event_id(voice.events()[0]);
   const NotationEntityId id2     = event_id(voice.events()[1]);
   const NotationEntityId slur_id = NotationEntityId::generate();
-  ASSERT_TRUE(voice.add_slur(Slur(slur_id, id, id2)).ok());
+  ASSERT_TRUE(voice.add_slur(Slur{slur_id, id, id2}).ok());
 
   const NotationEntityId insert_id = NotationEntityId::generate();
   ASSERT_TRUE(
@@ -10112,11 +10112,11 @@ TEST(CommandTest, AddSlurCrossKindDuplicateIdRejected) {
 
   // Add a dynamic with a specific id.
   const NotationEntityId shared_id = NotationEntityId::generate();
-  const DynamicMarking   dyn(shared_id, eid_first, Dynamic::kMf);
+  const DynamicMarking   dyn{shared_id, eid_first, Dynamic::kMf};
   ASSERT_TRUE(voice->add_dynamic(dyn).ok());
 
   // Attempt to add a slur with the same id.
-  const Slur slur(shared_id, eid_first, eid_second);
+  const Slur slur{shared_id, eid_first, eid_second};
   auto       cmd = std::make_unique<AddSlurCommand>(
       fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), slur);
   EXPECT_FALSE(cmd->execute(fx.project).ok());
@@ -10135,11 +10135,11 @@ TEST(CommandTest, AddHairpinCrossKindDuplicateIdRejected) {
   const NotationEntityId eid_first  = event_id(voice->events()[0]);
   const NotationEntityId eid_second = event_id(voice->events()[1]);
   const NotationEntityId shared_id  = NotationEntityId::generate();
-  const Slur             existing(shared_id, eid_first, eid_second);
+  const Slur             existing{shared_id, eid_first, eid_second};
   ASSERT_TRUE(voice->add_slur(existing).ok());
 
-  const Hairpin hp(shared_id, eid_first, eid_second,
-                   HairpinDirection::kCrescendo);
+  const Hairpin hp{shared_id, eid_first, eid_second,
+                   HairpinDirection::kCrescendo};
   auto          cmd = std::make_unique<AddHairpinCommand>(
       fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), hp);
   EXPECT_FALSE(cmd->execute(fx.project).ok());
@@ -10156,15 +10156,15 @@ TEST(CommandTest, AddBeamOverrideCrossKindDuplicateIdRejected) {
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
   const NotationEntityId shared_id = NotationEntityId::generate();
-  const DynamicMarking   dyn(shared_id, event_id(voice->events()[0]),
-                             Dynamic::kMf);
+  const DynamicMarking   dyn{shared_id, event_id(voice->events()[0]),
+                           Dynamic::kMf};
   ASSERT_TRUE(voice->add_dynamic(dyn).ok());
 
   const BeamOverride beam = make_beam_override(
       BeamOverride::Kind::kJoin,
       {event_id(voice->events()[0]), event_id(voice->events()[1])});
   // Reassign the beam's id to collide.
-  const BeamOverride colliding(shared_id, beam.kind, beam.events);
+  const BeamOverride colliding{shared_id, beam.kind, beam.events};
   auto               cmd = std::make_unique<AddBeamOverrideCommand>(
       fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), colliding);
   EXPECT_FALSE(cmd->execute(fx.project).ok());
@@ -10181,7 +10181,7 @@ TEST(CommandTest, AddGraceGroupCrossKindDuplicateIdRejected) {
 
   const NotationEntityId shared_id = NotationEntityId::generate();
   const NotationEntityId eid       = event_id(voice->events()[0]);
-  const Hairpin          hp(shared_id, eid, eid, HairpinDirection::kCrescendo);
+  const Hairpin          hp{shared_id, eid, eid, HairpinDirection::kCrescendo};
   ASSERT_TRUE(voice->add_hairpin(hp).ok());
 
   const GraceGroup group =
@@ -10189,7 +10189,7 @@ TEST(CommandTest, AddGraceGroupCrossKindDuplicateIdRejected) {
                                        .duration = eighth(),
                                        .type     = GraceNoteType::kAppoggiatura,
                                        .slashed  = false}});
-  const GraceGroup colliding(shared_id, group.principal_event, group.notes);
+  const GraceGroup colliding{shared_id, group.principal_event, group.notes};
   auto             cmd = std::make_unique<AddGraceGroupCommand>(
       fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), colliding);
   EXPECT_FALSE(cmd->execute(fx.project).ok());
@@ -10207,8 +10207,8 @@ TEST(CommandTest, AddDynamicDuplicateMarkingIdRejects) {
 TEST(CommandTest, AddDynamicEventIdCollisionRejected) {
   VoiceContent voice;
   ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
-  const DynamicMarking m(event_id(voice.events()[0]),  // event id
-                         event_id(voice.events()[0]), Dynamic::kFf);
+  const DynamicMarking m{event_id(voice.events()[0]),  // event id
+                         event_id(voice.events()[0]), Dynamic::kFf};
   EXPECT_FALSE(voice.add_dynamic(m).ok());
 }
 
@@ -10825,7 +10825,7 @@ TEST(CommandTest, VoiceContentPublicAddSlurDuplicateIdRejected) {
   ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
 
   const NotationEntityId eid = event_id(voice.events()[0]);
-  const Slur             slur(NotationEntityId::generate(), eid, eid);
+  const Slur             slur{NotationEntityId::generate(), eid, eid};
   ASSERT_TRUE(voice.add_slur(slur).ok());
   EXPECT_FALSE(voice.add_slur(slur).ok());
 }
@@ -10835,8 +10835,8 @@ TEST(CommandTest, VoiceContentPublicAddHairpinDuplicateIdRejected) {
   ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
 
   const NotationEntityId eid = event_id(voice.events()[0]);
-  const Hairpin          hp(NotationEntityId::generate(), eid, eid,
-                            HairpinDirection::kCrescendo);
+  const Hairpin          hp{NotationEntityId::generate(), eid, eid,
+                   HairpinDirection::kCrescendo};
   ASSERT_TRUE(voice.add_hairpin(hp).ok());
   EXPECT_FALSE(voice.add_hairpin(hp).ok());
 }
@@ -10848,10 +10848,10 @@ TEST(CommandTest, VoiceContentPublicAddSlurCrossKindRejected) {
   const NotationEntityId eid       = event_id(voice.events()[0]);
   const NotationEntityId shared_id = NotationEntityId::generate();
 
-  const DynamicMarking dyn(shared_id, eid, Dynamic::kFf);
+  const DynamicMarking dyn{shared_id, eid, Dynamic::kFf};
   ASSERT_TRUE(voice.add_dynamic(dyn).ok());
 
-  const Slur slur(shared_id, eid, eid);
+  const Slur slur{shared_id, eid, eid};
   EXPECT_FALSE(voice.add_slur(slur).ok());
 }
 
