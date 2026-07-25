@@ -70,10 +70,10 @@ cmake --preset asan-ubsan && cmake --build --preset asan-ubsan && ctest --preset
 # hook on staged files, and by CI over the whole tree).
 cmake --build --preset debug --target lint
 
-# Const-correctness analysis. Off by default because clang-tidy roughly
-# triples compile time; CI runs it as its own job, and the tracked pre-push
-# hook runs it locally (incrementally, reusing build/tidy) and blocks the
-# push on findings.
+# Const-correctness analysis. Canonical build tree is `build/tidy` (matching
+# `.githooks/pre-push`, which runs the same clang-tidy 18 analysis and blocks
+# the commit on findings — it is now a pre-commit gate, not only pre-push).
+# Configure this once per session; subsequent builds are incremental.
 #
 # Use clang-tidy 18 to match CI. Check selections and their defaults change
 # between releases, so another version will report a different set — newer
@@ -82,14 +82,18 @@ cmake --build --preset debug --target lint
 #   brew install llvm@18            (macOS; keg-only, the hook finds it)
 #   sudo apt install clang-tidy-18  (Debian/Ubuntu)
 #   pip install clang-tidy==18.1.8  (any platform)
-cmake --preset debug -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON
-cmake --build --preset debug -- -k 0   # -k 0: report every file, not the first
+cmake --preset debug -B build/tidy \
+  -DGRAPHSCORE_BUILD_WRITER=OFF \
+  -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON \
+  -DGRAPHSCORE_CLANG_TIDY_EXECUTABLE=/opt/homebrew/opt/llvm@18/bin/clang-tidy
 #
 # On macOS, a non-Apple clang-tidy (Homebrew or the official LLVM builds
 # pip installs) does not inherit AppleClang's implicit SDK include path and
 # fails to find libc++ headers without it; the pre-push hook adds it itself.
-# For a manual run, configure with:
-#   -DCMAKE_CXX_FLAGS="-isysroot $(xcrun --show-sdk-path)"
+# For a manual run, append:
+#   -DCMAKE_CXX_FLAGS="-isysroot $(xcrun --show-sdk-path)" \
+#   -DCMAKE_C_FLAGS="-isysroot $(xcrun --show-sdk-path)"
+cmake --build build/tidy -- -k 0   # -k 0: report every file, not the first
 
 # Architecture boundary audit (ADR 0003 §7).
 cmake --build --preset debug --target audit_architecture
@@ -212,6 +216,37 @@ writer target cannot be linked from it.
   and the plain `XCODE_VERSION` CMake variable set, even on a Command Line
   Tools-only macOS machine with no Xcode.app. See ADR 0007's Build
   Integration Notes before touching VST3 SDK CMake wiring (Milestone 08).
+
+## Tiered verification policy
+
+Every agent (orchestrator, worker, reviewer) follows three tiers of
+verification that reduce redundant full-suite runs while preserving the final
+quality bar:
+
+- **Tier 1 — focused iteration:** configure only when needed; build the
+  affected target(s); run the focused test binary, GoogleTest filter, or CTest
+  regex for changed behavior; run formatting/lint appropriate to touched files.
+  Used during implementation and every fix round.
+- **Tier 2 — phase candidate:** once before initial review, the worker runs the
+  canonical debug build with zero warnings, full
+  `ctest --preset debug --output-on-failure`, and the full lint target. The
+  reviewer does not receive broken candidates.
+- **Tier 3 — final exact-tree verification:** once after code-review findings
+  are resolved and before commit, the reviewer independently verifies Tier 2
+  plus all seven architecture audits (`cmake --build --preset debug --target
+  audit_architecture`), clang-tidy 18 in `build/tidy`, and the applicable
+  sanitizer suite(s) required by the milestone. This is the full quality bar;
+  it is the final gate run once on the final candidate tree.
+
+**Fix rounds:** fix workers run focused regressions matching the finding and
+the affected target — not the full test suite. They report exactly what
+focused tests ran. The re-reviewer inspects the delta and equivalent defect
+family, runs relevant focused tests, and defers the full Tier 3 run until no
+findings remain.
+
+**Documentation-only changes** that do not alter build, hooks, or configuration
+behavior require diff/frontmatter/script validation, not a repeat C++ sanitizer
+cycle. The final exact tree still passes all required gates.
 
 ## Where to look next
 

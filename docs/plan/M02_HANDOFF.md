@@ -1,1235 +1,210 @@
 # Milestone 02 (Domain And Command Model) — Orchestration Handoff
 
-**Status as of this doc:** Phases 1–7 complete. Phases 8a (command foundation),
-8b (metadata/audition-mix commands), 8c (fourteen reversible structural/config
-commands, split 8c-i + 8c-ii), and 8d (reversible add/remove of graph entities,
-split 8d-i..iv) are complete and committed. Phase 8e notation/tempo edit
-commands are **complete** (8e-i core voice-event edits, 8e-ii marking
-add/remove commands, 8e-iii tempo-point edits); **8f-i (ChordNote + GraceNote
-identity groundwork) is complete; 8f-ii (selection representation) is
-next**. Phase 7
-(Normative playback specification) was split into 7a/7b/7c per Adam's locked
-scoping rulings (see "Plan for the remaining phases"). 7a is committed
-(`063f1af`) after three review rounds that caught a false continuity claim, a
-non-additive integration bug, and a sanitizer-fatal `Rational` overflow. 7b is
-committed (`dc7550a`) after two review rounds that caught an inverted
-precedence claim and a second sanitizer-fatal `Rational`/shift-overflow bug in
-the grace-steal math. 7c is the completed spec-only same-sample MIDI ordering
-contract. This file lets a different orchestrator pick up mid-milestone without
-re-deriving the plan.
-Source of truth remains
-[02-domain-model.md](02-domain-model.md) and [CHECKLIST.md](CHECKLIST.md); this
-doc records *how* the milestone is being executed.
+**Maintenance rule:** this is an active handoff, not a changelog. After every
+completed phase, remove or compress completed detail so the file gets SMALLER,
+not larger. Git history preserves old detail. It should contain only what the
+next agent needs for the next task plus active downstream deferrals.
 
-## Milestone scope recap
+**Status at this doc:** Phases 1–8f-i complete and committed. **8f-ii
+(selection representation) is next.**
 
-Implement the toolkit-independent domain: value types, project/track/node,
-notation, graph, event/transition semantics, commands, selection, clipboard,
-and validation. **Only two CMake targets are in scope:**
+- HEAD: `1b59fd1` ("Add stable notation note identities")
+- Tests: 1249, 100% pass (debug + ASan/UBSan clean)
+- Partial cancelled 8f-ii work is preserved in a stash named
+  `WIP phase 8f-ii before process updates` — unreviewed, not approved.
+  Refer by stash message, not unstable stash index.
 
-- `graphscore_core` — pure value types (Layer 0).
-- `graphscore_domain` — everything else (Layer 1); links **only** `graphscore_core`.
+## Milestone scope
 
-No new CMake targets. No `cmake/architecture_contract.cmake` or ADR changes
-(that edge — domain→core — already exists in the contract). Dependencies are
-satisfied: Milestone 01 is fully complete; Milestone 00 ADRs 0001–0007 are
-recorded. (M00 still has two open housekeeping boxes — spike deletion, exit
-decision — that are NOT inputs to M02.)
+Two CMake targets only: `graphscore_core` (Layer 0, pure value types) and
+`graphscore_domain` (Layer 1, depends only on core). No new targets, no ADR or
+`architecture_contract.cmake` changes.
 
-## Execution model (the loop, per phase)
+## Tiered execution and commit policy
 
-For each plan section, strictly in order, no interleaving:
+Three tiers (full policy in `AGENTS.md`):
+- **Tier 1 — focused iteration:** configure only when needed; build affected
+  target(s); run focused test binary/filter/regex; lint/format touched files.
+  Used during implementation and every fix round.
+- **Tier 2 — phase candidate:** worker runs full debug build (zero warnings),
+  full `ctest --preset debug --output-on-failure`, full lint target once before
+  handoff for review. Reviewers independently verify Tier 2 on the candidate.
+- **Tier 3 — final exact-tree:** reviewer runs Tier 2 + all seven architecture
+  audits + clang-tidy 18 in `build/tidy` + applicable sanitizer suite(s).
+  Run once on the final approved tree after all findings are resolved.
 
-1. **One fresh `worker`** implements the phase from a fully self-contained brief
-   (milestone path, deliverables verbatim, exact file paths, conventions,
-   scope boundaries, verification gates). One task per worker, then retire it.
-2. **One fresh `reviewer`** audits against the plan and independently runs the
-   four gates. Verdict APPROVED / NEEDS WORK / REJECTED.
-3. On NEEDS WORK/REJECTED (or a chosen advisory fix): a **fresh worker** applies
-   fixes from the findings verbatim; then a **fresh reviewer** re-audits the
-   delta. Repeat until APPROVED.
-4. **One fresh worker** checks off the section's `- [ ]` boxes in
-   02-domain-model.md + the matching CHECKLIST.md box, and commits.
+Fix-round workers run **only** Tier 1 targeted regressions matching the
+finding and affected target — not the full suite. Report exactly which focused
+tests ran. The re-reviewer inspects the delta, runs relevant focused tests,
+and defers Tier 3 until findings are resolved. Documentation-only changes
+require diff/frontmatter validation, not a C++ sanitizer cycle.
 
-Large phases are split into internal increments (e.g. 4a/4b), each its own
-worker+reviewer, committed separately, with the CHECKLIST section box checked
-only when the whole section is approved.
-
-### The four gates (definition of done, run from repo root)
-
-1. `cmake --preset debug && cmake --build --preset debug` → **zero warnings**
-   (warnings are errors).
-2. `ctest --preset debug --output-on-failure` → all green.
-3. `cmake --build --preset debug --target lint` → cpplint + clang-format clean.
-4. `cmake --build --preset debug --target audit_architecture` → all seven audits
-   pass.
-
-## Commit policy
-
-- Commits go **directly to `main`** (repo has no meaningful remote; matches the
-  M01 history convention). One commit per phase/increment, made by the
-  check-off worker (which also flips the checklist boxes in the same commit).
-- Commit messages: **describe only the project change. NEVER mention any
-  AI/assistant/model/vendor, and NEVER add a `Co-Authored-By` or any attribution
-  trailer** (AGENTS.md rule; it overrides any global default).
-- **Never stage** `.claude/agents/orchestrator.md` or
-  `.claude/settings.local.json` — they carry pre-existing unrelated
-  modifications from before the milestone. Stage by explicit paths.
+**Commits:** one per phase/increment directly to `main`, never mention AI
+assistance. Stage by explicit paths; preserve `.claude/settings.local.json`
+and `.claude/agents/orchestrator.md` in the stash without editing.
 
 ## Progress: phases and commits
 
 | # | Section | State | Commit |
 |---|---|---|---|
-| 1 | Identity and value types | ✅ done | `0d6693b` |
-| 2 | Project and track model | ✅ done | `511045f` |
-| 3 | Node timeline | ✅ done (incl. tempo/region revalidation fix) | `b330675` |
-| 4 | Notation model | ✅ done — split 4a + 4b | `af8ff75` (4a), `99c1452` (4b) |
-| 5 | Graph model | ✅ done — split 5a + 5b | `87e4b92` (5a), `e13d4b5` (5b) |
-| 6a | Adaptive playback semantics — transition selection | ✅ done | `c6be9a4` |
-| 6b-i | Adaptive playback semantics — pickdown coordinates/ownership/bound oracle | ✅ done | (this commit) |
-| 6b-ii | Adaptive playback semantics — MIDI ownership + lifecycle | ✅ done | (this commit) |
-| 6c | Adaptive playback semantics — writer audition model | ✅ done | (this commit) |
-| 7a | Normative playback specification — tempo curve math | ✅ done | `063f1af` |
-| 7b | Normative playback specification — articulation/dynamic/grace mapping | ✅ done | `dc7550a` |
-| 7c | Normative playback specification — simultaneous MIDI ordering (spec only) | ✅ done | — |
-| 8a | Command foundation (protocol, history, transaction, proving commands) | ✅ done | (this commit) |
-| 8b | Metadata/audition-mix reversible commands | ✅ done | `ffc9f2c` |
-| 8c-i | Reversible track-archive + connector-config commands (9) | ✅ done | `54543c1` |
-| 8c-ii | Reversible connection/route/event-binding commands (5) | ✅ done | `138458d` |
-| 8d-i | Add/remove connector commands + `Node::restore_input`/`restore_output` | ✅ done | `910d250` |
-| 8d-ii | Register/remove event commands + `EventRegistry::add_event_with_id` | ✅ done | `273e0b9` |
-| 8d-iii | Add-track command + `add_track_with_id` / undo-only `hard_remove_track` / `Node::remove_lane` | ✅ done | `da7e0cb` |
-| 8d-iv | Add/remove node commands (full Node aggregate snapshot + cross-graph cascade) | ✅ done | `fd83039` |
-| **8d complete** | Add/remove of connectors, events, tracks, nodes — all reversible with stable ids | ✅ **done** | — |
-| 8e-i | Core voice-event edit commands (set/convert/tie/untie + voice mutators) | ✅ done | `6f428ac` |
-| 8e-ii | Marking add/remove commands (dynamics/hairpins/slurs/beam overrides/grace groups/pedal spans) | ✅ done | `(this commit)` |
-| 8e-iii | Tempo-point edit commands (4 commands + `NodeTimeline::clear_tempo`) | ✅ done | `5b0d32e` |
-| **8e complete** | Notation + tempo edit commands — voice events, markings, tempo points | ✅ **done** | — |
-| 8f-i | ChordNote + GraceNote identity groundwork (stable `NotationEntityId`s, factory fresh-ID generation + explicit-ID preservation, voice-scoped cross-kind/nil collision guards incl. marking + pedal APIs) | ✅ done | (this commit) |
-| 8f-ii | Selection representation | ⬜ next | — |
-| 8f..h | Selection model → clipboard/cut/copy/paste + node copy/paste id remapping → measure insert/delete | ⬜ remaining | — |
-| 9 | Validation service | ⬜ remaining | — |
-| — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
+| 1 | Identity and value types | ✅ | `0d6693b` |
+| 2 | Project and track model | ✅ | `511045f` |
+| 3 | Node timeline | ✅ | `b330675` |
+| 4a/4b | Notation model | ✅ | `af8ff75`, `99c1452` |
+| 5a/5b | Graph model | ✅ | `87e4b92`, `e13d4b5` |
+| 6a–6c | Adaptive playback semantics | ✅ | `c6be9a4` + later |
+| 7a–7c | Normative playback specification | ✅ | `063f1af`, `dc7550a` |
+| 8a | Command foundation | ✅ | (in-tree) |
+| 8b | Metadata/audition-mix commands | ✅ | `ffc9f2c` |
+| 8c-i/8c-ii | Structural/config commands (14) | ✅ | `54543c1`, `138458d` |
+| 8d-i..iv | Add/remove graph entities | ✅ | `910d250`, `273e0b9`, `da7e0cb`, `fd83039` |
+| 8e-i..iii | Notation + tempo edit commands | ✅ | `6f428ac`, later, `5b0d32e` |
+| 8f-i | ChordNote + GraceNote identity | ✅ | `1b59fd1` |
+| **8f-ii** | **Selection representation** | ⬜ **next** | — |
+| 8g | Clipboard, cut/copy/paste | ⬜ | — |
+| 8h | Measure insert/delete + node-timeline edit commands | ⬜ | — |
+| 9 | Validation service | ⬜ | — |
 
-Test suite currently: **1249 tests, 100% pass** after Phase 8f-i
-(`CommandTest.*` = 554); debug + ASan/UBSan clean with zero findings across
-the 8e-i, 8e-ii, 8e-iii, and 8f-i review rounds.
+CHECKLIST.md M02 boxes remaining: "Command and selection model" (still
+unchecked — 8f-ii + 8g/8h outstanding), Validation service, Acceptance
+criteria, Test focus, top-level "Milestone 02 complete".
 
-CHECKLIST.md M02 boxes checked so far: Dependencies, Identity and value types,
-Project and track model, Node timeline, Notation model, Graph model, Adaptive
-playback semantics, Normative playback specification (plus the 8a/8b/8c/8d/8e
-descriptive sub-boxes). Remaining M02 boxes: **Command and selection model**
-(still unchecked — the selection representation and all subsequent deliverables
-are not done), Validation service, Acceptance criteria, Test focus, and the
-top-level "Milestone 02 complete".
+## Phase 8f-ii: Selection representation — full contract
 
-## What each completed phase delivered (so the next agent knows what exists)
+### Locked design (Adam's rulings)
 
-- **Phase 1 (`graphscore_core`):** `StrongId<Tag>` over `Uuid` (Project/Track/
-  Stave/Node/Connector/Event/NotationEntity ids) + `StrongIndex<Tag>` project-
-  order indexes; exact GCD-reduced `Rational` with cross-multiplied comparison
-  (no float); validated value types via `static std::optional<T> create(...)`:
-  `MidiPitch` (0–127), `MidiChannel` (**0–15**), `MidiVelocity`, `Accidental`
-  (double-flat..double-sharp), `Clef`, `KeySignature` (−7..7), `TimeSignature`
-  (power-of-two denom), `Voice` (**1–4**), `Tempo` (10–400 BPM + `NoteValue`
-  beat unit).
-- **Phase 2 (`graphscore_domain`):** `Project` (metadata, designated start node,
-  tempo/dynamic defaults), `Track` with `StaffLayout`/`StaveDefinition`
-  (`single_staff()`/`grand_staff()`), fixed `MidiChannel`, **64-track cap**,
-  recoverable **archived tracks**; a **minimal `Node`** (id/name/color/notes/
-  `GraphPosition` + per-`TrackId` `TrackLane` map kept aligned across all nodes);
-  `EventRegistry` (stable `EventId`, **case-sensitive** unique names). `Dynamic`
-  enum lives in domain.
-- **Phase 3 (`graphscore_domain`):** `NodeTimeline` (optional on `Node`) =
-  node-wide `MeasureMap` (ordered measures, each a per-measure `TimeSignature`+
-  `KeySignature`), per-`StaveId` `ClefLane`s at exact positions, optional
-  **pickdown** (0 < dur < boundary measure), node-wide `TempoLane` (points +
-  step/linear/smooth segment kinds), and a main/tail `classify(MusicalSpan)`
-  boundary splitter. Canonical musical unit = **whole notes as `Rational`**.
-  Region changes revalidate any stored tempo lane (no stale coverage).
-- **Phase 4a (`core`+`domain`):** `Duration` (base + 0/1/2 dots + optional
-  single-level `TupletRatio`, → exact `Rational`) and `SpelledPitch`
-  (letter/octave/accidental → validated `MidiPitch`) in core; note/chord/rest
-  `VoiceEvent`s with structural ties, four rhythmically-complete voices per
-  stave in `TrackLane`, automatic normalized-rest filling against node length.
-- **Phase 4b (`graphscore_domain`):** per-event `Articulation` set + `StemDirection`;
-  per-voice dynamics, hairpins, slurs, beam overrides, grace groups (by id);
-  stave-scoped `PedalSpan`s; and `notation_validation` — a **focused referential
-  validator** (`NotationDiagnostic{entity_id, code, message}`) for ties, slurs,
-  hairpins, pedal spans, conflicting duration articulations, incomplete tuplet
-  groups, invalid beam overrides.
-- **Phase 5 (`graphscore_domain`, split 5a + 5b):** `Connector`/
-  `InputConnector`/`OutputConnector` with stable `ConnectorId`, sequential/
-  vertical types, priority/weight, 0-or-1 destination and export-readiness;
-  `EventListener` (`QueuePolicy` first-wins / latest-valid-wins (default) /
-  FIFO + capacity) stored once per (node, event) with vertical-vs-sequential
-  clash rejection; `RouteGeometry` (automatic vs user-customized orthogonal
-  interior segments); `Graph` façade over `Project` (connect/disconnect,
-  `remove_input` and `remove_event` cascades, `is_export_ready`); and
-  `EventOccurrence`/`EventQueue`/`EventStateMachine` — the normative state
-  machine with bounded per-(node,event) storage, monotonic arrival ordinals,
-  per-policy consume/discard, three-tier arbitration (priority desc → newest
-  arrival → stable connector order = `Node::outputs()` index), FIFO-overflow
-  drop-oldest + pollable/resettable diagnostic counter, vertical
-  non-persistence, and `clear_node`/`clear_event`/`clear_all` for stop/reset/
-  node-play (pause = no call).
-- **Phase 6a (`core` + `graphscore_domain`) — transition selection:** a
-  `DeterministicPrng` (SplitMix64) in **core** — placed there rather than
-  domain because the ADR 0003 runtime closure sees core but not domain, and
-  writer and runtime must reproduce identical streams from the same seed —
-  with an explicit host-seeded `reset`. `weighted_selection` (domain): exact
-  `Rational` weights; the eligible group (destination-having, positive-weight
-  candidates) must total exactly `Rational(1)`; zero-weight outputs are
-  structurally excluded from the group rather than assigned an empty bucket;
-  negative weights are rejected; `kDenominatorOverflow` closes the path
-  rather than approximating; exact common-denominator bucketing consumes
-  exactly one PRNG draw per selection, drawn only after the group passes
-  validation. `vertical_transition` (domain): compatibility over matching
-  main-region measure counts and per-measure time signatures with pickdowns
-  excluded from the comparison, and exact rational vertical position mapping.
-  On `EventStateMachine`: the three-tier `resolve_sequential_transition`
-  (persistent event intent > manual queue > weighted random); a manual-queue
-  slot (`queue_manual_transition`) that is writer-only, active-source-only,
-  with stale entries re-validated at consume time rather than at queue time;
-  `assemble_vertical_candidates` (applies the destination-required filter
-  before candidates reach selection); `resolve_vertical_transition`;
-  `reset_random`; and `TransportInstant` — a validated project-wide instant,
-  **deliberately distinct from node-local `EventOccurrence::sample_offset`**,
-  used to guard at most one vertical jump per instant via a fail-closed `<=`
-  comparison.
-- **Phase 7a (`core`) — tempo curve math:** `TempoPoint`/`TempoSegmentKind`
-  relocated from `graphscore_domain` into `graphscore_core` (new
-  `tempo_point.hpp`) since core-level integration math needs them and core
-  cannot depend on domain — mirrors the Phase 6a `DeterministicPrng`
-  placement rationale exactly. New `tempo_curve.hpp`/`.cpp`: instantaneous
-  rate evaluation for `kStep`/`kLinear`/`kSmooth` segments with BPM+beat-unit
-  normalization (a point expressed as 120bpm-quarter and one expressed as
-  60bpm-half interpolate identically — verified by a dedicated trap test,
-  not just claimed); `kSmooth` auto-shaped as a uniform-parametrization
-  Catmull-Rom cubic (tension 0.5, the textbook default) through neighboring
-  points, reflected at lane boundaries, **C0 (value-)continuous everywhere,
-  C1 (slope-)continuous only when both adjacent segments are `kSmooth` and
-  exactly equal-length** — the header states this precisely after a review
-  round caught and corrected an earlier overclaim; deterministic integration
-  of elapsed real time between two `Rational` positions (closed-form for
-  `kStep`/`kLinear`, a fixed-32-step Simpson quadrature anchored at each
-  segment's own start for `kSmooth`, making integration exactly additive
-  across any interior split — a second review round caught and fixed a
-  non-additive first version); deterministic fixed-52-iteration bisection
-  inversion (elapsed seconds → `Rational` position), position quantized to a
-  `2^20` grid (not `2^32` — a third review round caught a `Rational`
-  cross-multiply overflow, fatal under the `asan-ubsan` preset, reachable
-  from any position past ~0.5 whole notes at the original `2^32` grid; `2^20`
-  keeps ~37x margin under one sample period at 192kHz while staying safe to
-  ~8.39e6 whole notes); integer sample-count rounding from a caller-supplied
-  sample rate (never hardcoded), round-half-to-even, with `isfinite`/
-  saturating guards against NaN/±inf/huge-finite input (a UB fix from the
-  first review round). `double` confined to this module only; every
-  `Rational`-typed boundary stays exact. Resolves the `TODO(Phase 7)` seams
-  at `tempo_lane.hpp:47-48` and the cross-reference in
-  `pickdown_bound_oracle.hpp:88-94` (comment-only updates, zero logic
-  change to `segment_index_at` or the oracle). 619 tests after 7a (+38 over
-  Phase 6c's 581).
-- **Phase 7b (`core` + `domain`) — articulation/dynamic/grace mapping:**
-  `Articulation`/`is_duration_articulation`, `Dynamic`, and `GraceNoteType`
-  relocated from `graphscore_domain` into `graphscore_core` (new
-  `articulation.hpp`, `dynamic.hpp`, `grace_note_type.hpp`), same
-  core-cannot-depend-on-domain reasoning as 7a's `TempoPoint` move;
-  `StemDirection` stays in domain (engraving-only, not a playback concern).
-  New `playback_mapping.hpp`/`.cpp` (core, exact `Rational`/integer
-  arithmetic throughout — **no floating-point exception here**, unlike 7a):
-  an 8-level dynamic→velocity table; exact-Rational hairpin interpolation
-  between two already-resolved velocities with round-half-to-even; a
-  documented, non-stacking accent/marcato emphasis rule (marcato wins
-  outright if both present) saturating at `MidiVelocity::kMax`;
-  articulation→sounded-duration ratios (default detache 7/8, staccato 1/2,
-  staccatissimo 1/4, tenuto 1/1); slur legato overlap
-  (`articulated_duration + gap_to_next_onset`); and grace-note steal math
-  (acciaccatura front-loaded geometric division, appoggiatura even
-  division, a steal cap leaving the preceding note >= half its duration,
-  a fixed absolute fallback when there is no preceding sounded note).
-  **Locked precedence: slur wins outright** — a note that is tied AND
-  slurred AND duration-articulated is governed entirely by legato overlap;
-  `is_tied` and any duration-articulation are silently bypassed on that
-  path (a review round caught this contradicting the original doc prose,
-  which claimed the two "never conflict" — they do, and slur wins, now
-  documented as a deliberate call, not an accident). A second review round
-  caught real UB — shift-exponent overflow and a fatal `Rational`
-  summation overflow in the grace-steal weighting, reachable from an
-  ordinary (unvalidated) `GraceGroup` size around 32+ notes, well short of
-  any "non-musical extreme operand" — fixed with a named, enforced
-  `kMaxGraceNotesPerGroup = 16` bound (weights sum to exactly 1 either side
-  of the bound; beyond it, notes past the bound share the smallest slot
-  equally rather than continuing to halve) and a closed-form (loop-free)
-  `grace_steal_remaining_duration`. Thin domain wiring
-  (`notation_playback.hpp`/`.cpp`) applies this math to existing
-  `Note`/`Chord`/`GraceGroup` structures — deliberately does **not** walk
-  `TrackLane`/`VoiceContent` to resolve which `Dynamic`/`Hairpin` governs
-  an arbitrary event; callers supply pre-resolved context, same
-  spec-now-wire-later boundary as 7c draws for MIDI ordering. Resolves the
-  `TODO(Phase 7)` seam at `notation_markings.hpp:112` (was `GraceGroup`)
-  and the untagged dynamic/hairpin/slur/pedal-to-MIDI deferrals at
-  `articulation.hpp:11` and the former `notation_markings.hpp:13,30,41,73`.
-  674 tests after 7b (+55 over Phase 7a's 619).
-- **Phase 7c (`domain`, spec only) — simultaneous MIDI ordering:** added the
-  normative `midi_ownership.hpp` contract for atomic per-sample note and CC64
-  ownership resolution, source ordering, lifecycle/retrigger provenance, and
-  note-off/CC64/note-on stream serialization. It deliberately adds no runtime
-  API, production logic, or tests; M04 owns the scheduler implementation.
-- **Phase 8a (`core` + `domain`) — command foundation:** delivered the
-  non-throwing `Command` ABC (`execute`/`undo`/`redo` all `noexcept`, returning
-  `Result` via extended `ResultCode` with two new terminal codes:
-  `kTransactionRollbackFailed` and `kCommandFaulted`). `CommandHistory` —
-  standalone undo/redo double-stack service, allocation-safe with pre-reserve
-  before any model mutation, undo/redo failure keeps the command on its
-  original stack (no silent loss), empty-stack operations are safe no-ops.
-  `CommandTransaction` — ordered-child atomic grouping implementing the
-  plan's Phase 8 transaction spec: children execute in insertion order; any
-  child failure triggers best-effort rollback (compensating undo in reverse
-  order, every compensator attempted even if an earlier one fails). Three
-  explicit fault paths: (1) execute failure + successful rollback →
-  `kFaulted` (terminal, transaction must be discarded — children are now in
-  `kUndone` and the transaction demands `kFresh` for re-execution);
-  (2) any operation failure where compensation ALSO fails →
-  `kTransactionRollbackFailed` + `kFaulted` (project may retain partial
-  mutations); (3) undo/redo compensation failure where restoration succeeded
-  → original failure returned, state preserved for retry. Empty transactions
-  are valid. After a review round: best-effort semantics verified across all
-  three phases; undo/redo restoration insertion order confirmed model-observable;
-  one-shot retry after successful compensation added. Three stable-ID proving
-  commands exercising the full lifecycle against real domain types:
-  `SetNodeNameCommand`, `SetTrackNameCommand`, `SetProjectTempoCommand` — each
-  snapshots old state on first execute, double-execute/undo-without-execute/
-  redo-without-undo all rejected, missing-ID lookup returns `kInvalidArgument`
-  without touching the model. Precondition: `Node::set_name` and
-  `Track::set_name` tightened to `noexcept` so concrete command implementations
-  can uphold the base-class `noexcept` contract. 60 new test cases (60 added,
-  total 734), ASan/UBSan green with zero findings across two review rounds.
-- **Phase 8b (`domain`) — ten reversible non-structural commands (approved,
-  no required findings):** delivered the remaining single-field project,
-  track, and node commands against stable `NodeId`/`TrackId` lookup with
-  identical noexcept-snapshot semantics as 8a. Project commands:
-  `SetProjectNameCommand` (UTF-8 `std::string`, allocation-safe with
-  `std::bad_alloc`/`std::length_error` guard; empty, 10k-char, and multibyte
-  round-trips all verified), `SetStartNodeCommand` (optional set or clear
-  with `kInvalidArgument` on unowned `NodeId`, correctly re-validates on
-  each phase — including the case where an undo/redo attempts to set an
-  id that has since been removed from the model, returning
-  `kInvalidArgument` rather than silently persisting a stale reference);
-  `SetProjectDynamicCommand` (all eight `Dynamic` values round-trip,
-  snapshotting the project's `default_dynamic()`). Track audition-mix
-  commands: `SetTrackGainCommand`, `SetTrackPanCommand`, `SetTrackMuteCommand`,
-  `SetTrackSoloCommand` — each rejects missing and archived `TrackId`s
-  without mutation via `find_active_track` (not `find_track`); gain and pan
-  store every IEEE 754 `float` bit-pattern exactly (NaN, inf, subnormal,
-  ±0 included); mute and solo store `bool` exactly; legal-range validation
-  is deferred to M08 per the existing `AuditionMixSettings` contract.
-  `SetTrackGainCommand` and `SetTrackPanCommand` include bitwise round-trip
-  tests over 15 and 13 IEEE 754 cases respectively, and
-  `SetTrackGainCommand` verifies unrelated fields (pan, mute) are unchanged
-  after gain mutation. Node metadata commands: `SetNodeColorCommand` (packed
-  `uint32_t` RGBA, six explicit color values verified exact including
-  `0x00000000` and `0xFFFFFFFF`), `SetNodeNotesCommand` (freeform
-  `std::string`, empty/long/UTF-8 round-trips, `set_notes` precondition
-  pre-verified), `SetNodePositionCommand` (`GraphPosition` double-pair, nine
-  IEEE 754 `double` bit-pattern pairs verified round-trip exact, unrelated
-  fields unchanged). Deterministic replay evidence: all ten commands
-  snapshot the old value on first successful execute, restore it on undo,
-  and reapply the new value on redo; same-ID paths produce identical
-  project state regardless of interleaving with other commands (verified
-  via `SetNodeNotesCommand` + `SetNodeColorCommand` interleaved undo/redo
-  against the same id). 64 new test cases (798 total, +64 over Phase 8a's
-  734), debug and ASan/UBSan clean with 798/798 and zero findings.
+A `Selection` is a `std::variant` of **non-empty homogeneous SETS OF SCOPED
+ITEMS**, not one shared scope plus payload. The variant arm enforces
+homogeneity; each set is non-empty and deduplicated. Each item carries only
+its applicable scope — there is no one "scope" shared across all kinds.
 
-  **Reviewer LOW advisory (accepted, not blocking):**
-  `NodeCommandsSurviveReallocation` appends 200 nodes to a project and
-  verifies that `SetNodeColorCommand`/`SetNodeNotesCommand` against the
-  first inserted node still work. It relies on `std::vector` reallocation
-  being _likely_ rather than capacity-proven; a move-constructed `Node`
-  with a stable `NodeId` is well-defined but the test asserts a
-  probabilistic guarantee. Accepted as test-strengthening only if useful;
-  no counterexample has been observed with reasonable node counts.
+**Variant arms and their item shapes:**
 
-  **Remaining categories explicitly unscoped for 8b:** plugin-chain commands,
-  structural graph commands (add/remove node, add/remove track), node
-  timeline commands, notation entry/delete commands, selection model,
-  clipboard, and measure insert/delete — all reserved for
-  Phase 8c and later. The eight original Phase 8 deliverable boxes in
-  `02-domain-model.md` remain unchecked.
+| Kind | Shape |
+|---|---|
+| notehead | `NodeId`, `TrackId`, `StaveId`, `Voice`, `NotationEntityId` |
+| chord | `NodeId`, `TrackId`, `StaveId`, `Voice`, top-level Chord `NotationEntityId` |
+| full measure | `NodeId`, `TrackId`, `StaveId`, ordinal measure index |
+| arbitrary range | `NodeId`, `TrackId`, `StaveId`, `Voice`, raw `MusicalSpan` |
+| node | `NodeId` |
+| connector | owning `NodeId`, `ConnectorId` (input or output) |
+| insertion caret | `NodeId`, `TrackId`, `StaveId`, `Voice`, `Rational` position |
 
-  **Orchestration must stop after this commit until Adam says continue.
-  Do not begin Phase 8c.**
-- **Phase 8c (`domain`) — fourteen reversible structural/config commands
-  (approved, split 8c-i + 8c-ii):** the "reversible-today subset" — every
-  graph/connector/track edit that is exactly undo/redo-able with stable ids
-  using the domain mutators that already exist, wrapping-only, **no new
-  domain API**. Same noexcept-snapshot-once shape as 8a/8b. **8c-i
-  (`54543c1`)**, nine commands: `ArchiveTrackCommand`/`RestoreTrackCommand`
-  (inverse pair, restore in place, no value snapshot), `SetOutputTypeCommand`
-  (restores the shared `EventListener::bound_type()`; propagates the
-  vertical/sequential clash rejection), `SetListenerPolicyCommand` (snapshots
-  and restores both policy and capacity; execute fails `kInvalidArgument`
-  when no listener exists), `SetOutputPriorityCommand`,
-  `SetOutputWeightCommand` (propagates the negative-weight rejection),
-  `SetOutputExportEnabledCommand`, `SetInputConnectorNameCommand`,
-  `SetOutputConnectorNameCommand` (string commands guard allocation as
-  `kOutOfMemory`). **8c-ii (`138458d`)**, five commands with genuine
-  reversibility subtleties: `ConnectCommand` and `DisconnectCommand` — each
-  snapshots the source output's `RouteGeometry` and restores it after any
-  `disconnect`, because `OutputConnector::set_destination(nullopt)` (which
-  `disconnect` triggers) also resets a customized route to automatic;
-  `DisconnectCommand` also snapshots the exact `ConnectorDestination`;
-  `BindOutputEventCommand` — snapshots the old event's listener existence +
-  policy + capacity before binding, and on undo rebinds then restores that
-  config via `set_listener_policy`, so a listener destroyed when the last
-  bound output is rebound away is recreated exactly (**resolves the
-  `TODO(Phase 8)` at `node.hpp:145`**, though the comment itself was left in
-  place — a candidate for a later docs pass); `SetCustomRouteCommand`
-  (propagates the axis-aligned/finite/no-zero-length waypoint validation);
-  `ResetRouteCommand`. Both increments: reviewer independently ran all four
-  gates green, verified snapshot-once discipline, the two hazard tests
-  (route-preservation across undo; sole-listener destroy-and-restore to
-  `kFifo`/capacity 5), and no scope creep. 112 new command test cases
-  (896 total). **Two LOW non-blocking observations, accepted:** the
-  anonymous-namespace `restore_route` helper is duplicated verbatim across
-  four `.cpp` (internal linkage, no ODR issue; a domain-internal header
-  could dedupe later); and there is no dedicated 8c-ii test for a wrapped
-  call failing at undo/redo (saved dest input removed meanwhile) — the
-  commands correctly propagate the failure without faulting the project, and
-  the generic `CommandHistory` undo-failure tests exercise that mechanism.
+The variant arms enforce homogeneity — a mixed notehead+measure selection is
+rejected. This supports aligned selections across tracks/staves/voices and
+multi-node selections without Cartesian ambiguity.
 
-  **Orchestration stopped after 8c per Adam's instruction to check in and
-  update docs before proceeding to Phase 8d.**
-- **Phase 8d (`domain`) — reversible add/remove of graph entities (done, split
-  8d-i..iv):** the structural add/remove commands that need new restore-with-id
-  domain API, per the locked mechanism (snapshot + restore-with-id, guarding
-  id-uniqueness on every new primitive). **8d-i (`910d250`)** connectors:
-  `Node::restore_input`/`restore_output` + `AddInputConnector`,
-  `AddOutputConnector`, `RemoveOutputConnector` (snapshots the destroyed
-  listener), `RemoveInputConnector` (snapshots + reconnects every cross-node
-  inbound edge and its route). **8d-ii (`273e0b9`)** events:
-  `EventRegistry::add_event_with_id` + `RegisterEventCommand`,
-  `RemoveEventCommand` (snapshots definition + every binding + each node's
-  listener policy/capacity, restores all on undo). **8d-iii (`da7e0cb`)**
-  tracks: `Project::add_track_with_id` + undo-only `hard_remove_track` +
-  `Node::remove_lane` + `AddTrackCommand` (archive stays the user-facing
-  removal, so no `RemoveTrackCommand`). **8d-iv (`fd83039`)** nodes:
-  `Project::add_node_with_id`/`remove_node`/`restore_node` + `AddNodeCommand`,
-  `RemoveNodeCommand` (full Node-aggregate snapshot + cross-graph inbound-edge/
-  route/start-node cascade; self-loops restored via the Node value, not the
-  cascade; **resolves the Phase-2 dangling designated start-node deferral**).
-  Plus the family-wide `bind_output_event` allocation hardening (`7297bca`).
-  Each increment: fresh worker + independent reviewer, all five gates
-  (clang-tidy now enforced at commit). 976 tests total after 8d-iv
-  (`CommandTest.*` 222→280 across 8d). Every reviewer APPROVED; 8d-i took two
-  fix rounds (allocation guards, then clang-tidy optional-access), 8d-ii..iv
-  landed clean on first review. **Still unchecked in the section:** the
-  remaining notation/tempo edit commands (need `VoiceContent`/`TempoLane`
-  fine-grained mutators), selection, clipboard, cut/copy/paste + clip/
-   reconnect rules, node copy/paste id remapping, and measure ops — all 8e..f.
-- **Phase 8e-i (`domain`) — core voice-event edit commands (done, `6f428ac`):**
-  reversible notation edit commands wrapping new positional `VoiceContent`/
-  `TrackLane` mutators (insert/remove/replace with automatic rest normalization):
-  `SetEventCommand` (set/replace a note, rest, or chord at a position — duration
-  change, pitch change, chord-build), `ConvertEventToRestCommand` (the `R` op),
-  `SetTieCommand` (tie/untie); whole-`VoiceContent` snapshot reversibility;
-  rhythmic-completeness validation on every edit via the existing `VoiceContent::
-  normalize` pipeline. Prerequisite for clipboard/paste. 1099 tests after 8e-i.
-- **Phase 8e-ii (`domain`) — marking add/remove commands (done):** 12 reversible
-  add/remove commands for dynamics, hairpins, slurs, beam overrides, grace
-  groups, and pedal spans — six `Add*Command`/`Remove*Command` pairs via new
-  `VoiceContent`/`TrackLane` marking-removal mutators and `marking_command_helpers`
-  (shared allocation guards). Hardened cross-kind notation ID uniqueness so a
-  single-id lookup cannot resolve across Dynamic/Hairpin/Slur/etc. boundaries.
-  Sounding slur endpoint validation (grace notes cannot be slur endpoints).
-  Exact whole-`VoiceContent`/whole-`TrackLane` snapshots for every marking
-  command — the same robust pattern as 8d-iv's whole-`Node` and 8e-i's whole-voice
-  snapshots. Current-timeline/reference validation: every command resolves its
-  target against the project's current timeline (no stale references across
-  undo/redo). Transactional pedal APIs: `add_pedal_span`/`remove_pedal_span` on
-  `TrackLane` with guard-before-mutate discipline. 1173 tests, all five gates +
-  ASan/UBSan green.
-- **Phase 8e-iii (`domain`) — tempo-point edit commands (done, `5b0d32e`):**
-  four reversible commands — `AddTempoPointCommand`, `RemoveTempoPointCommand`,
-  `MoveTempoPointCommand`, `SetTempoPointCommand` — each rebuilding the node's
-  `std::vector<TempoPoint>` and revalidating through `NodeTimeline::set_tempo`
-  (atomic on failure, since it validates via `TempoLane::create` before
-  assigning). **One new domain method, `NodeTimeline::clear_tempo() noexcept`**
-  (Adam's ruling, asked interactively): the timeline previously had only
-  `set_tempo`, so creating a node's *first* tempo lane had no inverse and could
-  not be undone exactly — one method mirroring `clear_pickdown` closes that
-  rather than leaving a gap in the "all edits undo/redo exactly" acceptance
-  criterion. Adam also chose the four-command set over the three the plan
-  named, adding `SetTempoPointCommand` (retype a tempo marking in place)
-  because remove+add costs two undo steps and loses point identity.
-  **Snapshot representation is the load-bearing design choice:** both pre- and
-  post-snapshots are `std::optional<std::vector<TempoPoint>>` where an **empty
-  optional means "this node had no tempo lane"** — that is what makes
-  add-first-point (undo removes the lane) and remove-sole-point (execute
-  removes the lane, via an explicit `clear_tempo()` branch since `set_tempo`
-  rejects an empty vector) exactly reversible in both directions. Because
-  `nullopt` is a *meaningful* value here rather than an "unset" marker, the
-  stale-context check compares whole optionals (`current != expected_current`),
-  so lane-exists vs no-lane is itself a detectable divergence — and, unlike
-  8e-i's `set_event_command.cpp`, **no `kInternalError` guards are needed**
-  around optional access (every access is a real `has_value()` branch;
-  reviewer-verified that the `State` machine alone guarantees both snapshots
-  are written before `state_` reaches `kDone`, since the intervening optional
-  move-assignments are `noexcept`). Lane invariants are propagated rather than
-  reimplemented: adding a first point at a nonzero position, and removing the
-  point at position 0 while later points remain, both fail with the model
-  unchanged. All four commands' `undo`/`redo` delegate to
-  `internal::tempo_restore_snapshot` in the domain-internal
-  `src/domain/tempo_command_helpers.hpp` (the `marking_command_helpers.hpp`
-  precedent — under `src/`, not installed, not in the umbrella header).
-  `MoveTempoPointCommand` accepts `from == to` as a no-op (documented; the
-  moved point is erased before the collision scan so it cannot collide with
-  itself). Reviewer APPROVED first time with no HIGH/CRITICAL findings; one
-  fix round closed a MEDIUM test-coverage finding (stale-context coverage was
-  undo-only, leaving a transposition of the mirrored
-  `tempo_restore_snapshot(post, pre, …)` argument order in any of the four
-  `redo` paths undetectable) plus three LOW nits. The fix worker verified the
-  new tests bite by deliberately transposing each call site and confirming the
-  expected failures. 1211 tests (`CommandTest.*` 500→506).
+**Key rules (all locked):**
 
-  **GAP FOUND while checking off line 79 — RESOLVED by Adam: fold into 8h.**
-  With 8e done, line 79 ("Reversible commands for
-  every graph, notation, tempo, track, and metadata edit") covers graph (8c/8d),
-  tempo (8e-iii), track (8c/8d-iii), metadata (8a/8b), and voice-event +
-  marking notation (8e-i/8e-ii) — but **node-timeline edits still have no
-  commands at all**: clef changes (`ClefLane`), pickdown set/clear
-  (`NodeTimeline::set_pickdown`/`clear_pickdown`, which already exist as domain
-  mutators), and per-measure time/key-signature changes. Verified by
-  inspection: there is no `*_clef_command`, `*_pickdown_command`, or
-  `*_signature_command` among the 57 command `.cpp` files. These are ordinary
-  user edits in the 0.1.0 notation scope, so line 79 was left **unchecked** and
-  the 02-domain-model.md 8e bullet names the gap.
+- **Snapshot value + separate validator:** `Selection` validates only intrinsic
+  structure. `validate_selection(const Project&, const Selection&)` is a
+  separate free function — consistent with the existing
+  `notation_validation.hpp` pattern.
+- **Voice-scoped identity:** every item carries its full `(NodeId, TrackId,
+  StaveId, Voice)` scope. `NotationEntityId` uniqueness is voice-scoped only,
+  so id-based selection MUST carry full scope to be unambiguous.
+- **Notehead = Note/ChordNote/GraceNote** but NOT Rest or top-level Chord.
+  Notehead selection IDs must resolve to a notehead entity — rests and
+  top-level chords are excluded.
+- **Chord IDs must be top-level Chord entities** (the Chord's own
+  `NotationEntityId`, not a `ChordNote`'s id).
+- **Measure indexes:** `MeasureMap::measure_index_at` returns `nullopt` in the
+  pickdown region, so a measure-index selection cannot name pickdown material.
+  Document that 8h invalidates indices when it adds measure insert/delete.
+- **Range stores raw `MusicalSpan`** — recompute region classification via
+  `NodeTimeline::classify(MusicalSpan)` on demand; do not cache a stale
+  `SpanClassification`. Range CAN name pickdown material.
+- **Caret positions:** legal positions are event boundaries ∪
+  `TrackLane::total_length()`, so position 0 is always valid.
+- **Archived tracks invalid:** selection on an archived `TrackId` is rejected.
+- **Route-segment:** DEFERRED to M06 (see deferrals).
+- **Staff-focus:** DROPPED as a selection kind.
 
-  **Adam's ruling (product decision, after 8e-iii): fold all three into 8h.**
-  8h is already the phase that adds `MeasureMap` mutators (it has none today),
-  so per-measure time/key-signature commands belong there on dependency
-  grounds, and clef + pickdown commands ride along rather than becoming a
-  separate 8e-iv. Consequence: **line 79 is now an 8h deliverable, not an 8e
-  one** — it stays unchecked until 8h lands, and 8h's own scope grows beyond
-  "measure insert/delete" to "measure insert/delete plus the node-timeline
-  edit commands". 8f (selection) and 8g (clipboard) are unaffected.
+### Prerequisite for 8f-ii: `VoiceContent::position_of_event`
 
-- **Phase 8f-i (`domain`) — ChordNote + GraceNote identity groundwork (done):**
-  added `NotationEntityId` to `ChordNote` and `GraceNote` so every selectable
-  notation entity now carries a persistent stable identity — `Note`, `Rest`,
-  `Chord`, `ChordNote`, `GraceNote`, and every marking kind all have ids.
-  `make_chord` and `make_grace_group` factories mint a fresh id for every
-  notehead that arrives with a nil id, and preserve any non-nil explicit id
-  unchanged — the same pattern as the existing `make_note`/`make_rest`
-  factories.  `VoiceContent`'s `marking_id_exists` cross-kind uniqueness scan
-  was extended to `ChordNote` ids and `GraceNote` ids; idiomatic aggregate
-  `ChordNote`/`GraceNote` construction (designated initializers) is the new
-  canonical form.  Complete voice-scoped collision guards: a `ChordNote` id
-  colliding with *any* existing notation entity id (the parent `Chord`'s own
-  id, another `ChordNote` id, a `Note` event id, a `GraceNote` id, or any
-  marking id) rejects the `append`/`insert_event`/`replace_event`; a
-  `GraceNote` id colliding with its own `GraceGroup` id, another `GraceNote`
-  id inside the same group, an existing event id, or any existing voice-scoped
-  id rejects `add_grace_group`.  Nil-id rejection applies to every public
-  marking insertion API (dynamics, hairpins, slurs, beam overrides, grace
-  groups, pedal spans).  `replace_event` allows an embedded id to reuse the
-  *target event's* ids (the chord being replaced) — the standard pattern that
-  lets a user edit a chord's pitches in place without losing notehead
-  identity.  **M03 round-trip obligation:** `ChordNote::id` and
-  `GraceNote::id` are load-bearing fields — a serializer that drops or
-  regenerates them silently breaks every notehead/grace-note selection and
-  every clipboard identity remapping.  **1249 tests** (38 added over Phase
-  8e-iii's 1211; `CommandTest.*` 506→554).  Required five gates green plus
-  ASan/UBSan.  **Selection representation (8f-ii) is still outstanding.**
+The domain today has `VoiceContent::find_event_index_at(Rational)` but no
+reverse lookup by `NotationEntityId`. Add a **`const`** `position_of_event`
+query (not a mutator) — this is the bridge 8g needs to turn a selection into
+command targets.
 
-## Plan for the remaining phases
+### M03 round-trip obligation
 
-- **Phase 6b — pickdown/MIDI-ownership lifecycle (done, split 6b-i + 6b-ii):**
-  **6b-i** delivered `pickdown_coordinates` (pickdown meter/tempo coordinates
-  in the source node's system, plus a structural `TempoLane::
-  segment_index_at`), `pickdown_ownership` (`tied_note_spans` tie-chain
-  resolution and `classify_note_ownership`/`classify_voice_ownership`
-  splitting a note across the boundary into main and pickdown-tail
-  ownership, with MIDI-only tail material as a semantic flag), and
-  `pickdown_bound_oracle` (a finite upper bound on concurrent tails;
-  cycles bounded by construction per Adam's ruling). Minimum main-region
-  duration was verified already enforced on every path (`MeasureMap` has
-  no mutator at all) and pinned by new tests. **6b-ii** delivered
-  `midi_ownership`: `MidiOwnershipTracker` with per-(channel, pitch)
-  newest-owner retrigger and explicit suppression of a superseded
-  attack's later release, logical-OR CC64 ownership per (channel) across
-  main material and tails, `transfer_main_to_pickdown_tail` for
-  boundary-crossing notes/spans, and the full lifecycle set
-  (`vertical_jump` releasing only source-main entries while tails survive,
-  `clear_all` for stop/reset/node-play, `panic`,
-  `retire_pickdown_tail_snapshot`) with pause modeled as no method at all.
-- **Phase 6c — writer audition model (done):** a toolkit-independent
-  writer audition model — one opaque instrument slot, zero or more opaque
-  effect slots, plugin identity/state blobs, bypass/order, writer-only mix
-  values — **no VST3 SDK types**.
-- **Phase 7 — Normative playback specification (done, split 7a/7b/7c
-  per Adam's scoping rulings below):**
-  - **Locked scope rulings (Adam, interactively, before 7a started) — apply to
-    7b/7c too:** (1) spec everything in header prose (no `docs/spec/`
-    directory — none exists in this repo; the convention is normative prose
-    inline in headers, matching `midi_ownership.hpp`); implement only what is
-    self-contained today without a real consumer — tempo curve math (7a) and
-    articulation/dynamic/grace → velocity+duration mapping (7b); leave
-    same-sample MIDI emission ordering **spec-only** (7c) since its real
-    consumer is the M04 scheduler and `MidiOwnershipTracker` has no timestamp
-    parameter to hang ordering on yet. (2) New playback math belongs in
-    `graphscore_core`, not `graphscore_domain` — mirrors the Phase 6a
-    `DeterministicPrng` placement, since the ADR 0003 runtime closure sees
-    core but never domain. (3) `double` is permitted, narrowly, inside
-    tempo-curve integration/inversion only; every `Rational`-typed
-    input/output at a function boundary stays exact; `Rational::to_double()`
-    stays display-only everywhere else. (4) Concrete musical constants
-    (tension/tolerance/rounding constants in 7a; velocity tables, duration
-    ratios, steal fractions in 7b) are worker-proposed with cited rationale,
-    reviewer-checked for internal consistency, Adam has final sign-off —
-    not pre-specified by Adam up front. (5) `kSmooth` tempo curves are
-    auto-shaped (Catmull-Rom-style) from neighboring `TempoPoint` data only —
-    Adam explicitly rejected adding control-handle fields to `TempoPoint`,
-    so this carries **no M03 persistence schema change**.
-  - **7a — tempo curve math (done):** see the Phase 7a delivery note below.
-  - **7b — articulation/dynamic/grace → velocity+duration mapping
-    (done):** in `graphscore_core`, alongside `tempo_curve.hpp`/
-    `tempo_point.hpp`; wired into `graphscore_domain`'s notation types
-    (`Articulation`, `Dynamic`, `Hairpin`, `Slur`, `GraceGroup`). Resolves
-    the `TODO(Phase 7)` seam at `notation_markings.hpp:112` (grace steal
-    fraction/limits/division) and the untagged Phase-7 deferrals at
-    `articulation.hpp:11` and `notation_markings.hpp:13,30,41,73`
-    (dynamic/hairpin/slur/pedal → MIDI mapping presence-only today).
-  - **7c — simultaneous MIDI ordering + note/CC64 ownership transitions,
-    spec-only (done):** normative header-prose rules define atomic ownership
-    resolution, deterministic source and stream orders, CC64 net transitions,
-    and lifecycle/boundary integration on top of `MidiOwnershipTracker`.
-    No code was added because the M04 scheduler is the real consumer.
-- **Phase 8 — Command and selection model:**
-  - **8a (done):** foundational non-throwing `Command` protocol,
-    standalone `CommandHistory`, atomic `CommandTransaction` with best-effort
-    rollback, three stable-ID proving commands. See delivery note above.
-  - **8b (done):** ten reversible non-structural metadata/audition-mix
-    commands (`SetProjectName`, `SetStartNode`, `SetProjectDynamic`,
-    `SetTrackGain`/`Pan`/`Mute`/`Solo`, `SetNodeColor`/`Notes`/`Position`).
-    See delivery note above.
-  - **8c (done, split 8c-i `54543c1` + 8c-ii `138458d`):** the fourteen
-    reversible-today structural/config commands (graph connections, connector
-    config, route geometry, event binding, track archive/restore) that need
-    no new domain API. See the delivery note above.
-  - **8d (next — scoped with Adam, REQUIRES NEW DOMAIN API):** reversible
-    **add/remove** of nodes, tracks, connectors, and events. These are NOT
-    expressible as exactly-reversible commands ("undo/redo exactly / stable
-    intended IDs", `02-domain-model.md` acceptance criteria) with today's
-    domain layer, because `Project::add_node` mints a `NodeId` and there is
-    **no `remove_node`**; tracks have only soft `archive_track` (reversed
-    in-place by 8c) and **no hard remove**; `Node::add_input`/`add_output`
-    **mint fresh `ConnectorId`s with no restore-with-id path**; and
-    `EventRegistry::add_event` mints a fresh `EventId` with **no
-    register-with-id** and its cascade cannot be rebound to the same id. So
-    8d adds the minimal new domain API first, then the commands wrapping it.
+`ChordNote::id` and `GraceNote::id` (added in 8f-i) are load-bearing fields.
+A serializer that drops or regenerates them silently breaks every note-head
+and grace-note selection and every clipboard identity remapping.
 
-    **Locked scoping decisions (Adam, interactively, before 8d-i):**
-    1. **Reversibility mechanism = snapshot + restore-with-id** (not
-       tombstone/soft-delete). *Add* commands mint the id on first execute,
-       remember it, and redo re-inserts with the remembered id; undo removes
-       by id. *Remove* commands snapshot the full removed entity **plus every
-       piece of state their cascade clears**, remove, and reverse all of it
-       on undo; redo removes again. Every new insert/restore-with-id domain
-       primitive **must guard id-uniqueness** (reject a duplicate id) so the
-       new surface cannot corrupt the model. Tombstoning was rejected as too
-       invasive (every iterator/query/validation/persistence path would have
-       to skip removed entities); track *archive* stays the one legitimate
-       product-visible soft-remove, distinct from generic undo.
-    2. **Tracks: `AddTrackCommand` + an undo-only hard remove.** The product's
-       only user-facing track "removal" is archive (`06-graph-canvas.md:31`,
-       "removed-track music remains archived and recoverable"), already
-       reversible via 8c's Archive/Restore. But adding a track is a normal
-       undoable edit whose undo must **fully erase** the just-created track,
-       so 8d adds an undo-only `hard_remove_track` (erases the track and its
-       lane in every node) used ONLY as `AddTrackCommand`'s inverse — never
-       exposed as a user delete. No standalone `RemoveTrackCommand`.
-    3. **One 8d, split into per-entity sub-increments, lowest-risk first**
-       (each adds its domain primitive + command together, own
-       worker+reviewer+commit; the CHECKLIST "Command and selection model"
-       box is checked only when *all* of Phase 8's remaining deliverables —
-       through selection/clipboard/measure ops — are done, not at the end of
-       8d).
+## Remaining roadmap: 8g → 8h → 9
 
-    **Per-entity increments:**
-    - **8d-i — Connectors** (lowest risk; `Graph::remove_input` cross-node
-      cascade already exists). Domain: `restore_input`/`restore_output`
-      reinserting a full connector *value* preserving its id and every field
-      (type/priority/weight/export/destination/route/event_binding),
-      guarding dup id. Commands: `AddInputConnectorCommand`,
-      `AddOutputConnectorCommand`, `RemoveOutputConnectorCommand`,
-      `RemoveInputConnectorCommand`. Reversibility hazards to snapshot:
-      `remove_output` can destroy the node's `EventListener` when it removes
-      the last output bound to an event (same hazard as 8c
-      `BindOutputEventCommand` → snapshot the listener policy/capacity);
-      `Graph::remove_input` clears every *other* node's output that targeted
-      the removed input → snapshot that (node, output) list and reconnect
-      each on undo.
-    - **8d-ii — Events** (`register-with-id` + existing `remove_event`
-      cascade). Domain: `EventRegistry::add_event_with_id` guarding dup id
-      **and** dup name. Commands: `RegisterEventCommand`,
-      `RemoveEventCommand`. `RemoveEventCommand` snapshots the
-      `EventDefinition` + every bound (node, output) + each affected node's
-      listener policy/capacity, and reverses register + rebind + listener
-      config on undo.
-    - **8d-iii — Tracks** (`AddTrackCommand` + undo-only hard remove per
-      decision 2). Domain: `add_track_with_id` (guard dup id + 64-active
-      cap) and undo-only `hard_remove_track`. Command: `AddTrackCommand`
-      only. Test that undo is safe after intervening lane edits — linear
-      `CommandHistory` guarantees the added track's lanes are back to empty
-      before its add can be undone; pin it.
-    - **8d-iv — Nodes** (heaviest). Domain: `add_node_with_id`, a public
-      `remove_node` (cascade: clear every other node's output targeting the
-      removed node's inputs; clear `start_node` if it referenced the removed
-      node — resolves the Phase-2 "dangling designated start-node" deferral),
-      and `restore_node` reinserting the full `Node` value (it carries its
-      own lanes). Commands: `AddNodeCommand`, `RemoveNodeCommand` (full
-      Node-aggregate snapshot + the inbound-destination and start-node
-      cascade snapshot). Ids are **preserved** on restore — the
-      "deterministic connector remapping" of `06-graph-canvas.md:63` applies
-      to copy/paste/duplicate, NOT delete, so no remapping here. Verify
-      `Node` is cleanly copy/move-constructible before dispatch.
-
-    **Per-increment gate:** the four standard gates + reversibility/cascade
-    tests + a deterministic-replay test; a 64-track/64-measure practicality
-    check on the track and node increments (acceptance criterion).
-  - **8e (next — scoped with Adam, notation + tempo edit commands):**
-    completes line 77's notation and tempo edits. **Locked decisions (Adam):**
-    (1) 8e = **notation edit commands** (the editing core, foundation for the
-    later clipboard cluster); (2) **core voice-events first**, markings
-    deferred to a following sub-increment; (3) **tempo edits folded in** as
-    8e-iii so line 77 fully closes within this phase. **Reversibility
-    approach:** whole-`VoiceContent` snapshot (copy the voice before the edit,
-    restore on undo) — same robust pattern as 8d-iv's whole-`Node` snapshot,
-    avoiding fragile per-edit inverses; every edit must leave the voice
-    **rhythmically complete** (validate via the existing `VoiceContent::
-    normalize`/`check_complete`). **New domain API** = a minimal set of
-    positional `VoiceContent`/`TrackLane` mutators (today they are
-    append/clear-only — `append`, `clear`, `add_dynamic`/`add_hairpin`/
-    `add_slur`/`add_beam_override`/`add_grace_group`, `ensure_stave`,
-    `add_pedal_span`, `normalize`; no positional insert/remove/replace, no
-    marking removal), **worker-proposed and reviewer-checked** (as with the 8d
-    restore APIs and the 7a/7b constants). **Sub-increments:**
-    - **8e-i — core voice-event edits:** new positional `VoiceContent`
-      mutators (insert/remove/replace an event at a position with automatic
-      rest normalization) + reversible commands to set/replace an event
-      (note↔rest↔chord, duration change, chord-build), convert-event-to-rest
-      (the `R` op), and tie/untie. Prerequisite for clipboard/paste.
-    - **8e-ii — marking edits:** add **and remove** dynamics, hairpins,
-      slurs, beam overrides, grace groups, pedal spans (new marking-removal
-      mutators) as reversible commands.
-    - **8e-iii — tempo-point edits (DONE, `5b0d32e`):** add/remove/move/set
-      tempo points via `NodeTimeline::set_tempo`. The "**no new domain API**"
-      expectation recorded here did **not** survive contact with the code:
-      `NodeTimeline` had no way to clear a tempo lane, so the create-first-lane
-      edit had no inverse. Adam ruled to add the one method
-      (`clear_tempo() noexcept`) rather than ship a documented reversibility
-      gap, and to add a fourth command (`SetTempoPointCommand`) beyond the
-      three named here. See the 8e-iii delivery note above. **Did not close
-      line 79** — node-timeline (clef/pickdown/signature) commands are still
-      missing; see the NEW GAP note in that delivery entry.
-  - **8f (8f-i complete — 8f-ii next; scoped with Adam, see the dedicated section below):** the
-    toolkit-independent selection model. Kinds, identity mechanism, cardinality,
-    and validation approach are all locked; see "**Phase 8f scope (locked)**"
-    after this list. **8f-i (`ChordNote` + `GraceNote` identity groundwork) is
-    done. 8f-ii (selection representation) is next.** **8g** clipboard fragments (relative
-    positions, staff/voice mapping, no source UUIDs) + reversible cut/copy/paste
-    (identity remapping + destination rest normalization + boundary-crossing
-    clip/reconnection rules) + node copy/paste id remapping (duplicate with
-    **fresh** ids — the inverse of 8d's id-preserving restore). Depends on 8e
-    (notation mutators) + 8f (selection). **8h** atomic measure insert/delete
-    **plus the node-timeline edit commands** — **the heaviest, and now the
-    phase that closes line 79**: `MeasureMap` has no mutator at all and
-    `NodeTimeline` has no `set_measures`, so this needs new domain API plus an
-    atomic cascade across the measure map, time/key-signature and clef lanes,
-    tempo anchors, pedal spans, pickdown, and re-normalization of every voice
-    in every track's lane. Per Adam's post-8e-iii ruling it **also** owns the
-    three missing node-timeline command families that blocked line 79 —
-    per-measure time/key-signature changes (dependent on the new `MeasureMap`
-    mutators, which is why they land here), clef changes (`ClefLane`), and
-    pickdown set/clear (wrapping the existing
-    `NodeTimeline::set_pickdown`/`clear_pickdown`, so reversibility needs
-    care: those mutators already revalidate the tempo lane and reject a change
-    that would invalidate it, and `set_pickdown` has no "restore previous
-    pickdown" inverse beyond calling it again with the old value or
-    `clear_pickdown` — snapshot the old `pickdown_duration()` optional, same
-    optional-means-absent shape as 8e-iii's tempo snapshots). Expect to split
-    8h into sub-increments; the clef and pickdown commands are the
-    lowest-risk starting point since they need no new domain API, mirroring
-    how 8c preceded 8d. Transaction grouping (line 78 — `CommandTransaction`
-    already exists from 8a) is exercised by the multi-measure/drag operations
-    in 8g/8h.
-### Phase 8f scope (locked with Adam, before any worker dispatch)
-
-Reconnaissance findings that drove the decisions (all verified in-tree):
-
-- **`Note`, `Chord`, and `Rest` already carry `NotationEntityId`**
-  (`notation_event.hpp:22-64`), and `event_id(const VoiceEvent&)` accesses it.
-  But **`ChordNote` and `GraceNote` did not** — an individual notehead inside a
-  chord had no stable identity. **(Resolved by 8f-i — both now carry
-  `NotationEntityId`.)**
-- **`graphscore_domain.hpp:98` already forward-declares `class Selection`** as
-  an unimplemented placeholder. 8f replaces it with a real header include.
-- **`NotationEntityId` uniqueness is only guaranteed within one
-  `VoiceContent`** (`voice_content.cpp:544`, `marking_id_exists`), plus pedal
-  spans unique across one `TrackLane` (`track.cpp:47-53`). There is **no**
-  node-wide or project-wide uniqueness, so any id-based selection MUST carry
-  full `(NodeId, TrackId, StaveId, Voice)` scope to be unambiguous.
-- **Commands address events positionally** (`Rational`), while **markings
-  address them by id** — an asymmetry a selection has to bridge.
-- **Route segments have no domain substrate at all**: `RouteGeometry` stores
-  only interior waypoints, endpoints are explicitly a rendering concern, and
-  an automatic route stores no geometry whatsoever.
-
-**Adam's locked rulings:**
-
-1. **Notehead identity: add `NotationEntityId` to `ChordNote`.** Matches how
-   every other selectable notation entity is addressed; rejected index-into-
-   `Chord::notes` (invalidated by every `SetEventCommand`, which replaces the
-   whole `Chord` value) and address-by-`SpelledPitch` (nothing enforces pitch
-   uniqueness within a chord). **This is a domain data-model change, not pure
-   representation** — it must be added to the `marking_id_exists` cross-kind
-   uniqueness scan, and it is an **M03 persistence obligation** (the field must
-   round-trip). Consider whether `GraceNote` should get one for the same
-   reason — it has the identical id-less shape, and 8g's clipboard will face
-   the same remapping problem for grace notes.
-2. **Route-segment selection: DEFERRED to M06** with a recorded deferral (see
-   the deferrals list). Segment geometry only becomes well-defined once the
-   canvas computes drawn paths, and M06 owns connector-segment drag
-   (`06-graph-canvas.md:70`). 8f ships every other kind; the deliverable box
-   stays open with an explicit note rather than encoding a representation with
-   known holes that M06 would discard.
-3. **Staff-focus: DROPPED as a selection kind.** Every plan-doc use of "focus"
-   is *context* for another operation, never an end state — and
-   `05-notation-editor.md:43` has Primary+Up/Down end in a note selection or a
-   caret, never in a bare focused staff. The focused staff is simply the
-   `(TrackId, StaveId)` scope of the current selection, and the
-   "nothing selected here" case is the insertion caret, which carries the same
-   scope. That case is never empty: voices are always rest-filled, and legal
-   caret positions are event boundaries ∪ `total_length()`, so position 0 is
-   always valid. Modeling it separately would be a second source of truth for
-   information the scope already carries.
-4. **Cardinality: a `Selection` is a SET of same-kind items**, with mixing
-   incompatible kinds rejected. Required by node multi-select
-   (`06-graph-canvas.md:63`) and aligned-measure-across-tracks
-   (`README.md:135`). Note `StrongId` has `operator==` and `std::hash` but
-   **no `operator<=>`** (`strong_id.hpp:27`), so this means hashed storage or
-   adding ordering — worker's choice, reviewer-checked.
-
-**Orchestrator decisions (precedent-based, not Adam-escalated — flag in review
-if any looks wrong):**
-
-5. **Selection is a snapshot value; resolution against a `Project` is a
-   separate free function.** No existing domain value type validates against
-   the aggregate at construction (`MeasureMap::create`, `TempoLane::create`,
-   `StaffLayout::create` all validate intrinsic structure only), and the
-   `notation_validation.hpp` free functions (`validate_voice_references`,
-   `validate_lane_references`) are the established shape for "does this
-   actually resolve" checks. The domain has **no observer/notification
-   mechanism** on `Project`/`Node`/`VoiceContent`, so snapshot-plus-revalidate
-   is the only design consistent with the codebase. `Selection` therefore
-   validates only intrinsic structure (scope well-formed, `start <= end`,
-   non-empty item set, kind homogeneity).
-6. **Shape: a `Selection` class holding shared scope + a `std::variant`
-   payload.** The existing forward declaration is `class Selection` (a class,
-   which cannot forward-declare a variant alias), and the scope tuple is shared
-   by most but not all kinds (node/connector need no stave/voice; pedal needs
-   no voice). `VoiceEvent = std::variant<Note, Chord, Rest>` is the in-repo
-   precedent for variant payloads.
-7. **Event addressing: carry `NotationEntityId`, not position.** Ids survive
-   rhythm edits that shift onsets; positions do not. But every voice-scoped
-   command targets by `Rational`, and `VoiceContent` has **no
-   `position_of_event(NotationEntityId)` reverse lookup** today — only
-   `find_event_index_at(Rational)`, which requires an exact boundary match.
-   8f must add that reverse lookup as a **`const` query** (not a mutator, so
-   it does not breach "pure representation"). This is the bridge 8g needs to
-   turn a selection into command targets.
-8. **Measure selection stores the ordinal index** (a `Measure` has no id —
-   `measure_map.hpp:18-23`), and must **document that 8h invalidates indices**
-   when it adds measure insert/delete. Also document the asymmetry that
-   `MeasureMap::measure_index_at` returns `nullopt` in the pickdown region, so
-   a measure-index selection **cannot name pickdown material** at all, while a
-   range selection can.
-9. **Range selection stores a raw `MusicalSpan`** (`node_timeline.hpp:23`,
-   which already exists and is exactly this primitive) and recomputes region
-   membership via `NodeTimeline::classify(MusicalSpan)` on demand. Do **not**
-   cache a `SpanClassification` — it goes stale on `set_pickdown`/
-   `clear_pickdown` and there is no mutation notification to invalidate it.
-
-**Suggested sub-increment split (own worker+reviewer+commit each):**
-
-- **8f-i — `ChordNote` identity groundwork.** Add `NotationEntityId` to
-  `ChordNote` (and decide `GraceNote`), extend the `marking_id_exists`
-  uniqueness scan, update every existing chord construction site and test.
-  This is the risky increment: it touches shipped code and the 8e-ii
-  uniqueness invariant, and it is a prerequisite for notehead selection. Doing
-  it first means 8f-ii is purely additive.
-- **8f-ii — the `Selection` representation.** Scope struct, kind variant, set
-  semantics with homogeneity enforcement, intrinsic validation, the
-  `validate_selection(const Project&, const Selection&)`-style free function,
-  and the `VoiceContent` const reverse lookup. Replace the
-  `graphscore_domain.hpp:98` forward declaration with the real include.
-
-**Per-increment gate:** the standard five gates + ASan/UBSan, as every 8x
-increment has run.
-
+- **8g — Clipboard and cut/copy/paste:** relative positions, staff/voice
+  mapping, no source UUIDs; identity remapping + destination rest
+  normalization; boundary-crossing clip/reconnection rules for notes, ties,
+  slurs, tuplets, hairpins, pedal spans, dynamics, clef/key/time changes;
+  node copy/paste id remapping (duplicate with **fresh** ids).
+- **8h — Measure insert/delete + node-timeline edit commands:** `MeasureMap`
+  has no mutator at all — needs new domain API + atomic cascade across every
+  voice in every track's lane. Also owns (per Adam's post-8e-iii ruling) the
+  three missing node-timeline command families: per-measure time/key-signature
+  changes, clef changes (wrapping `ClefLane`), and pickdown set/clear
+  (wrapping existing `set_pickdown`/`clear_pickdown` with optional snapshots).
+  These close the "reversible commands for every … notation … edit" box.
 - **Phase 9 — Validation service:** fast incremental + complete validation;
-  diagnostics with stable ids/severity/machine code/user text; validates
-  rhythmic completeness, UUID uniqueness, references, track alignment, signature
+  diagnostics with stable ids/severity/code/text; validates rhythmic
+  completeness, UUID uniqueness, references, track alignment, signature
   legality, graph edge integrity, event-name uniqueness, connector cardinality.
-- **Finally:** verify all Acceptance Criteria + Test Focus boxes, check them and
-  the top-level "Milestone 02 complete", update MILESTONES/status, summarize for
-  Adam, and **stop** (do not start Milestone 03).
+- **Finally:** verify Acceptance Criteria + Test Focus, check all remaining
+  boxes, update CHECKLIST.md, summarize for Adam, **stop** (do not start M03).
 
-## Deferrals carried forward (do NOT treat these gaps as defects)
+## Active deferrals (relevant to remaining M02 work)
 
-Recorded here so the owning phase picks them up:
+- **→ M06:** route-segment selection deferred out of M02. `RouteGeometry` stores
+  only interior waypoints, endpoints are explicitly a rendering concern, and
+  an automatic route stores no geometry at all. Any index-based segment
+  reference is invalidated by `SetCustomRouteCommand`, `ResetRouteCommand`,
+  and `disconnect` (which resets a customized route to automatic). M06 owns
+  connector-segment drag; define the representation there, next to its only
+  real consumer. The `02-domain-model.md` selection deliverable box stays
+  unchecked for this reason.
+- **→ M03:** connector order is semantically load-bearing (tier-3 arbitration
+  depends on `Node::outputs()` insertion order, which was previously only
+  cosmetic). Persistence must preserve and round-trip this order exactly — a
+  serializer that writes connectors from a map or re-sorts by UUID would
+  silently change playback. Warrants a dedicated round-trip test in M03.
+- **→ M03:** `ChordNote::id` and `GraceNote::id` from 8f-i are load-bearing
+  fields (same class of obligation as connector order). A serializer that
+  drops or regenerates them silently breaks every notehead/grace-note
+  selection and every clipboard identity remapping.
+- **→ Phase 9:** deterministic ordering in the notation validator.
+  `notation_validation.cpp` iterates `TrackLane::stave_ids()` from a
+  `std::unordered_map`, so cross-stave diagnostic order is non-deterministic.
+  Sort stave ids when the general ValidationService subsumes the focused
+  validator.
+- **→ Phase 9:** `EventStateMachine::clear_event` caller obligation is still
+  unenforced — a caller who unbinds the last output for an event and forgets
+  `clear_event` gets a stale occurrence resurrecting on rebind. The transport/
+  edit layer should make the call automatic at the mutation site.
+- **→ later (advisory):** orphan queue growth — `EventStateMachine::queues_`
+  entries for removed nodes/events are never reclaimed (harmless since ids are
+  UUIDs); a `prune(const Graph&)` would address it. A zero-capacity FIFO
+  listener silently swallows every occurrence (Phase 9 diagnostic candidate).
 
-- **→ Phase 6/7:** articulation/dynamic/hairpin/slur → MIDI velocity/duration/
-  legato **mappings**, and CC64 emission, are NOT implemented in the notation
-  model — only presence/structure. `TODO(Phase 7)` seams in
-  `notation_markings.hpp`.
-- **→ Phase 7:** grace-note **steal-time math** (fraction/limits/multi-note
-  division/no-preceding-note behavior) — structure only in 4b; `TODO(Phase 7)`
-  seam. Cubic smooth **tempo-curve math** (integration/inversion/tolerances/
-  sample rounding) — `TempoLane` is structural only; `TODO(Phase 7)` seam in
-  `tempo_lane.hpp`.
-- **→ Phase 9:** **Deterministic ordering in the notation validator.**
-  `notation_validation.cpp::validate_lane_references` iterates
-  `TrackLane::stave_ids()` derived from a `std::unordered_map`, so cross-stave
-  diagnostic order is non-deterministic even though the header promises an
-  "ordered list" (within a stave it is deterministic). The general
-  ValidationService in Phase 9 is expected to subsume this focused validator;
-  make its output deterministic there (e.g. sort stave ids). No current test
-  exercises >1 stave. (Reviewer LOW finding, 4b.)
-- **→ Phase 9:** **Dangling designated start-node** is currently structurally
-  impossible (no node-removal API exists yet) so it is unguarded; revalidate
-  when node removal lands. (Reviewer LOW finding, Phase 2.)
-- **→ Phase 6+:** the `EventStateMachine::clear_event` **caller obligation is
-  unenforced**. `EventStateMachine` is deliberately not wired into
-  `Node`/`Graph` mutation paths, so a caller who unbinds the last output for
-  an event and forgets `clear_event` gets a stale occurrence resurrecting on
-  rebind. Documented at `event_state_machine.hpp` ("Invariant: an
-  EventListener removal must clear its queue"). Whoever wires the
-  transport/edit layer should make the call automatic at the
-  `Node::bind_output_event` / `remove_output` / graph-edit site rather than by
-  convention.
-- **Resolved in Phase 6a** (was: "→ Phase 6: the destination-eligibility rule
-  is scoped to sequential only"): `assemble_vertical_candidates` now applies
-  the `destination().has_value()` filter before candidates reach selection.
-- **Adam's ruling (product decision, Phase 6a):** random weights are exact
-  `Rational`, not whole percent — whole percent cannot express an exact
-  three-way split (33/33/33 = 99 is rejected; 34/33/33 is silently biased).
-  "Totals exactly 100 percent" in the `02-domain-model.md`/`README.md` plan
-  prose means **the eligible group sums to exactly `Rational(1)`**.
-- **→ docs pass (deferred):** `docs/plan/02-domain-model.md` and
-  `docs/plan/README.md` still say "must total exactly 100 percent", and
-  `weighted_selection.hpp` retains a "100-percent" section heading and
-  cross-reference to that prose. This is internally consistent and
-  documented today, but the prose should be reconciled with the `Rational`
-  framing in a later docs pass.
-- **→ open product question, NOT yet decided by Adam:** the 100%-total check
-  is computed over the **eligible** group (destination-having outputs only),
-  so a correct 50/50 branch node whose second branch is transiently
-  disconnected mid-edit sums to 1/2 → invalid group → **playback stops**
-  rather than the still-connected branch winning outright. Related: the
-  default weight is `Rational(1)`, so any freshly created node with two
-  connected sequential outputs sums to 2 and stops playback until weights are
-  explicitly assigned. Both behaviors are documented in
-  `weighted_selection.hpp` but deliberately left unchanged pending a product
-  decision. Candidate for a Phase 9 ValidationService authoring diagnostic.
-- **→ Phase 6b:** `assemble_vertical_candidates` applies the
-  `destination().has_value()` filter, but `resolve_vertical_match`/
-  `resolve_vertical_transition` take a **pre-assembled** candidate set — any
-  future vertical candidate assembly path must apply the same filter, or a
-  destination-less connector could win an unfollowable jump.
-- **→ Phase 7 / runtime:** `select_winner`, `resolve_vertical_match`, and
-  `resolve_vertical_transition` still take `const std::vector<ArbitrationCandidate>&`,
-  and `assemble_vertical_candidates` returns a `std::vector`;
-  `weighted_selection.hpp` already uses `std::span`. These should migrate to
-  `std::span` plus caller-supplied storage before the runtime closure
-  consumes them. Also `compute_group` allocates a `std::vector` per call and
-  is called twice per boundary — fine for the writer-side domain layer, not
-  for the realtime `process` path.
-- **Phase 6c (`graphscore_domain`) — writer audition model:** `PluginIdentity`
-  (toolkit-independent opaque plugin type identifier: human-readable name,
-  format string, 16-byte uid — no VST3 SDK types), `PluginStateBlob`
-  (opaque `std::vector<std::uint8_t>` wrapper for serialised processor
-  state), `EffectSlot` (identity + state + bypass flag, ordered by position
-  in the chain vector), `TrackPluginChain` (0-or-1 instrument slot + ordered
-  effect slots per track; `set_instrument`/`clear_instrument`,
-  `add_effect`/`insert_effect`/`remove_effect`/`move_effect`,
-  `set_effect_bypass`/`set_effect_state` with documented index preconditions,
-  default equality), and `AuditionMixSettings` (gain/pan/mute/solo with
-  defaults; gain/pan stored as-is, legal ranges deferred to the M08 mixer).
-  Integrated as accessor-only private members on `Track` with a non-const
-  `Project::find_active_track` mirroring `find_node`. Archive/restore
-  preserves the full chain and mix. 49 test cases covering identity
-  equality/comparison, blob storage, effect slot bypass/state, chain
-  mutators, move semantics both directions, instrument/effect independence,
-  copy independence, mix defaults/setters/equality, track integration,
-  archive/restore round-trips, and multi-track isolation.
-- **→ Phase 7 / transport:** `TransportInstant` currently lives in
-  `event_state_machine.hpp` though documented as project-wide; consider
-  relocating it to `graphscore/core/` when a real transport lands. Note it
-  has `operator==` and a hand-written `operator<=` only (no `<`/`>`), and its
-  unit is deliberately unspecified since only ordering/equality are compared.
-- **→ noted:** `weighted_selection.cpp` uses `__builtin_mul_overflow`/
-  `__builtin_add_overflow`, a Clang/AppleClang/clang-cl extension (the
-  project hard-fails configure on non-Clang, so this is safe today);
-  `<stdckdint.h>`'s `ckd_add`/`ckd_mul` is the portable C23 successor.
-- **→ Milestone 03 (persistence):** **connector order is now semantically
-  load-bearing.** Tier-3 arbitration depends on `Node::outputs()` insertion
-  order, which was previously only cosmetic. Persistence must preserve and
-  round-trip `outputs()` order exactly — a serializer that writes connectors
-  from a map or re-sorts by UUID would silently change playback. Warrants a
-  round-trip test in M03.
-- **→ Phase 9:** ValidationService should flag a **zero-capacity FIFO
-  listener** (reachable only via the raw `EventListener::set_capacity`;
-  `Node::set_listener_policy` rejects it), which otherwise silently swallows
-  every occurrence.
-- **→ later:** **orphan queue growth** — `EventStateMachine::queues_` entries
-  for removed nodes/events are never reclaimed (clears empty in place by
-  design). Harmless for correctness since ids are UUIDs and can never be
-  re-matched, but a long editing session grows the map monotonically; a
-  `prune(const Graph&)` / `erase_node(NodeId)` would address it.
-- **Adam's ruling (product decision, Phase 6b-i):** a pickdown-bearing node
-  sitting on a cycle is legal and bounded, not an export failure. Verbatim:
-  "Allow. In that scenario the pickdown measure still plays on every loop by
-  overlapping with the start of the loop." The oracle no longer performs
-  reachability-from-self graph analysis: because a node has at least one
-  complete main-region measure and a pickdown is always strictly shorter
-  than one complete measure (`README.md`, `02-domain-model.md`;
-  `NodeTimeline::set_pickdown`), the musical time a cycle must traverse
-  before revisiting a pickdown-bearing node is never shorter than the
-  previous tail, so concurrency per pickdown-bearing node is at most 1
-  whenever tempo is comparable across the cycle. Note the proof is
-  **not** "the node replays a whole measure on every revisit" — a vertical
-  jump can re-enter a node close to its own boundary. It is that vertical
-  jumps *telescope*: `vertical_regions_compatible` forces identical
-  main-region lengths and makes `map_vertical_position` the identity, so a
-  jump skips exactly the distance already played, consuming no musical
-  time or position; only sequential transitions reset position, always to
-  0. Summing the runs between sequential transitions, elapsed position
-  between two boundary crossings of a node is at least its full
-  main-region length. (Reviewer-supplied correction, 6b-i: the original
-  "replays one complete measure" argument was refuted by an A→B→vertical→A
-  counterexample re-entering A at 15/16 of its only measure.) `prove_pickdown_overlap_bound` now
-  always returns `kBounded` for any structural input, with the bound equal
-  to the count of pickdown-bearing nodes; `PickdownBoundStatus::kUnbounded`
-  is retained on the enum, unreachable today, as the reserved verdict for
-  Phase 7's timing analysis (see the Phase 7 entry immediately below).
-- **→ Phase 7:** bounding concurrent pickdown tails under **tempo disparity
-  around a cycle** is the one case the Phase 6b-i structural proof above
-  does not close — a tail on a slow source tempo curve could in principle
-  still be sounding when a much faster route back around the cycle (through
-  another node's own tempo curve, or a vertical jump landing close to the
-  node's own boundary) brings playback back around for a second tail before
-  the first tail's real elapsed time has caught up. Proving or bounding
-  that requires integrating real time over the cubic smooth-tempo curve
-  (`tempo_lane.hpp`'s `TODO(Phase 7)`); this is where
-  `PickdownBoundStatus::kUnbounded` becomes reachable, if it ever is.
-- **Adam's rulings (product decisions, Phase 6b-ii):** (1) **panic is
-  global** — verbatim: "Since panic refers to the audio processing itself,
-  which is only in one place, and by extension the transport, this is
-  global. It clears audio processing, stops it, stops the transport." So
-  `MidiOwnershipTracker::panic()` releases all note and pedal ownership
-  project-wide including pickdown tails; stopping the transport and
-  clearing `EventStateMachine` state are the caller's obligations, outside
-  that class. (2) **Snapshot retirement** = retirement of a pickdown-tail
-  snapshot when it completes naturally, releasing whatever ownership it
-  still holds — the ordinary end of a tail's life, contrasted with panic,
-  which cuts it early.
-- **Ruling (reviewer-settled, Phase 6b-ii): pedal spans ARE released on a
-  vertical jump**, not just notes. `README.md:110` names only notes, but a
-  source-main pedal span left down across a jump has **no reachable
-  release event** — its notated end lies in a node that is no longer
-  playing — so under `README.md:79` ("pedal-up emits only after the last
-  active logical span releases") CC64 would stay at 127 for the remainder
-  of playback, blurring the destination node and everything after it.
-  Cutting at the jump costs only a pedal shorter than notated, exactly the
-  cost `README.md:110` already accepts for notes. Tail pedal spans remain
-  active per `README.md:76`.
-- **→ Phase 7 / transport wiring:** `MidiOwnershipTracker` trusts
-  caller-supplied `MidiOwnerScope` correctness (it has no `Project`/`Graph`
-  access, so it cannot verify that `MidiOwnerScope::main(node)` is only
-  attached while `node` is genuinely active), and
-  `transfer_main_to_pickdown_tail` is a **caller obligation** that must be
-  invoked once at each sequential boundary, paired with
-  `begin_pickdown_tail`. A wrong scope or a missed transfer produces a
-  stuck note or a wrongly cut tail with **no diagnostic**. Same shape as
-  the `EventStateMachine::clear_event` caller-obligation entry above, and
-  the same Phase 7 transport-wiring site should make both automatic.
-  `MidiOwnershipTracker` is deliberately a standalone state machine
-  alongside `EventStateMachine`, not wired into it.
-- **→ later (advisory, 6b-ii):** the `ReleaseFilter` enum refactor of
-  `MidiOwnershipTracker::release_where` (its `(bool, optional, optional)`
-  signature admits only three legal combinations) was judged coherent
-  as-is; revisit if a fourth filter kind appears. `panic()` and
-  `clear_all()` have byte-identical bodies — kept as separate named entry
-  points so Phase 7 can give panic a diagnostic flag or forced snapshot
-  drop without an API break.
-- **→ Phase 7 / runtime (performance, advisory only):**
-  `TempoLane::segment_index_at` (`src/domain/tempo_lane.cpp:38-44`) is an
-  O(n) scan over strictly-ordered points where `std::upper_bound` would be
-  O(log n); `Project::find_node` is linear, making the oracle O(pickdown_nodes
-  × V × E); `pickdown_ownership.cpp:57` heap-allocates a fresh `next_active`
-  per sounding column and `classify_voice_ownership` (:90-93) does not
-  `reserve()`. All fine at 64-node/64-measure scale in a non-realtime domain
-  layer. Same profile as the `compute_group`/`select_winner` entry already in
-  that list. `MidiOwnershipTracker` (6b-ii) is allocation-light — a fixed
-  16-slot array for per-channel pedal counts — but still uses
-  `unordered_map` for note/pedal ownership; same profile as `EventQueue`.
-- **→ Phase 7 / runtime (performance, advisory only, 7a):**
-  `tempo_curve.cpp`'s `integrate_elapsed_seconds` re-runs a linear
-  `locate_segment` scan on every internal loop iteration, and
-  `invert_elapsed_seconds`'s fixed 52-iteration bisection calls it again
-  each step, giving `O(52·n²)` per inversion; each `smooth_rate` evaluation
-  re-normalizes up to four `Rational`→`double` BPM conversions per call with
-  no caching. Fine at authoring scale in `graphscore_core` today, but this
-  code sits inside the ADR 0003 runtime closure and is therefore subject to
-  the realtime "no unbounded work on `process`" rule once something calls
-  it from that path — wants an advancing index / `std::upper_bound` and
-  per-segment rate memoization before then. Same profile as the existing
-  `compute_group`/`segment_index_at` entries above.
-- **→ later (advisory only, 7a):** `tempo_rate_at`'s doc comment doesn't
-  warn that a `kSmooth` segment's returned rate can overshoot the interval
-  `[min(r_i, r_(i+1)), max(...)]` (the header documents the overshoot
-  property elsewhere but not on this specific function) — a caller taking
-  the reciprocal without a floor could hit a very small divisor; add one
-  sentence if a Phase 7-adjacent consumer surfaces this.
-  `quantize_position` (`tempo_curve.cpp`) has no explicit magnitude guard of
-  its own (`std::llround` is UB above ~8.8e12) — unreachable at realistic
-  node/position scale and covered by the existing Phase 1
-  accepted-as-designed `Rational` overflow entry below, not a new risk.
-  `tempo_curve.cpp` obtains `Tempo`/`NoteValue` transitively through
-  `tempo_point.hpp` rather than including `tempo.hpp` directly — harmless
-  today, worth tightening to include-what-you-use if the file is touched
-  again.
-- **→ Milestone 03 (persistence, 7b):** `GraceGroup` has no cardinality
-  validation anywhere in the model (`make_grace_group` accepts any
-  `notes.size()`). `playback_mapping.hpp`'s `kMaxGraceNotesPerGroup = 16`
-  bound keeps the core math UB-free for any size, but a caller that sums
-  `grace_steal_durations`' returned per-note vector itself (rather than
-  using the closed-form `grace_steal_remaining_duration`) can still
-  overflow `Rational` around `note_count` ~1e5 — reviewer-verified, not
-  reachable through any code this milestone ships, but real once M03 loads
-  `GraceGroup` off disk. The persistence layer should validate group size
-  at load time rather than relying on every future caller preferring the
-  closed-form function.
-- **→ later (advisory only, 7b):** `grace_steal_durations` still returns
-  a heap-allocated `std::vector<Rational>` — same "wants `std::span` plus a
-  caller-supplied fixed buffer before the realtime path uses it" profile
-  already on this list for `compute_group`/`select_winner`/tempo-curve
-  integration. `velocity_for_dynamic` indexes an 8-element table with an
-  unchecked `operator[]` on the raw enum value rather than a `switch`
-  (`sounded_duration_for_articulation`, two functions below it in the same
-  file, uses a `switch` and is immune) — harmless today since `Dynamic` has
-  no invalid-construction path, but inconsistent within the file; worth
-  matching if that function is touched again.
+## Environment quirks
 
-- **→ Milestone 06 (graph canvas), Adam's ruling during 8f scoping:**
-  **route-segment selection is deferred out of M02.** `RouteGeometry`
-  (`route_geometry.hpp:31-52`) stores only *interior* waypoints — endpoints are
-  explicitly a rendering concern (`:28-30`) — so the drawn path has more
-  segments than the stored list implies, and an **automatic route stores no
-  geometry at all** (the writer computes it fresh on every layout). Any
-  index-based segment reference is invalidated by `SetCustomRouteCommand`,
-  `ResetRouteCommand`, and `disconnect` (which resets a customized route to
-  automatic). M06 owns connector-segment drag (`06-graph-canvas.md:70`) and is
-  where segment geometry first becomes well-defined; define the representation
-  there, next to its only real consumer. The `02-domain-model.md` selection
-  deliverable box stays unchecked for this reason and names it.
-- **→ Milestone 03 (persistence), from the 8f-i `ChordNote`/`GraceNote` ruling:** once
-  `ChordNote` and `GraceNote` gain a `NotationEntityId`, that field is a **round-trip
-  obligation** — a serializer that drops or regenerates it silently breaks
-  every notehead selection and every clipboard identity remapping that
-  references a chord pitch or grace pitch. Same class of load-bearing-field obligation as the
-  connector-order entry already on this list.
-- **→ later (advisory only, 8e-iii, tree-wide):** `tests/domain/command_test.cpp`
-  uses `assert(...)` in its setup helpers (lines ~381, ~389, and the new tempo
-  helper) without including `<cassert>`. Pre-existing and consistent within the
-  file, so 8e-iii deliberately did not touch it; add the include in a later
-  tree-wide tidy pass rather than as a one-off.
-
-Accepted-as-designed (no action needed): beam-override contiguity check ignores
-list order (4b #2); `Node::lane_count()` counts archived lanes too (Phase 2);
-`Rational` cross-multiplication can overflow only for non-musical extreme
-operands (Phase 1); `select_winner` takes `const std::vector&` and
-`resolve_sequential_boundary` heap-allocates a candidate vector per boundary —
-Phase 7's realtime path will want `std::span` plus a caller-supplied fixed
-buffer; `EventQueue` is a bounded FIFO using `erase(begin())`, documented as
-satisfying the capacity invariant a realtime preallocated ring buffer would
-implement (Phase 5).
-
-## Environment quirks (every worker/reviewer brief should mention these)
-
-- **clang-tidy is now a PRE-COMMIT gate (Adam, `ae81f5d` "Run clang-tidy
-  before commits").** `.githooks/pre-commit` runs the clang-tidy 18 analysis
-  (incrementally, reusing `build/tidy`) and **blocks the commit on any
-  finding** — it is no longer only a CI/pre-push gate. Consequence: **the
-  standard gate set is now FIVE, not four** — every worker must run clang-tidy
-  and every reviewer must verify it clean before the orchestrator commits, or
-  the commit will fail at the hook. This bit Phase 8d-i: its `std::optional`
-  snapshot members (needed because `InputConnector`/`OutputConnector` have no
-  default ctor) tripped `bugprone-unchecked-optional-access`; the fix was an
-  explicit `has_value()` guard (returning `ResultCode::kInternalError`, a
-  should-be-unreachable branch under the command state machine) before every
-  optional dereference, plus hoisting a doubled `event_binding()` call into a
-  local. 8d-ii..iv will reuse the same optional-snapshot pattern for
-  `Node`/`Track`/event aggregates and must apply the same guards up front.
-  **The hook's own `build/tidy` dir is separate from any dedicated dir a worker
-  used** (e.g. `build/tidy-fix`), so the first commit after a batch of new
-  sources re-populates it from scratch and can exceed **7 minutes** — this
-  timed out an orchestrator `git commit` on 8e-iii. Warm it first with
-  `cmake --build build/tidy -- -k 0` (long timeout), then commit; the hook's
-  run is then "ninja: no work to do" and the commit is instant.
-  Run clang-tidy the AGENTS.md way in a **dedicated** build dir so it does not
-  slow `build/debug`: `cmake -S . -B build/tidy-fix -G Ninja -DCMAKE_BUILD_TYPE=Debug
+- **clang-tidy is a pre-commit gate.** `.githooks/pre-commit` runs the
+  clang-tidy 18 analysis (incrementally, reusing `build/tidy`) and blocks the
+  commit. Canonical configure: `cmake --preset debug -B build/tidy
   -DGRAPHSCORE_BUILD_WRITER=OFF -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON
-  -DCMAKE_CXX_FLAGS="-isysroot $(xcrun --show-sdk-path)"` then
-  `cmake --build build/tidy-fix -- -k 0` (clang-tidy 18 at
-  `/opt/homebrew/opt/llvm@18/bin/clang-tidy`; a non-Apple clang-tidy needs the
-  `-isysroot` flag to find libc++). Because the hook runs clang-tidy, **commits
-  now take longer** — give `git commit` a generous timeout (the first full
-  `build/tidy` population can exceed 2 min; incremental re-commits are fast).
-- **→ family-wide hardening (DONE, `7297bca` "Handle event-binding command
-  allocation failures"):** commands calling `Graph::bind_output_event` inside
-  a `noexcept` phase were unguarded, so a `std::bad_alloc` from the listener
-  `try_emplace` (`node.cpp`) would cross the noexcept boundary and
-  `std::terminate` rather than translate to `kOutOfMemory` per the `Command`
-  contract. Fixed family-wide (Adam's call) as its own hardening commit
-  mirroring `33a9a29`: all four sites now guarded —
-  `BindOutputEventCommand::execute`/`undo`/`redo` (8c-ii) and
-  `RemoveEventCommand::undo`'s rebind loop (8d-ii). Precedent for future
-  command increments: **any `bind_output_event` (or other listener-
-  allocating) call on a noexcept command path must be wrapped**.
-- **Watch for Adam's out-of-band commits.** Adam committed `33a9a29 "Handle
-  route command allocation failures"` (hardening the 8c route commands' undo/
-  redo allocation paths — same direction as our fix rounds) and `ae81f5d`
-  above while 8d-i agents were running. They landed cleanly under the 8d-i
-  work (no shared files). Before committing an increment, `git log`/`git show
-  --stat` to confirm HEAD is where you expect and nothing you touch overlaps.
-- **cpplint** is not on the default PATH; it lives at
-  `/Users/adamshield/Library/Python/3.9/bin`. Prepend it before
-  `cmake --preset debug` so `find_program` locates it, then run the lint target.
-  The **pre-commit hook prints "cpplint not found, skipping"** and lets the
-  commit through — that is an environment skip, not a lint pass; workers verify
-  cpplint manually and reviewers run the lint gate with the PATH fix.
-- **clang-format** binary: `/Library/Developer/CommandLineTools/usr/bin/clang-format`
-  (run `-i` on touched files if the lint target flags formatting).
-- **IDE/clangd diagnostics** on new headers ("`graphscore_core.hpp` not found",
-  "`std::optional` not found", "`<=>` is a C++20 extension") are **false
-  positives** — the editor analyzes headers in isolation without `-std=c++23`
-  and `-I include`. Judge only by the clean `cmake` build. Every header is kept
-  self-contained (includes what it uses); verify that, ignore the IDE noise.
-- `ld: warning: ignoring duplicate libraries` on the writer app / plugin scanner
-  is a **pre-existing linker note, not a compiler warning-as-error** — harmless.
+  -DGRAPHSCORE_CLANG_TIDY_EXECUTABLE=/opt/homebrew/opt/llvm@18/bin/clang-tidy`.
+  On macOS append `-DCMAKE_CXX_FLAGS="-isysroot $(xcrun --show-sdk-path)"
+  -DCMAKE_C_FLAGS="-isysroot $(xcrun --show-sdk-path)"`. Warm `build/tidy`
+  before committing so the hook sees "ninja: no work to do".
+- **cpplint** is not on PATH; lives at
+  `/Users/adamshield/Library/Python/3.9/bin`. Prepend before configure.
+- **clang-format:** `/Library/Developer/CommandLineTools/usr/bin/clang-format`.
+- **IDE/clangd false positives** (C++20 `<=>`, missing includes) — judge
+  only by the clean cmake build.
+- **Watch for Adam's out-of-band commits:** verify HEAD before committing.
+- **Any `bind_output_event` call on a noexcept command path must be wrapped**
+  for allocation safety (family-wide hardening precedent from `7297bca`).
 
 ## Conventions (locked, match exactly)
 
@@ -1237,9 +212,9 @@ Flat `namespace graphscore` (no nested namespaces). Files snake_case; types
 PascalCase; methods/members snake_case with trailing `_` on private members;
 constants `kPascalCase`; `enum class` with `k`-prefixed enumerators. Every file
 starts `// SPDX-License-Identifier: Apache-2.0`; headers use `#pragma once`.
-Umbrella headers `graphscore_core.hpp` / `graphscore_domain.hpp` re-`#include`
-each new public header. New `.cpp` go in the target's `CMakeLists.txt` source
-list; new tests in `tests/<target>/CMakeLists.txt`. Validated value types use
+Umbrella headers re-`#include` each new public header. New `.cpp` go in the
+target's `CMakeLists.txt` source list; new tests in
+`tests/<target>/CMakeLists.txt`. Validated value types use
 `static std::optional<T> create(...)` with a private constructor — no silent
 invalid construction. Musical positions/durations are exact `Rational` in
 whole-note units, never floating point. Pure value types → `graphscore_core`;

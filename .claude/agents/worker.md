@@ -20,6 +20,17 @@ completed, verified results.
 - The milestone plan files in `docs/plan/` and `AGENTS.md` are the spec. When your task spec
   says to, check off completed steps in the plan file and include that update in the commit.
 
+**Tiered verification (see AGENTS.md for full policy):**
+- Use **Tier 1** (focused build/tests/lint) during implementation iteration and fix rounds.
+  Build only the affected targets; run only the focused test binary, GoogleTest filter, or
+  CTest regex matching the changed behavior; run clang-format on touched files.
+- Before handing off a phase candidate for review, run **Tier 2**: clean debug build with
+  zero warnings, full `ctest --preset debug --output-on-failure`, full lint target.
+- Fix-round workers run narrow regressions matching the specific finding and affected
+  target — not the full test suite. Report exactly which focused tests ran.
+- The reviewer runs **Tier 3** (architecture audits, clang-tidy 18 in `build/tidy`,
+  sanitizers) on the final approved tree.
+
 **Guidelines:**
 - Read and understand the existing codebase conventions before making changes. Follow
   established patterns for includes, naming, formatting, and architecture boundaries
