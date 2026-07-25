@@ -44,6 +44,11 @@ Result TrackLane::add_pedal_span(StaveId stave_id, PedalSpan span) {
   if (!staves_.contains(stave_id))
     return Result(ResultCode::kInvalidArgument);
 
+  // Reject nil identifier — every PedalSpan must carry a non-nil identity
+  // before any collision scan.
+  if (span.id == NotationEntityId{})
+    return Result(ResultCode::kInvalidArgument);
+
   // Reject duplicate pedal ID across all staves.
   for (const auto& entry : pedal_spans_) {
     for (const PedalSpan& existing : entry.second) {

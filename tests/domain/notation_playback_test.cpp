@@ -119,10 +119,11 @@ TEST(NotationPlaybackTest,
 }
 
 TEST(NotationPlaybackTest, ChordUsesItsOwnArticulationSet) {
-  const VoiceEvent chord = make_chord(
-      eighth(), {ChordNote{pitch(Letter::kC)}, ChordNote{pitch(Letter::kE)}},
-      {Articulation::kTenuto});
-  const Rational result =
+  const VoiceEvent chord = make_chord(eighth(),
+                                      {ChordNote{.pitch = pitch(Letter::kC)},
+                                       ChordNote{.pitch = pitch(Letter::kE)}},
+                                      {Articulation::kTenuto});
+  const Rational   result =
       event_sounded_duration(chord, /*is_tied=*/false, std::nullopt);
   EXPECT_EQ(result, eighth().resolved());
 }
@@ -171,9 +172,9 @@ TEST(NotationPlaybackTest, GraceGroupStealMatchesCoreForUniformType) {
   const VoiceEvent       principal = make_note(pitch(Letter::kC), quarter());
   const GraceNoteType    kind      = GraceNoteType::kAcciaccatura;
   std::vector<GraceNote> notes     = {
-      GraceNote{pitch(Letter::kB), eighth(), kind},
-      GraceNote{pitch(Letter::kA), eighth(), kind},
-      GraceNote{pitch(Letter::kG), eighth(), kind},
+      GraceNote{.pitch = pitch(Letter::kB), .duration = eighth(), .type = kind},
+      GraceNote{.pitch = pitch(Letter::kA), .duration = eighth(), .type = kind},
+      GraceNote{.pitch = pitch(Letter::kG), .duration = eighth(), .type = kind},
   };
   const GraceGroup group =
       make_grace_group(event_id(principal), std::move(notes));
@@ -192,10 +193,12 @@ TEST(NotationPlaybackTest, GraceGroupStealMatchesCoreForUniformType) {
 
 TEST(NotationPlaybackTest, GraceGroupStealFollowsFirstNoteTypeWhenMixed) {
   const VoiceEvent principal = make_note(pitch(Letter::kC), quarter());
-  const GraceNote  first{pitch(Letter::kB), eighth(),
-                        GraceNoteType::kAppoggiatura};
-  const GraceNote  second{pitch(Letter::kA), eighth(),
-                         GraceNoteType::kAcciaccatura};
+  const GraceNote  first{.pitch    = pitch(Letter::kB),
+                         .duration = eighth(),
+                         .type     = GraceNoteType::kAppoggiatura};
+  const GraceNote  second{.pitch    = pitch(Letter::kA),
+                          .duration = eighth(),
+                          .type     = GraceNoteType::kAcciaccatura};
   const GraceGroup group =
       make_grace_group(event_id(principal), {first, second});
 
@@ -219,9 +222,10 @@ TEST(NotationPlaybackTest, GraceGroupWithNoNotesStealsNothing) {
 
 TEST(NotationPlaybackTest, GraceGroupWithNoPrecedingNoteFallsBack) {
   const VoiceEvent principal = make_note(pitch(Letter::kC), quarter());
-  const GraceGroup group     = make_grace_group(
-      event_id(principal),
-      {GraceNote{pitch(Letter::kB), eighth(), GraceNoteType::kAppoggiatura}});
+  const GraceNote  gn0{.pitch    = pitch(Letter::kB),
+                       .duration = eighth(),
+                       .type     = GraceNoteType::kAppoggiatura};
+  const GraceGroup group = make_grace_group(event_id(principal), {gn0});
 
   const std::vector<Rational> result =
       grace_group_steal_durations(group, Rational(0));

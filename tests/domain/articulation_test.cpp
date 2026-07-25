@@ -60,9 +60,10 @@ TEST(ArticulationTest, NoteAttachesMultipleNonConflictingArticulations) {
 }
 
 TEST(ArticulationTest, ChordAttachesArticulationsToTheWholeChord) {
-  const Chord chord = make_chord(
-      quarter(), {ChordNote{pitch(Letter::kC)}, ChordNote{pitch(Letter::kE)}},
-      {Articulation::kMarcato});
+  const Chord chord = make_chord(quarter(),
+                                 {ChordNote{.pitch = pitch(Letter::kC)},
+                                  ChordNote{.pitch = pitch(Letter::kE)}},
+                                 {Articulation::kMarcato});
   ASSERT_EQ(chord.articulations.size(), 1u);
   EXPECT_EQ(chord.articulations[0], Articulation::kMarcato);
 }
@@ -99,9 +100,10 @@ TEST(StemOverrideTest, RoundTripsUpAndDown) {
 }
 
 TEST(StemOverrideTest, ChordStemRoundTrips) {
-  const Chord chord = make_chord(
-      quarter(), {ChordNote{pitch(Letter::kC)}, ChordNote{pitch(Letter::kE)}},
-      {}, StemDirection::kDown);
+  const Chord chord = make_chord(quarter(),
+                                 {ChordNote{.pitch = pitch(Letter::kC)},
+                                  ChordNote{.pitch = pitch(Letter::kE)}},
+                                 {}, StemDirection::kDown);
   EXPECT_EQ(chord.stem, StemDirection::kDown);
 }
 

@@ -109,8 +109,10 @@ TEST(TiedNoteSpansTest, ARestBreaksAnActiveTieInsteadOfMergingAcrossIt) {
 
 TEST(TiedNoteSpansTest, ChordNoteheadsTieIndependently) {
   const std::vector<VoiceEvent> events = {
-      make_chord(quarter(), {ChordNote{pitch(Letter::kC), /*tied=*/true},
-                             ChordNote{pitch(Letter::kE), /*tied=*/false}}),
+      make_chord(
+          quarter(),
+          {ChordNote{.pitch = pitch(Letter::kC), .tied_to_next = true},
+           ChordNote{.pitch = pitch(Letter::kE), .tied_to_next = false}}),
       make_note(pitch(Letter::kC), quarter(), /*tied_to_next=*/false),
   };
   const auto spans = tied_note_spans(events, Rational(0));

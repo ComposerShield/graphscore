@@ -6618,11 +6618,11 @@ TEST(CommandTest, SetEventNoteToChordRoundTrip) {
   ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
-  const Chord chord =
-      make_chord(quarter(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
-  auto cmd = std::make_unique<SetEventCommand>(fx.node_id, fx.track_id,
-                                               fx.stave_id, *Voice::create(1),
-                                               Rational(0), VoiceEvent(chord));
+  const Chord chord = make_chord(quarter(), {ChordNote{.pitch = pitch_c4()},
+                                             ChordNote{.pitch = pitch_e4()}});
+  VoiceEvent  ve    = VoiceEvent(chord);
+  auto        cmd   = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0), ve);
 
   ASSERT_TRUE(cmd->execute(fx.project).ok());
   EXPECT_TRUE(std::holds_alternative<Chord>(voice->events()[0]));
@@ -6640,8 +6640,8 @@ TEST(CommandTest, SetEventChordToNoteRoundTrip) {
   VoiceContent* voice =
       &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
 
-  const Chord chord =
-      make_chord(half(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  const Chord chord = make_chord(
+      half(), {ChordNote{.pitch = pitch_c4()}, ChordNote{.pitch = pitch_e4()}});
   ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
@@ -6736,17 +6736,18 @@ TEST(CommandTest, SetEventChordBuildAddNotehead) {
   VoiceContent* voice =
       &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
 
-  const Chord chord2 =
-      make_chord(quarter(), {ChordNote{pitch_c4()}, ChordNote{pitch_d4()}});
+  const Chord chord2 = make_chord(quarter(), {ChordNote{.pitch = pitch_c4()},
+                                              ChordNote{.pitch = pitch_d4()}});
   ASSERT_TRUE(voice->append(VoiceEvent(chord2)).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
-  const Chord chord3 = make_chord(
-      quarter(),
-      {ChordNote{pitch_c4()}, ChordNote{pitch_d4()}, ChordNote{pitch_e4()}});
-  auto cmd = std::make_unique<SetEventCommand>(fx.node_id, fx.track_id,
-                                               fx.stave_id, *Voice::create(1),
-                                               Rational(0), VoiceEvent(chord3));
+  const Chord chord3 = make_chord(quarter(), {ChordNote{.pitch = pitch_c4()},
+                                              ChordNote{.pitch = pitch_d4()},
+                                              ChordNote{.pitch = pitch_e4()}});
+  VoiceEvent  ve3    = VoiceEvent(chord3);
+  auto        cmd =
+      std::make_unique<SetEventCommand>(fx.node_id, fx.track_id, fx.stave_id,
+                                        *Voice::create(1), Rational(0), ve3);
 
   ASSERT_TRUE(cmd->execute(fx.project).ok());
   const Chord* result = std::get_if<Chord>(&voice->events()[0]);
@@ -6762,6 +6763,72 @@ TEST(CommandTest, SetEventChordBuildAddNotehead) {
   const Chord* redone = std::get_if<Chord>(&voice->events()[0]);
   ASSERT_NE(redone, nullptr);
   EXPECT_EQ(redone->notes.size(), 3u);
+}
+
+TEST(CommandTest, SetEventRejectsNilEmbeddedChordNoteId) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const Chord original = make_chord(
+      quarter(),
+      {ChordNote{.pitch = pitch_c4()}, ChordNote{.pitch = pitch_e4()}});
+  ASSERT_TRUE(voice->append(VoiceEvent(original)).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  const auto orig_note0_id = original.notes[0].id;
+  const auto orig_note1_id = original.notes[1].id;
+
+  // Build a replacement chord with a nil ChordNote id.
+  const Chord bad_chord =
+      Chord{NotationEntityId::generate(),
+            quarter(),
+            {ChordNote{{}, pitch_c4(), false},
+             ChordNote{NotationEntityId::generate(), pitch_e4(), false}},
+            {},
+            {}};
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      VoiceEvent(bad_chord));
+
+  EXPECT_FALSE(cmd->execute(fx.project).ok());
+  // Model unchanged.
+  const Chord* result = std::get_if<Chord>(&voice->events()[0]);
+  ASSERT_NE(result, nullptr);
+  EXPECT_EQ(result->notes[0].id, orig_note0_id);
+  EXPECT_EQ(result->notes[1].id, orig_note1_id);
+}
+
+TEST(CommandTest, SetEventRejectsChordNoteIdEqualToParent) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const Chord original = make_chord(
+      quarter(),
+      {ChordNote{.pitch = pitch_c4()}, ChordNote{.pitch = pitch_e4()}});
+  ASSERT_TRUE(voice->append(VoiceEvent(original)).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  const auto orig_note0_id = original.notes[0].id;
+
+  // Build a chord where a ChordNote id equals the Chord's own id.
+  const auto  parent_id = NotationEntityId::generate();
+  const Chord bad_chord =
+      Chord{parent_id,
+            quarter(),
+            {ChordNote{parent_id, pitch_c4(), false},
+             ChordNote{NotationEntityId::generate(), pitch_e4(), false}},
+            {},
+            {}};
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      VoiceEvent(bad_chord));
+
+  EXPECT_FALSE(cmd->execute(fx.project).ok());
+  const Chord* result = std::get_if<Chord>(&voice->events()[0]);
+  ASSERT_NE(result, nullptr);
+  EXPECT_EQ(result->notes[0].id, orig_note0_id);
 }
 
 TEST(CommandTest, SetEventDoubleExecuteRejected) {
@@ -6882,7 +6949,7 @@ TEST(CommandTest, SetEventSingleNoteChordRejected) {
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
   const Chord bad_chord =
-      make_chord(quarter(), {ChordNote{pitch_c4()}});  // only 1 note
+      make_chord(quarter(), {ChordNote{.pitch = pitch_c4()}});  // only 1 note
   auto cmd = std::make_unique<SetEventCommand>(
       fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
       VoiceEvent(bad_chord));
@@ -6978,8 +7045,8 @@ TEST(CommandTest, ConvertChordToRestRoundTrip) {
   VoiceContent* voice =
       &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
 
-  const Chord chord =
-      make_chord(half(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  const Chord chord = make_chord(
+      half(), {ChordNote{.pitch = pitch_c4()}, ChordNote{.pitch = pitch_e4()}});
   ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
@@ -7125,8 +7192,8 @@ TEST(CommandTest, SetTieChordNoteheadTieThenUntieRoundTrip) {
   VoiceContent* voice =
       &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
 
-  const Chord chord =
-      make_chord(quarter(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  const Chord chord = make_chord(quarter(), {ChordNote{.pitch = pitch_c4()},
+                                             ChordNote{.pitch = pitch_e4()}});
   ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
   ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
@@ -7161,11 +7228,12 @@ TEST(CommandTest, SetTieChordNoIndexRejected) {
   VoiceContent* voice =
       &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
 
-  const Chord chord =
-      make_chord(quarter(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  const Chord chord = make_chord(quarter(), {ChordNote{.pitch = pitch_c4()},
+                                             ChordNote{.pitch = pitch_e4()}});
   ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
-  const Chord successor =
-      make_chord(quarter(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  const Chord successor = make_chord(
+      quarter(),
+      {ChordNote{.pitch = pitch_c4()}, ChordNote{.pitch = pitch_e4()}});
   ASSERT_TRUE(voice->append(VoiceEvent(successor)).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
@@ -7188,8 +7256,8 @@ TEST(CommandTest, SetTieChordNoteheadMismatchedRejected) {
   VoiceContent* voice =
       &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
 
-  const Chord chord =
-      make_chord(quarter(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  const Chord chord = make_chord(quarter(), {ChordNote{.pitch = pitch_c4()},
+                                             ChordNote{.pitch = pitch_e4()}});
   ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
   // Successor has C4 but not E4 — tying E4 (index 1) is invalid.
   ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
@@ -7230,8 +7298,8 @@ TEST(CommandTest, SetTieChordMissingNoteheadFails) {
   VoiceContent* voice =
       &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
 
-  const Chord chord =
-      make_chord(quarter(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  const Chord chord = make_chord(quarter(), {ChordNote{.pitch = pitch_c4()},
+                                             ChordNote{.pitch = pitch_e4()}});
   ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
@@ -7503,8 +7571,8 @@ TEST(CommandTest, ConvertChordToRestPreservesIdOnRedo) {
   VoiceContent* voice =
       &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
 
-  const Chord chord =
-      make_chord(half(), {ChordNote{pitch_c4()}, ChordNote{pitch_e4()}});
+  const Chord chord = make_chord(
+      half(), {ChordNote{.pitch = pitch_c4()}, ChordNote{.pitch = pitch_e4()}});
   ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
   const NotationEntityId original_id = graphscore::event_id(voice->events()[0]);
@@ -7848,7 +7916,8 @@ TEST(CommandTest, VoiceContentInsertSingleNoteChordRejected) {
   VoiceContent voice;
   ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
 
-  const Chord bad_chord = make_chord(eighth(), {ChordNote{pitch_c4()}});
+  const Chord bad_chord =
+      make_chord(eighth(), {ChordNote{.pitch = pitch_c4()}});
   EXPECT_FALSE(
       voice.insert_event(Rational(0), VoiceEvent(bad_chord), Rational(1)).ok());
   EXPECT_EQ(voice.events().size(), 1u);
@@ -8087,8 +8156,10 @@ TEST(CommandTest, ConvertEventToRestRejectsDanglingGraceReference) {
       voice
           ->add_grace_group(graphscore::make_grace_group(
               ev_id, {graphscore::GraceNote{
-                         pitch_e4(), eighth(),
-                         graphscore::GraceNoteType::kAppoggiatura, false}}))
+                         .pitch    = pitch_e4(),
+                         .duration = eighth(),
+                         .type     = graphscore::GraceNoteType::kAppoggiatura,
+                         .slashed  = false}}))
           .ok());
 
   // Convert to rest — principal event would become Rest.
@@ -8159,8 +8230,8 @@ TEST(CommandTest, SetTieDuplicatePitchChordTargetsExactIndex) {
       &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
 
   // Chord with two C4 noteheads (unison doublings are permitted).
-  const Chord chord =
-      make_chord(half(), {ChordNote{pitch_c4()}, ChordNote{pitch_c4()}});
+  const Chord chord = make_chord(
+      half(), {ChordNote{.pitch = pitch_c4()}, ChordNote{.pitch = pitch_c4()}});
   ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
   // Successor sounds C4 so the tie is valid.
   ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
@@ -9426,9 +9497,12 @@ TEST(CommandTest, AddGraceGroupValidRoundTrip) {
   ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
-  const GraceGroup group = make_grace_group(
-      event_id(voice->events()[0]),
-      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAcciaccatura, true}});
+  const GraceGroup group =
+      make_grace_group(event_id(voice->events()[0]),
+                       {GraceNote{.pitch    = pitch_d4(),
+                                  .duration = eighth(),
+                                  .type     = GraceNoteType::kAcciaccatura,
+                                  .slashed  = true}});
 
   auto cmd = std::make_unique<AddGraceGroupCommand>(
       fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), group);
@@ -9452,9 +9526,12 @@ TEST(CommandTest, AddGraceGroupPrincipalIsRestRejected) {
   ASSERT_TRUE(voice->append(make_rest(quarter())).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
-  const GraceGroup group = make_grace_group(
-      event_id(voice->events()[0]),
-      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAcciaccatura, true}});
+  const GraceGroup group =
+      make_grace_group(event_id(voice->events()[0]),
+                       {GraceNote{.pitch    = pitch_d4(),
+                                  .duration = eighth(),
+                                  .type     = GraceNoteType::kAcciaccatura,
+                                  .slashed  = true}});
 
   auto cmd = std::make_unique<AddGraceGroupCommand>(
       fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), group);
@@ -9472,11 +9549,13 @@ TEST(CommandTest, RemoveGraceGroupPreservesDynamics) {
   ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
-  const NotationEntityId eid   = event_id(voice->events()[0]);
-  const DynamicMarking   dyn   = make_dynamic_marking(eid, Dynamic::kF);
-  const GraceGroup       group = make_grace_group(
-      eid,
-      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAcciaccatura, true}});
+  const NotationEntityId eid = event_id(voice->events()[0]);
+  const DynamicMarking   dyn = make_dynamic_marking(eid, Dynamic::kF);
+  const GraceGroup       group =
+      make_grace_group(eid, {GraceNote{.pitch    = pitch_d4(),
+                                       .duration = eighth(),
+                                       .type     = GraceNoteType::kAcciaccatura,
+                                       .slashed  = true}});
   ASSERT_TRUE(voice->add_dynamic(dyn).ok());
   ASSERT_TRUE(voice->add_grace_group(group).ok());
 
@@ -9876,9 +9955,12 @@ TEST(CommandTest, VoiceContentRemoveGraceGroupSuccess) {
   VoiceContent voice;
   ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
 
-  const GraceGroup group = make_grace_group(
-      event_id(voice.events()[0]),
-      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAcciaccatura, true}});
+  const GraceGroup group =
+      make_grace_group(event_id(voice.events()[0]),
+                       {GraceNote{.pitch    = pitch_d4(),
+                                  .duration = eighth(),
+                                  .type     = GraceNoteType::kAcciaccatura,
+                                  .slashed  = true}});
   ASSERT_TRUE(voice.add_grace_group(group).ok());
   EXPECT_EQ(voice.grace_groups().size(), 1u);
   EXPECT_TRUE(voice.remove_grace_group(group.id).ok());
@@ -10102,9 +10184,11 @@ TEST(CommandTest, AddGraceGroupCrossKindDuplicateIdRejected) {
   const Hairpin          hp(shared_id, eid, eid, HairpinDirection::kCrescendo);
   ASSERT_TRUE(voice->add_hairpin(hp).ok());
 
-  const GraceGroup group = make_grace_group(
-      eid,
-      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAppoggiatura, false}});
+  const GraceGroup group =
+      make_grace_group(eid, {GraceNote{.pitch    = pitch_d4(),
+                                       .duration = eighth(),
+                                       .type     = GraceNoteType::kAppoggiatura,
+                                       .slashed  = false}});
   const GraceGroup colliding(shared_id, group.principal_event, group.notes);
   auto             cmd = std::make_unique<AddGraceGroupCommand>(
       fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), colliding);
@@ -10224,9 +10308,12 @@ TEST(CommandTest, AddGraceGroupPrincipalNotFoundRejected) {
   ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
-  const GraceGroup group = make_grace_group(
-      NotationEntityId::generate(),
-      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAppoggiatura, false}});
+  const GraceGroup group =
+      make_grace_group(NotationEntityId::generate(),
+                       {GraceNote{.pitch    = pitch_d4(),
+                                  .duration = eighth(),
+                                  .type     = GraceNoteType::kAppoggiatura,
+                                  .slashed  = false}});
   auto cmd = std::make_unique<AddGraceGroupCommand>(
       fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), group);
   EXPECT_FALSE(cmd->execute(fx.project).ok());
@@ -10772,11 +10859,46 @@ TEST(CommandTest, VoiceContentPublicAddGraceGroupDuplicateRejected) {
   VoiceContent voice;
   ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
 
-  const GraceGroup group = make_grace_group(
-      event_id(voice.events()[0]),
-      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAppoggiatura, false}});
+  const GraceGroup group =
+      make_grace_group(event_id(voice.events()[0]),
+                       {GraceNote{.pitch    = pitch_d4(),
+                                  .duration = eighth(),
+                                  .type     = GraceNoteType::kAppoggiatura,
+                                  .slashed  = false}});
   ASSERT_TRUE(voice.add_grace_group(group).ok());
   EXPECT_FALSE(voice.add_grace_group(group).ok());
+}
+
+// Phase 8f-i follow-up — principal_event self-collision rejection
+
+TEST(CommandTest, AddGraceGroupRejectsPrincipalEventEqualToGroupId) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  // Construct a group whose own id doubles as the principal_event.
+  const NotationEntityId shared_id = NotationEntityId::generate();
+  const GraceGroup       bad_group =
+      GraceGroup{shared_id,
+                 shared_id,
+                 {GraceNote{NotationEntityId::generate(), pitch_d4(), eighth(),
+                            GraceNoteType::kAppoggiatura, false}}};
+  EXPECT_FALSE(voice.add_grace_group(bad_group).ok());
+  EXPECT_EQ(voice.grace_groups().size(), 0u);
+}
+
+TEST(CommandTest, AddGraceGroupRejectsPrincipalEventEqualToGraceNoteId) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  // Construct a group where a GraceNote.id equals the principal_event.
+  const NotationEntityId shared_id = NotationEntityId::generate();
+  const GraceGroup       bad_group =
+      GraceGroup{NotationEntityId::generate(),
+                 shared_id,
+                 {GraceNote{shared_id, pitch_d4(), eighth(),
+                            GraceNoteType::kAppoggiatura, false}}};
+  EXPECT_FALSE(voice.add_grace_group(bad_group).ok());
+  EXPECT_EQ(voice.grace_groups().size(), 0u);
 }
 
 TEST(CommandTest, VoiceContentPublicAddBeamOverrideDuplicateRejected) {
@@ -10789,6 +10911,62 @@ TEST(CommandTest, VoiceContentPublicAddBeamOverrideDuplicateRejected) {
       {event_id(voice.events()[0]), event_id(voice.events()[1])});
   ASSERT_TRUE(voice.add_beam_override(beam).ok());
   EXPECT_FALSE(voice.add_beam_override(beam).ok());
+}
+
+// Phase 8f-i — nil-ID rejection for every public marking insertion API
+
+TEST(CommandTest, VoiceContentPublicAddDynamicNilIdRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  const NotationEntityId eid = event_id(voice.events()[0]);
+  const DynamicMarking   bad{NotationEntityId{}, eid, Dynamic::kMf};
+  EXPECT_FALSE(voice.add_dynamic(bad).ok());
+  EXPECT_EQ(voice.dynamics().size(), 0u);
+}
+
+TEST(CommandTest, VoiceContentPublicAddHairpinNilIdRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  const NotationEntityId eid = event_id(voice.events()[0]);
+  const Hairpin bad{NotationEntityId{}, eid, eid, HairpinDirection::kCrescendo};
+  EXPECT_FALSE(voice.add_hairpin(bad).ok());
+  EXPECT_EQ(voice.hairpins().size(), 0u);
+}
+
+TEST(CommandTest, VoiceContentPublicAddSlurNilIdRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  const NotationEntityId eid = event_id(voice.events()[0]);
+  const Slur             bad{NotationEntityId{}, eid, eid};
+  EXPECT_FALSE(voice.add_slur(bad).ok());
+  EXPECT_EQ(voice.slurs().size(), 0u);
+}
+
+TEST(CommandTest, VoiceContentPublicAddBeamOverrideNilIdRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), eighth())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), eighth())).ok());
+
+  const BeamOverride bad{
+      NotationEntityId{},
+      BeamOverride::Kind::kJoin,
+      {event_id(voice.events()[0]), event_id(voice.events()[1])}};
+  EXPECT_FALSE(voice.add_beam_override(bad).ok());
+  EXPECT_EQ(voice.beam_overrides().size(), 0u);
+}
+
+TEST(CommandTest, TrackLaneAddPedalSpanNilIdRejected) {
+  TrackLane     lane;
+  const StaveId stave = StaveId::generate();
+  lane.ensure_stave(stave);
+
+  const PedalSpan bad{NotationEntityId{}, Rational(0), *Rational::create(1, 4)};
+  EXPECT_FALSE(lane.add_pedal_span(stave, bad).ok());
+  const std::vector<PedalSpan>* spans = lane.pedal_spans(stave);
+  EXPECT_TRUE(spans == nullptr || spans->empty());
 }
 
 TEST(CommandTest, TrackLaneAddPedalSpanCrossStaveDuplicateRejected) {
@@ -11027,9 +11205,12 @@ TEST(CommandTest, AddGraceGroupExactExecuteUndoRedo) {
   ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
-  const GraceGroup group = make_grace_group(
-      event_id(voice->events()[0]),
-      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAppoggiatura, false}});
+  const GraceGroup group =
+      make_grace_group(event_id(voice->events()[0]),
+                       {GraceNote{.pitch    = pitch_d4(),
+                                  .duration = eighth(),
+                                  .type     = GraceNoteType::kAppoggiatura,
+                                  .slashed  = false}});
 
   auto cmd = std::make_unique<AddGraceGroupCommand>(
       fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), group);
@@ -11052,9 +11233,12 @@ TEST(CommandTest, RemoveGraceGroupExactExecuteUndoRedo) {
   ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
-  const GraceGroup group = make_grace_group(
-      event_id(voice->events()[0]),
-      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAppoggiatura, false}});
+  const GraceGroup group =
+      make_grace_group(event_id(voice->events()[0]),
+                       {GraceNote{.pitch    = pitch_d4(),
+                                  .duration = eighth(),
+                                  .type     = GraceNoteType::kAppoggiatura,
+                                  .slashed  = false}});
   ASSERT_TRUE(voice->add_grace_group(group).ok());
   const VoiceContent pre_exec = *voice;
 

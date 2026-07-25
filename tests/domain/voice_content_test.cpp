@@ -12,14 +12,22 @@ using graphscore::Chord;
 using graphscore::ChordNote;
 using graphscore::decompose_rest;
 using graphscore::Duration;
+using graphscore::event_id;
+using graphscore::GraceGroup;
+using graphscore::GraceNote;
+using graphscore::GraceNoteType;
 using graphscore::Letter;
 using graphscore::make_chord;
+using graphscore::make_grace_group;
 using graphscore::make_note;
 using graphscore::make_rest;
+using graphscore::NotationEntityId;
+using graphscore::Note;
 using graphscore::NoteValue;
 using graphscore::Rational;
 using graphscore::Rest;
 using graphscore::SpelledPitch;
+using graphscore::StemDirection;
 using graphscore::VoiceContent;
 using graphscore::VoiceEvent;
 
@@ -51,17 +59,17 @@ TEST(VoiceContentTest, AppendAccumulatesResolvedLength) {
 
 TEST(VoiceContentTest, AppendRejectsSingleNoteChord) {
   VoiceContent voice;
-  const Chord  chord =
-      make_chord(duration(NoteValue::kQuarter), {ChordNote{pitch(Letter::kC)}});
+  const Chord  chord = make_chord(duration(NoteValue::kQuarter),
+                                  {ChordNote{.pitch = pitch(Letter::kC)}});
   EXPECT_FALSE(voice.append(VoiceEvent(chord)).ok());
   EXPECT_EQ(voice.total_length(), Rational(0));
 }
 
 TEST(VoiceContentTest, AppendAcceptsTwoNoteChord) {
   VoiceContent voice;
-  const Chord  chord =
-      make_chord(duration(NoteValue::kQuarter),
-                 {ChordNote{pitch(Letter::kC)}, ChordNote{pitch(Letter::kE)}});
+  const Chord  chord = make_chord(duration(NoteValue::kQuarter),
+                                  {ChordNote{.pitch = pitch(Letter::kC)},
+                                   ChordNote{.pitch = pitch(Letter::kE)}});
   EXPECT_TRUE(voice.append(VoiceEvent(chord)).ok());
   EXPECT_EQ(voice.total_length(), *Rational::create(1, 4));
 }
@@ -181,4 +189,323 @@ TEST(DecomposeRestTest, SmallestUnitIsAnUndottedSixtyFourth) {
 
 TEST(DecomposeRestTest, FinerThanSixtyFourthIsUnrepresentable) {
   EXPECT_FALSE(decompose_rest(*Rational::create(1, 128)).has_value());
+}
+
+// -- Phase 8f-i: ChordNote/GraceNote id uniqueness in VoiceContent --
+
+TEST(NoteheadIdUniquenessTest, AppendRejectsChordNoteIdCollisionWithEvent) {
+  VoiceContent voice;
+  const auto   note = make_note(pitch(Letter::kC), duration(NoteValue::kHalf));
+  ASSERT_TRUE(voice.append(note).ok());
+  // Create a chord whose first notehead id equals the existing note's id.
+  const Chord chord =
+      Chord{NotationEntityId::generate(),
+            duration(NoteValue::kQuarter),
+            {ChordNote{event_id(note), pitch(Letter::kE), false},
+             ChordNote{NotationEntityId::generate(), pitch(Letter::kG), false}},
+            {},
+            {}};
+  EXPECT_FALSE(voice.append(VoiceEvent(chord)).ok());
+  EXPECT_EQ(voice.events().size(), 1u);
+}
+
+TEST(NoteheadIdUniquenessTest,
+     AppendRejectsDuplicateChordNoteIdWithinSameChord) {
+  VoiceContent           voice;
+  const NotationEntityId dup_id = NotationEntityId::generate();
+  const Chord            chord =
+      Chord{NotationEntityId::generate(),
+            duration(NoteValue::kQuarter),
+            {ChordNote{NotationEntityId::generate(), pitch(Letter::kC), false},
+             ChordNote{dup_id, pitch(Letter::kE), false},
+             ChordNote{dup_id, pitch(Letter::kG), false}},
+            {},
+            {}};
+  EXPECT_FALSE(voice.append(VoiceEvent(chord)).ok());
+  EXPECT_EQ(voice.events().size(), 0u);
+}
+
+TEST(NoteheadIdUniquenessTest, InsertEventRejectsChordNoteIdCollision) {
+  VoiceContent voice;
+  // Fill with rests so we have a rest boundary to insert at.
+  ASSERT_TRUE(voice.append(make_rest(duration(NoteValue::kWhole))).ok());
+  ASSERT_TRUE(voice.check_complete(Rational(1)).ok());
+  // Insert a note at position 0 consuming quarter-note rest coverage.
+  const auto note = make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.insert_event(Rational(0), note, Rational(1)).ok());
+  const std::size_t event_count = voice.events().size();
+  // Now try to insert at the next boundary (position = 1/4) a chord
+  // whose first notehead id equals the existing note's event id.
+  const NotationEntityId colliding_id = event_id(voice.events()[0]);
+  const Rational         insert_pos   = *Rational::create(1, 4);
+  const Chord            chord =
+      Chord{NotationEntityId::generate(),
+            duration(NoteValue::kEighth),
+            {ChordNote{colliding_id, pitch(Letter::kE), false},
+             ChordNote{NotationEntityId::generate(), pitch(Letter::kG), false}},
+            {},
+            {}};
+  EXPECT_FALSE(
+      voice.insert_event(insert_pos, VoiceEvent(chord), Rational(1)).ok());
+  // Model unchanged.
+  EXPECT_EQ(voice.events().size(), event_count);
+}
+
+TEST(NoteheadIdUniquenessTest, AddGraceGroupRejectsGraceNoteIdCollision) {
+  VoiceContent voice;
+  const auto   principal =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(principal).ok());
+  // First grace group succeeds.
+  ASSERT_TRUE(voice
+                  .add_grace_group(make_grace_group(
+                      event_id(principal),
+                      {GraceNote{.pitch    = pitch(Letter::kB),
+                                 .duration = duration(NoteValue::kEighth),
+                                 .type     = GraceNoteType::kAppoggiatura}}))
+                  .ok());
+  // Second grace group with a GraceNote id that collides with the first
+  // grace group's own id (not the note id).
+  const NotationEntityId colliding_id = voice.grace_groups()[0].id;
+  const GraceNote        bad_gn{colliding_id, pitch(Letter::kA),
+                         duration(NoteValue::kEighth),
+                         GraceNoteType::kAppoggiatura, false};
+  const GraceGroup       bad_group =
+      GraceGroup{NotationEntityId::generate(), event_id(principal), {bad_gn}};
+  EXPECT_FALSE(voice.add_grace_group(bad_group).ok());
+  EXPECT_EQ(voice.grace_groups().size(), 1u);
+}
+
+TEST(NoteheadIdUniquenessTest,
+     AddGraceGroupRejectsGraceNoteIdCollisionWithEvent) {
+  VoiceContent voice;
+  const auto   principal =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(principal).ok());
+  // Construct a grace group whose first GraceNote's id equals the
+  // principal event's id.
+  const GraceGroup bad_group =
+      GraceGroup{NotationEntityId::generate(),
+                 event_id(principal),
+                 {GraceNote{event_id(principal), pitch(Letter::kD),
+                            duration(NoteValue::kEighth),
+                            GraceNoteType::kAppoggiatura, false}}};
+  EXPECT_FALSE(voice.add_grace_group(bad_group).ok());
+  EXPECT_EQ(voice.grace_groups().size(), 0u);
+}
+
+TEST(NoteheadIdUniquenessTest, MarkingOnlyIdExistsIncludesChordNoteIds) {
+  VoiceContent voice;
+  const auto   chord = make_chord(duration(NoteValue::kQuarter),
+                                  {ChordNote{.pitch = pitch(Letter::kC)},
+                                   ChordNote{.pitch = pitch(Letter::kE)}});
+  ASSERT_TRUE(voice.append(VoiceEvent(chord)).ok());
+  // A replacement Note whose id collides with an embedded ChordNote id
+  // (not the Chord's own top-level id) must be rejected.
+  const Note bad_note{std::get<Chord>(voice.events()[0]).notes[0].id,
+                      pitch(Letter::kG),
+                      duration(NoteValue::kQuarter),
+                      false,
+                      {},
+                      StemDirection::kAuto};
+  EXPECT_FALSE(
+      voice.replace_event(Rational(0), VoiceEvent(bad_note), Rational(1)).ok());
+  EXPECT_TRUE(std::holds_alternative<Chord>(voice.events()[0]));
+}
+
+TEST(NoteheadIdUniquenessTest, ReplaceEventAllowsEmbeddedIdReuseFromTarget) {
+  VoiceContent voice;
+  const Chord  original = make_chord(duration(NoteValue::kQuarter),
+                                     {ChordNote{.pitch = pitch(Letter::kC)},
+                                      ChordNote{.pitch = pitch(Letter::kE)}});
+  ASSERT_TRUE(voice.append(VoiceEvent(original)).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+  // Build a replacement chord with the same ChordNote ids.
+  Chord replacement =
+      Chord{NotationEntityId::generate(),
+            duration(NoteValue::kHalf),
+            {ChordNote{original.notes[0].id, pitch(Letter::kC), true},
+             ChordNote{original.notes[1].id, pitch(Letter::kE), false}},
+            {},
+            {}};
+  EXPECT_TRUE(
+      voice.replace_event(Rational(0), VoiceEvent(replacement), Rational(1))
+          .ok());
+  const auto* result = std::get_if<Chord>(&voice.events()[0]);
+  ASSERT_NE(result, nullptr);
+  EXPECT_EQ(result->notes[0].id, original.notes[0].id);
+  EXPECT_EQ(result->notes[1].id, original.notes[1].id);
+}
+
+TEST(NoteheadIdUniquenessTest,
+     ReplaceEventRejectsEmbeddedIdCollisionOtherEvent) {
+  VoiceContent voice;
+  // chord1 at pos 0, chord2 at pos 1/4.
+  const Chord chord1 = make_chord(duration(NoteValue::kQuarter),
+                                  {ChordNote{.pitch = pitch(Letter::kC)},
+                                   ChordNote{.pitch = pitch(Letter::kE)}});
+  ASSERT_TRUE(voice.append(VoiceEvent(chord1)).ok());
+  const Chord chord2 = make_chord(duration(NoteValue::kQuarter),
+                                  {ChordNote{.pitch = pitch(Letter::kG)},
+                                   ChordNote{.pitch = pitch(Letter::kB)}});
+  ASSERT_TRUE(voice.append(VoiceEvent(chord2)).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+  // Replace chord1 with a chord whose first notehead id equals
+  // chord2's first notehead id.  This must be rejected.
+  const NotationEntityId other_id = chord2.notes[0].id;
+  const Chord            bad_chord =
+      Chord{NotationEntityId::generate(),
+            duration(NoteValue::kQuarter),
+            {ChordNote{other_id, pitch(Letter::kF), false},
+             ChordNote{NotationEntityId::generate(), pitch(Letter::kA), false}},
+            {},
+            {}};
+  EXPECT_FALSE(
+      voice.replace_event(Rational(0), VoiceEvent(bad_chord), Rational(1))
+          .ok());
+  EXPECT_EQ(std::get<Chord>(voice.events()[0]).notes[0].id,
+            chord1.notes[0].id);  // unchanged
+}
+
+// -- Phase 8f-i review follow-up: malformed-input rejection --
+
+TEST(NoteheadIdUniquenessTest, AppendRejectsNilChordNoteId) {
+  VoiceContent voice;
+  const Chord  chord =
+      Chord{NotationEntityId::generate(),
+            duration(NoteValue::kQuarter),
+            {ChordNote{NotationEntityId::generate(), pitch(Letter::kC), false},
+             ChordNote{{}, pitch(Letter::kE), false}},
+            {},
+            {}};
+  EXPECT_FALSE(voice.append(VoiceEvent(chord)).ok());
+  EXPECT_EQ(voice.events().size(), 0u);
+}
+
+TEST(NoteheadIdUniquenessTest, AppendRejectsChordNoteIdEqualToChordId) {
+  VoiceContent voice;
+  const auto   chord_id = NotationEntityId::generate();
+  const Chord  chord =
+      Chord{chord_id,
+            duration(NoteValue::kQuarter),
+            {ChordNote{NotationEntityId::generate(), pitch(Letter::kC), false},
+             ChordNote{chord_id, pitch(Letter::kE), false}},
+            {},
+            {}};
+  EXPECT_FALSE(voice.append(VoiceEvent(chord)).ok());
+  EXPECT_EQ(voice.events().size(), 0u);
+}
+
+TEST(NoteheadIdUniquenessTest, AppendRejectsNilParentId) {
+  VoiceContent voice;
+  const Chord  chord =
+      Chord{NotationEntityId{},
+            duration(NoteValue::kQuarter),
+            {ChordNote{NotationEntityId::generate(), pitch(Letter::kC), false},
+             ChordNote{NotationEntityId::generate(), pitch(Letter::kE), false}},
+            {},
+            {}};
+  EXPECT_FALSE(voice.append(VoiceEvent(chord)).ok());
+  EXPECT_EQ(voice.events().size(), 0u);
+}
+
+TEST(NoteheadIdUniquenessTest, InsertEventRejectsNilChordNoteId) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_rest(duration(NoteValue::kWhole))).ok());
+  ASSERT_TRUE(voice.check_complete(Rational(1)).ok());
+  const Chord chord =
+      Chord{NotationEntityId::generate(),
+            duration(NoteValue::kQuarter),
+            {ChordNote{{}, pitch(Letter::kC), false},
+             ChordNote{NotationEntityId::generate(), pitch(Letter::kE), false}},
+            {},
+            {}};
+  EXPECT_FALSE(
+      voice.insert_event(Rational(0), VoiceEvent(chord), Rational(1)).ok());
+  EXPECT_EQ(voice.events().size(), 1u);  // unchanged
+}
+
+TEST(NoteheadIdUniquenessTest, ReplaceEventRejectsNilChordNoteId) {
+  VoiceContent voice;
+  const Chord  original = make_chord(duration(NoteValue::kQuarter),
+                                     {ChordNote{.pitch = pitch(Letter::kC)},
+                                      ChordNote{.pitch = pitch(Letter::kE)}});
+  ASSERT_TRUE(voice.append(VoiceEvent(original)).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+  const Chord bad =
+      Chord{NotationEntityId::generate(),
+            duration(NoteValue::kQuarter),
+            {ChordNote{{}, pitch(Letter::kF), false},
+             ChordNote{NotationEntityId::generate(), pitch(Letter::kG), false}},
+            {},
+            {}};
+  EXPECT_FALSE(
+      voice.replace_event(Rational(0), VoiceEvent(bad), Rational(1)).ok());
+  EXPECT_TRUE(std::holds_alternative<Chord>(voice.events()[0]));
+}
+
+TEST(NoteheadIdUniquenessTest, ReplaceEventRejectsParentIdEqualToEmbeddedId) {
+  VoiceContent voice;
+  const Chord  original = make_chord(duration(NoteValue::kQuarter),
+                                     {ChordNote{.pitch = pitch(Letter::kC)},
+                                      ChordNote{.pitch = pitch(Letter::kE)}});
+  ASSERT_TRUE(voice.append(VoiceEvent(original)).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+  const auto  parent_id = NotationEntityId::generate();
+  const Chord bad =
+      Chord{parent_id,
+            duration(NoteValue::kQuarter),
+            {ChordNote{NotationEntityId::generate(), pitch(Letter::kF), false},
+             ChordNote{parent_id, pitch(Letter::kG), false}},
+            {},
+            {}};
+  EXPECT_FALSE(
+      voice.replace_event(Rational(0), VoiceEvent(bad), Rational(1)).ok());
+  EXPECT_TRUE(std::holds_alternative<Chord>(voice.events()[0]));
+}
+
+TEST(GraceNoteIdUniquenessTest, AddGraceGroupRejectsNilGraceNoteId) {
+  VoiceContent voice;
+  const auto   principal =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(principal).ok());
+  const GraceGroup group = GraceGroup{NotationEntityId::generate(),
+                                      event_id(principal),
+                                      {GraceNote{{},
+                                                 pitch(Letter::kD),
+                                                 duration(NoteValue::kEighth),
+                                                 GraceNoteType::kAppoggiatura,
+                                                 false}}};
+  EXPECT_FALSE(voice.add_grace_group(group).ok());
+  EXPECT_EQ(voice.grace_groups().size(), 0u);
+}
+
+TEST(GraceNoteIdUniquenessTest, AddGraceGroupRejectsGraceNoteIdEqualToGroupId) {
+  VoiceContent voice;
+  const auto   principal =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(principal).ok());
+  const auto       group_id = NotationEntityId::generate();
+  const GraceGroup group    = GraceGroup{
+      group_id,
+      event_id(principal),
+         {GraceNote{group_id, pitch(Letter::kD), duration(NoteValue::kEighth),
+                 GraceNoteType::kAppoggiatura, false}}};
+  EXPECT_FALSE(voice.add_grace_group(group).ok());
+  EXPECT_EQ(voice.grace_groups().size(), 0u);
+}
+
+TEST(GraceNoteIdUniquenessTest, AddGraceGroupRejectsNilGroupId) {
+  VoiceContent voice;
+  const auto   principal =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(principal).ok());
+  const GraceGroup group =
+      GraceGroup{NotationEntityId{},
+                 event_id(principal),
+                 {GraceNote{NotationEntityId::generate(), pitch(Letter::kD),
+                            duration(NoteValue::kEighth),
+                            GraceNoteType::kAppoggiatura, false}}};
+  EXPECT_FALSE(voice.add_grace_group(group).ok());
+  EXPECT_EQ(voice.grace_groups().size(), 0u);
 }

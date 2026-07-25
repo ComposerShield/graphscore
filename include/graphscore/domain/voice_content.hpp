@@ -158,14 +158,22 @@ class VoiceContent {
   [[nodiscard]] bool operator==(const VoiceContent&) const = default;
 
  private:
-  // True if `id` appears as an event id or in any marking collection.
+  // True if `id` appears as an event id, an embedded ChordNote or
+  // GraceNote id, or in any marking collection.
   [[nodiscard]] bool marking_id_exists(NotationEntityId id) const;
 
   // True if `id` appears in any marking collection (dynamics, hairpins,
-  // slurs, beam overrides, grace groups), ignoring events.  Used by
-  // replace_event so that self-id replacement is still rejected when
-  // the target event's id collides with a marking.
+  // slurs, beam overrides, grace groups) or as an embedded ChordNote/
+  // GraceNote id, ignoring event top-level ids.  Used by replace_event
+  // so that self-id replacement is still rejected when the target
+  // event's id collides with a marking.
   [[nodiscard]] bool marking_only_id_exists(NotationEntityId id) const;
+
+  // True if `id` appears in any marking, any embedded note id, or any
+  // event id outside the event at `event_index`.  Used by replace_event
+  // to reject collisions with everything except the event being replaced.
+  [[nodiscard]] bool id_collision_if_not_target(NotationEntityId id,
+                                                std::size_t event_index) const;
 
   std::vector<VoiceEvent>     events_;
   std::vector<DynamicMarking> dynamics_;

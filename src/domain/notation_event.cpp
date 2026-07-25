@@ -18,6 +18,10 @@ Note make_note(SpelledPitch pitch, Duration duration, bool tied_to_next,
 
 Chord make_chord(Duration duration, std::vector<ChordNote> notes,
                  std::vector<Articulation> articulations, StemDirection stem) {
+  for (ChordNote& notehead : notes) {
+    if (notehead.id == NotationEntityId{})
+      notehead.id = NotationEntityId::generate();
+  }
   return Chord{NotationEntityId::generate(), duration, std::move(notes),
                std::move(articulations), stem};
 }

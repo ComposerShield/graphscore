@@ -429,8 +429,10 @@ TEST(NotationValidationTest, GraceGroupWithNotePrincipalPasses) {
   ASSERT_TRUE(voice
                   .add_grace_group(make_grace_group(
                       event_id(principal),
-                      {GraceNote{pitch(Letter::kD), eighth(),
-                                 GraceNoteType::kAppoggiatura, false}}))
+                      {GraceNote{.pitch    = pitch(Letter::kD),
+                                 .duration = eighth(),
+                                 .type     = GraceNoteType::kAppoggiatura,
+                                 .slashed  = false}}))
                   .ok());
 
   EXPECT_TRUE(validate_voice_references(voice).empty());
@@ -438,15 +440,18 @@ TEST(NotationValidationTest, GraceGroupWithNotePrincipalPasses) {
 
 TEST(NotationValidationTest, GraceGroupWithChordPrincipalPasses) {
   VoiceContent voice;
-  const Chord  chord = make_chord(
-      quarter(), {ChordNote{pitch(Letter::kC)}, ChordNote{pitch(Letter::kE)}});
+  const Chord  chord =
+      make_chord(quarter(), {ChordNote{.pitch = pitch(Letter::kC)},
+                             ChordNote{.pitch = pitch(Letter::kE)}});
   ASSERT_TRUE(voice.append(VoiceEvent(chord)).ok());
 
   ASSERT_TRUE(voice
                   .add_grace_group(make_grace_group(
                       event_id(voice.events()[0]),
-                      {GraceNote{pitch(Letter::kD), eighth(),
-                                 GraceNoteType::kAppoggiatura, false}}))
+                      {GraceNote{.pitch    = pitch(Letter::kD),
+                                 .duration = eighth(),
+                                 .type     = GraceNoteType::kAppoggiatura,
+                                 .slashed  = false}}))
                   .ok());
 
   EXPECT_TRUE(validate_voice_references(voice).empty());
@@ -458,8 +463,10 @@ TEST(NotationValidationTest, GraceGroupWithRestPrincipalIsFlagged) {
   ASSERT_TRUE(voice.append(rest_event).ok());
 
   const auto group = make_grace_group(
-      event_id(rest_event), {GraceNote{pitch(Letter::kD), eighth(),
-                                       GraceNoteType::kAppoggiatura, false}});
+      event_id(rest_event), {GraceNote{.pitch    = pitch(Letter::kD),
+                                       .duration = eighth(),
+                                       .type     = GraceNoteType::kAppoggiatura,
+                                       .slashed  = false}});
   ASSERT_TRUE(voice.add_grace_group(group).ok());
 
   const auto diagnostics = validate_voice_references(voice);
@@ -476,8 +483,10 @@ TEST(NotationValidationTest, GraceGroupWithDanglingPrincipalIsFlagged) {
 
   const auto group =
       make_grace_group(NotationEntityId::generate(),
-                       {GraceNote{pitch(Letter::kD), eighth(),
-                                  GraceNoteType::kAppoggiatura, false}});
+                       {GraceNote{.pitch    = pitch(Letter::kD),
+                                  .duration = eighth(),
+                                  .type     = GraceNoteType::kAppoggiatura,
+                                  .slashed  = false}});
   ASSERT_TRUE(voice.add_grace_group(group).ok());
 
   const auto diagnostics = validate_voice_references(voice);

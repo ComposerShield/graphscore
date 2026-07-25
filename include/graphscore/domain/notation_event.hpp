@@ -30,12 +30,13 @@ struct Note {
   [[nodiscard]] bool operator==(const Note&) const = default;
 };
 
-// One notehead within a Chord: its spelling and its own tie state. A chord
-// ties note-by-note, so two noteheads in the same chord may have different
-// tie states.
+// One notehead within a Chord: its spelling, its persistent identity, and
+// its own tie state. A chord ties note-by-note, so two noteheads in the
+// same chord may have different tie states.
 struct ChordNote {
-  SpelledPitch pitch;
-  bool         tied_to_next = false;
+  NotationEntityId id = {};
+  SpelledPitch     pitch;
+  bool             tied_to_next = false;
 
   [[nodiscard]] bool operator==(const ChordNote&) const = default;
 };

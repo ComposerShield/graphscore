@@ -23,6 +23,12 @@ namespace {
   for (const VoiceEvent& event : events) {
     if (event_id(event) == id)
       return true;
+    if (const auto* chord = std::get_if<Chord>(&event)) {
+      for (const ChordNote& cn : chord->notes) {
+        if (cn.id == id)
+          return true;
+      }
+    }
   }
   return false;
 }
@@ -123,12 +129,31 @@ Result VoiceContent::append(VoiceEvent event) {
       return Result(ResultCode::kInvalidArgument);
   }
 
-  // Reject duplicate NotationEntityId: the new event's id must not
-  // collide with any event or any marking (dynamic, hairpin, slur,
-  // beam override, grace group) already present in the voice.
+  // Validate the incoming aggregate's complete identity set:
+  // the parent id must be non-nil, every embedded id must be non-nil
+  // and distinct from both the parent id and every sibling, and every
+  // id (parent + embedded) must be absent from the existing voice.
   const NotationEntityId new_id = event_id(event);
+  if (new_id == NotationEntityId{})
+    return Result(ResultCode::kInvalidArgument);
   if (marking_id_exists(new_id))
     return Result(ResultCode::kInvalidArgument);
+  if (const auto* chord = std::get_if<Chord>(&event)) {
+    const NotationEntityId parent_id = chord->id;
+    for (std::size_t i = 0; i < chord->notes.size(); ++i) {
+      const NotationEntityId cn_id = chord->notes[i].id;
+      if (cn_id == NotationEntityId{})
+        return Result(ResultCode::kInvalidArgument);
+      if (cn_id == parent_id)
+        return Result(ResultCode::kInvalidArgument);
+      for (std::size_t j = 0; j < i; ++j) {
+        if (cn_id == chord->notes[j].id)
+          return Result(ResultCode::kInvalidArgument);
+      }
+      if (marking_id_exists(cn_id))
+        return Result(ResultCode::kInvalidArgument);
+    }
+  }
 
   try {
     events_.push_back(std::move(event));
@@ -159,12 +184,29 @@ Result VoiceContent::insert_event(Rational position, VoiceEvent event,
   if (!index.has_value())
     return Result(ResultCode::kInvalidArgument);
 
-  // Reject duplicate NotationEntityId: the new event's id must not
-  // collide with any other event id or any marking id already present
-  // in the voice.
+  // Validate the incoming aggregate's complete identity set
+  // (same rules as append).
   const NotationEntityId new_id = event_id(event);
+  if (new_id == NotationEntityId{})
+    return Result(ResultCode::kInvalidArgument);
   if (marking_id_exists(new_id))
     return Result(ResultCode::kInvalidArgument);
+  if (const auto* chord = std::get_if<Chord>(&event)) {
+    const NotationEntityId parent_id = chord->id;
+    for (std::size_t i = 0; i < chord->notes.size(); ++i) {
+      const NotationEntityId cn_id = chord->notes[i].id;
+      if (cn_id == NotationEntityId{})
+        return Result(ResultCode::kInvalidArgument);
+      if (cn_id == parent_id)
+        return Result(ResultCode::kInvalidArgument);
+      for (std::size_t j = 0; j < i; ++j) {
+        if (cn_id == chord->notes[j].id)
+          return Result(ResultCode::kInvalidArgument);
+      }
+      if (marking_id_exists(cn_id))
+        return Result(ResultCode::kInvalidArgument);
+    }
+  }
 
   const Rational new_dur = event_duration(event).resolved();
   if (*index == events_.size()) {
@@ -327,18 +369,34 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
   if (*index >= events_.size())
     return Result(ResultCode::kInvalidArgument);
 
-  // Reject duplicate NotationEntityId:
-  //   - The replacement may reuse the target event's own id for the
-  //     event collection, but must never collide with any marking
-  //     (dynamic, hairpin, slur, beam override, grace group).
-  //   - If the new id differs from the target's, it must additionally
-  //     not collide with any other event.
+  // Validate the incoming aggregate's complete identity set.
+  // The parent id may equal the target event's id (self-replacement);
+  // embedded ids may equal the target event's embedded ids (they are
+  // going away).  Every other collision is rejected.
   const NotationEntityId new_id    = event_id(event);
   const NotationEntityId target_id = event_id(events_[*index]);
+  if (new_id == NotationEntityId{})
+    return Result(ResultCode::kInvalidArgument);
   if (marking_only_id_exists(new_id))
     return Result(ResultCode::kInvalidArgument);
   if (new_id != target_id && event_id_exists(events_, new_id))
     return Result(ResultCode::kInvalidArgument);
+  if (const auto* repl_chord = std::get_if<Chord>(&event)) {
+    const NotationEntityId parent_id = repl_chord->id;
+    for (std::size_t i = 0; i < repl_chord->notes.size(); ++i) {
+      const NotationEntityId cn_id = repl_chord->notes[i].id;
+      if (cn_id == NotationEntityId{})
+        return Result(ResultCode::kInvalidArgument);
+      if (cn_id == parent_id)
+        return Result(ResultCode::kInvalidArgument);
+      for (std::size_t j = 0; j < i; ++j) {
+        if (cn_id == repl_chord->notes[j].id)
+          return Result(ResultCode::kInvalidArgument);
+      }
+      if (id_collision_if_not_target(cn_id, *index))
+        return Result(ResultCode::kInvalidArgument);
+    }
+  }
 
   const Rational old_dur = event_duration(events_[*index]).resolved();
   const Rational new_dur = event_duration(event).resolved();
@@ -545,6 +603,12 @@ bool VoiceContent::marking_id_exists(NotationEntityId id) const {
   for (const VoiceEvent& event : events_) {
     if (event_id(event) == id)
       return true;
+    if (const auto* chord = std::get_if<Chord>(&event)) {
+      for (const ChordNote& cn : chord->notes) {
+        if (cn.id == id)
+          return true;
+      }
+    }
   }
   for (const DynamicMarking& m : dynamics_) {
     if (m.id == id)
@@ -565,11 +629,23 @@ bool VoiceContent::marking_id_exists(NotationEntityId id) const {
   for (const GraceGroup& m : grace_groups_) {
     if (m.id == id)
       return true;
+    for (const GraceNote& gn : m.notes) {
+      if (gn.id == id)
+        return true;
+    }
   }
   return false;
 }
 
 bool VoiceContent::marking_only_id_exists(NotationEntityId id) const {
+  for (const VoiceEvent& event : events_) {
+    if (const auto* chord = std::get_if<Chord>(&event)) {
+      for (const ChordNote& cn : chord->notes) {
+        if (cn.id == id)
+          return true;
+      }
+    }
+  }
   for (const DynamicMarking& m : dynamics_) {
     if (m.id == id)
       return true;
@@ -589,11 +665,63 @@ bool VoiceContent::marking_only_id_exists(NotationEntityId id) const {
   for (const GraceGroup& m : grace_groups_) {
     if (m.id == id)
       return true;
+    for (const GraceNote& gn : m.notes) {
+      if (gn.id == id)
+        return true;
+    }
+  }
+  return false;
+}
+
+bool VoiceContent::id_collision_if_not_target(NotationEntityId id,
+                                              std::size_t event_index) const {
+  // Check all marking ids.
+  for (const DynamicMarking& m : dynamics_) {
+    if (m.id == id)
+      return true;
+  }
+  for (const Hairpin& m : hairpins_) {
+    if (m.id == id)
+      return true;
+  }
+  for (const Slur& m : slurs_) {
+    if (m.id == id)
+      return true;
+  }
+  for (const BeamOverride& m : beam_overrides_) {
+    if (m.id == id)
+      return true;
+  }
+  // Check GraceGroup and GraceNote ids.
+  for (const GraceGroup& m : grace_groups_) {
+    if (m.id == id)
+      return true;
+    for (const GraceNote& gn : m.notes) {
+      if (gn.id == id)
+        return true;
+    }
+  }
+  // Check event top-level ids and embedded ChordNote ids, excluding
+  // the event at event_index (which is being replaced and whose ids
+  // are going away).
+  for (std::size_t i = 0; i < events_.size(); ++i) {
+    if (i == event_index)
+      continue;
+    if (event_id(events_[i]) == id)
+      return true;
+    if (const auto* chord = std::get_if<Chord>(&events_[i])) {
+      for (const ChordNote& cn : chord->notes) {
+        if (cn.id == id)
+          return true;
+      }
+    }
   }
   return false;
 }
 
 Result VoiceContent::add_dynamic(DynamicMarking marking) {
+  if (marking.id == NotationEntityId{})
+    return Result(ResultCode::kInvalidArgument);
   if (marking_id_exists(marking.id))
     return Result(ResultCode::kInvalidArgument);
   try {
@@ -607,6 +735,8 @@ Result VoiceContent::add_dynamic(DynamicMarking marking) {
 }
 
 Result VoiceContent::add_hairpin(Hairpin hairpin) {
+  if (hairpin.id == NotationEntityId{})
+    return Result(ResultCode::kInvalidArgument);
   if (marking_id_exists(hairpin.id))
     return Result(ResultCode::kInvalidArgument);
   try {
@@ -620,6 +750,8 @@ Result VoiceContent::add_hairpin(Hairpin hairpin) {
 }
 
 Result VoiceContent::add_slur(Slur slur) {
+  if (slur.id == NotationEntityId{})
+    return Result(ResultCode::kInvalidArgument);
   if (marking_id_exists(slur.id))
     return Result(ResultCode::kInvalidArgument);
   try {
@@ -633,6 +765,8 @@ Result VoiceContent::add_slur(Slur slur) {
 }
 
 Result VoiceContent::add_beam_override(BeamOverride override) {
+  if (override.id == NotationEntityId{})
+    return Result(ResultCode::kInvalidArgument);
   if (marking_id_exists(override.id))
     return Result(ResultCode::kInvalidArgument);
   try {
@@ -646,8 +780,31 @@ Result VoiceContent::add_beam_override(BeamOverride override) {
 }
 
 Result VoiceContent::add_grace_group(GraceGroup group) {
+  if (group.id == NotationEntityId{})
+    return Result(ResultCode::kInvalidArgument);
+  // The group's own id must not double as a principal_event reference.
+  if (group.id == group.principal_event)
+    return Result(ResultCode::kInvalidArgument);
   if (marking_id_exists(group.id))
     return Result(ResultCode::kInvalidArgument);
+  const NotationEntityId parent_id = group.id;
+  for (std::size_t i = 0; i < group.notes.size(); ++i) {
+    const NotationEntityId gn_id = group.notes[i].id;
+    if (gn_id == NotationEntityId{})
+      return Result(ResultCode::kInvalidArgument);
+    if (gn_id == parent_id)
+      return Result(ResultCode::kInvalidArgument);
+    // A GraceNote id must not double as the principal_event reference
+    // either — that would create an ambiguous identity.
+    if (gn_id == group.principal_event)
+      return Result(ResultCode::kInvalidArgument);
+    for (std::size_t j = 0; j < i; ++j) {
+      if (gn_id == group.notes[j].id)
+        return Result(ResultCode::kInvalidArgument);
+    }
+    if (marking_id_exists(gn_id))
+      return Result(ResultCode::kInvalidArgument);
+  }
   try {
     grace_groups_.push_back(std::move(group));
   } catch (const std::bad_alloc&) {

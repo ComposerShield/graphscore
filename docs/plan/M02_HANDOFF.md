@@ -5,7 +5,8 @@
 commands, split 8c-i + 8c-ii), and 8d (reversible add/remove of graph entities,
 split 8d-i..iv) are complete and committed. Phase 8e notation/tempo edit
 commands are **complete** (8e-i core voice-event edits, 8e-ii marking
-add/remove commands, 8e-iii tempo-point edits); **8f (selection model) is
+add/remove commands, 8e-iii tempo-point edits); **8f-i (ChordNote + GraceNote
+identity groundwork) is complete; 8f-ii (selection representation) is
 next**. Phase 7
 (Normative playback specification) was split into 7a/7b/7c per Adam's locked
 scoping rulings (see "Plan for the remaining phases"). 7a is committed
@@ -104,21 +105,22 @@ only when the whole section is approved.
 | 8e-ii | Marking add/remove commands (dynamics/hairpins/slurs/beam overrides/grace groups/pedal spans) | ✅ done | `(this commit)` |
 | 8e-iii | Tempo-point edit commands (4 commands + `NodeTimeline::clear_tempo`) | ✅ done | `5b0d32e` |
 | **8e complete** | Notation + tempo edit commands — voice events, markings, tempo points | ✅ **done** | — |
+| 8f-i | ChordNote + GraceNote identity groundwork (stable `NotationEntityId`s, factory fresh-ID generation + explicit-ID preservation, voice-scoped cross-kind/nil collision guards incl. marking + pedal APIs) | ✅ done | (this commit) |
+| 8f-ii | Selection representation | ⬜ next | — |
 | 8f..h | Selection model → clipboard/cut/copy/paste + node copy/paste id remapping → measure insert/delete | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
 
-Test suite currently: **1211 tests, 100% pass** after Phase 8e-iii
-(`CommandTest.*` = 506); debug + ASan/UBSan clean with zero findings across
-the 8e-i, 8e-ii, and 8e-iii review rounds.
+Test suite currently: **1249 tests, 100% pass** after Phase 8f-i
+(`CommandTest.*` = 554); debug + ASan/UBSan clean with zero findings across
+the 8e-i, 8e-ii, 8e-iii, and 8f-i review rounds.
 
 CHECKLIST.md M02 boxes checked so far: Dependencies, Identity and value types,
 Project and track model, Node timeline, Notation model, Graph model, Adaptive
-playback semantics, Normative playback specification (plus the 8a/8b/8c
+playback semantics, Normative playback specification (plus the 8a/8b/8c/8d/8e
 descriptive sub-boxes). Remaining M02 boxes: **Command and selection model**
-(still unchecked — 8c completed the reversible-today subset but the section's
-add/remove structural, selection, clipboard, and measure-op deliverables are
-not done), Validation service, Acceptance criteria, Test focus, and the
+(still unchecked — the selection representation and all subsequent deliverables
+are not done), Validation service, Acceptance criteria, Test focus, and the
 top-level "Milestone 02 complete".
 
 ## What each completed phase delivered (so the next agent knows what exists)
@@ -512,6 +514,34 @@ top-level "Milestone 02 complete".
   "measure insert/delete" to "measure insert/delete plus the node-timeline
   edit commands". 8f (selection) and 8g (clipboard) are unaffected.
 
+- **Phase 8f-i (`domain`) — ChordNote + GraceNote identity groundwork (done):**
+  added `NotationEntityId` to `ChordNote` and `GraceNote` so every selectable
+  notation entity now carries a persistent stable identity — `Note`, `Rest`,
+  `Chord`, `ChordNote`, `GraceNote`, and every marking kind all have ids.
+  `make_chord` and `make_grace_group` factories mint a fresh id for every
+  notehead that arrives with a nil id, and preserve any non-nil explicit id
+  unchanged — the same pattern as the existing `make_note`/`make_rest`
+  factories.  `VoiceContent`'s `marking_id_exists` cross-kind uniqueness scan
+  was extended to `ChordNote` ids and `GraceNote` ids; idiomatic aggregate
+  `ChordNote`/`GraceNote` construction (designated initializers) is the new
+  canonical form.  Complete voice-scoped collision guards: a `ChordNote` id
+  colliding with *any* existing notation entity id (the parent `Chord`'s own
+  id, another `ChordNote` id, a `Note` event id, a `GraceNote` id, or any
+  marking id) rejects the `append`/`insert_event`/`replace_event`; a
+  `GraceNote` id colliding with its own `GraceGroup` id, another `GraceNote`
+  id inside the same group, an existing event id, or any existing voice-scoped
+  id rejects `add_grace_group`.  Nil-id rejection applies to every public
+  marking insertion API (dynamics, hairpins, slurs, beam overrides, grace
+  groups, pedal spans).  `replace_event` allows an embedded id to reuse the
+  *target event's* ids (the chord being replaced) — the standard pattern that
+  lets a user edit a chord's pitches in place without losing notehead
+  identity.  **M03 round-trip obligation:** `ChordNote::id` and
+  `GraceNote::id` are load-bearing fields — a serializer that drops or
+  regenerates them silently breaks every notehead/grace-note selection and
+  every clipboard identity remapping.  **1249 tests** (38 added over Phase
+  8e-iii's 1211; `CommandTest.*` 506→554).  Required five gates green plus
+  ASan/UBSan.  **Selection representation (8f-ii) is still outstanding.**
+
 ## Plan for the remaining phases
 
 - **Phase 6b — pickdown/MIDI-ownership lifecycle (done, split 6b-i + 6b-ii):**
@@ -703,10 +733,11 @@ top-level "Milestone 02 complete".
       three named here. See the 8e-iii delivery note above. **Did not close
       line 79** — node-timeline (clef/pickdown/signature) commands are still
       missing; see the NEW GAP note in that delivery entry.
-  - **8f (next — SCOPED with Adam, see the dedicated section below):** the
+  - **8f (8f-i complete — 8f-ii next; scoped with Adam, see the dedicated section below):** the
     toolkit-independent selection model. Kinds, identity mechanism, cardinality,
     and validation approach are all locked; see "**Phase 8f scope (locked)**"
-    after this list. **8g** clipboard fragments (relative
+    after this list. **8f-i (`ChordNote` + `GraceNote` identity groundwork) is
+    done. 8f-ii (selection representation) is next.** **8g** clipboard fragments (relative
     positions, staff/voice mapping, no source UUIDs) + reversible cut/copy/paste
     (identity remapping + destination rest normalization + boundary-crossing
     clip/reconnection rules) + node copy/paste id remapping (duplicate with
@@ -739,8 +770,9 @@ Reconnaissance findings that drove the decisions (all verified in-tree):
 
 - **`Note`, `Chord`, and `Rest` already carry `NotationEntityId`**
   (`notation_event.hpp:22-64`), and `event_id(const VoiceEvent&)` accesses it.
-  But **`ChordNote` and `GraceNote` do not** — an individual notehead inside a
-  chord had no stable identity.
+  But **`ChordNote` and `GraceNote` did not** — an individual notehead inside a
+  chord had no stable identity. **(Resolved by 8f-i — both now carry
+  `NotationEntityId`.)**
 - **`graphscore_domain.hpp:98` already forward-declares `class Selection`** as
   an unimplemented placeholder. 8f replaces it with a real header include.
 - **`NotationEntityId` uniqueness is only guaranteed within one
@@ -1113,11 +1145,11 @@ Recorded here so the owning phase picks them up:
   where segment geometry first becomes well-defined; define the representation
   there, next to its only real consumer. The `02-domain-model.md` selection
   deliverable box stays unchecked for this reason and names it.
-- **→ Milestone 03 (persistence), from the 8f `ChordNote` ruling:** once
-  `ChordNote` gains a `NotationEntityId`, that field is a **round-trip
+- **→ Milestone 03 (persistence), from the 8f-i `ChordNote`/`GraceNote` ruling:** once
+  `ChordNote` and `GraceNote` gain a `NotationEntityId`, that field is a **round-trip
   obligation** — a serializer that drops or regenerates it silently breaks
   every notehead selection and every clipboard identity remapping that
-  references a chord pitch. Same class of load-bearing-field obligation as the
+  references a chord pitch or grace pitch. Same class of load-bearing-field obligation as the
   connector-order entry already on this list.
 - **→ later (advisory only, 8e-iii, tree-wide):** `tests/domain/command_test.cpp`
   uses `assert(...)` in its setup helpers (lines ~381, ~389, and the new tempo

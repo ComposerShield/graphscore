@@ -85,14 +85,15 @@ struct PedalSpan {
   [[nodiscard]] bool operator==(const PedalSpan&) const = default;
 };
 
-// One grace note within a GraceGroup: its spelling, its notated (unstolen)
-// duration, its acciaccatura/appoggiatura kind, and whether it is drawn
-// slashed.
+// One grace note within a GraceGroup: its persistent identity, its
+// spelling, its notated (unstolen) duration, its
+// acciaccatura/appoggiatura kind, and whether it is drawn slashed.
 struct GraceNote {
-  SpelledPitch  pitch;
-  Duration      duration;
-  GraceNoteType type    = GraceNoteType::kAppoggiatura;
-  bool          slashed = false;
+  NotationEntityId id = {};
+  SpelledPitch     pitch;
+  Duration         duration;
+  GraceNoteType    type    = GraceNoteType::kAppoggiatura;
+  bool             slashed = false;
 
   [[nodiscard]] bool operator==(const GraceNote&) const = default;
 };

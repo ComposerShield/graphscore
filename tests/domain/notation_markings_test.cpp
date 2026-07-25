@@ -150,11 +150,14 @@ TEST(BeamOverrideTest, ManualJoinRoundTrips) {
 TEST(GraceGroupTest, AttachesOrderedGraceNotesToAPrincipalEvent) {
   const VoiceEvent principal = make_note(pitch(Letter::kC), quarter());
 
-  const GraceNote first{pitch(Letter::kB), eighth(),
-                        GraceNoteType::kAcciaccatura, /*slashed=*/true};
-  const GraceNote second{pitch(Letter::kA), eighth(),
-                         GraceNoteType::kAppoggiatura,
-                         /*slashed=*/false};
+  const GraceNote first{.pitch    = pitch(Letter::kB),
+                        .duration = eighth(),
+                        .type     = GraceNoteType::kAcciaccatura,
+                        .slashed  = true};
+  const GraceNote second{.pitch    = pitch(Letter::kA),
+                         .duration = eighth(),
+                         .type     = GraceNoteType::kAppoggiatura,
+                         .slashed  = false};
 
   const GraceGroup group =
       make_grace_group(event_id(principal), {first, second});
@@ -177,10 +180,98 @@ TEST(GraceGroupTest, VoiceContentAccumulatesGraceGroups) {
   ASSERT_TRUE(
       voice
           .add_grace_group(make_grace_group(
-              event_id(principal), {GraceNote{pitch(Letter::kB), eighth()}}))
+              event_id(principal),
+              {GraceNote{.pitch = pitch(Letter::kB), .duration = eighth()}}))
           .ok());
 
   ASSERT_EQ(voice.grace_groups().size(), 1u);
   EXPECT_EQ(voice.grace_groups()[0].principal_event, event_id(principal));
   EXPECT_EQ(voice.grace_groups()[0].notes.size(), 1u);
+}
+
+// -- Phase 8f-i: GraceNote identity --
+
+TEST(GraceNoteIdentityTest, EachNoteReceivesDistinctFreshId) {
+  const VoiceEvent principal = make_note(pitch(Letter::kC), quarter());
+  const GraceNote  gn1{.pitch    = pitch(Letter::kB),
+                       .duration = eighth(),
+                       .type     = GraceNoteType::kAcciaccatura};
+  const GraceNote  gn2{.pitch    = pitch(Letter::kA),
+                       .duration = eighth(),
+                       .type     = GraceNoteType::kAcciaccatura};
+  const GraceGroup group = make_grace_group(event_id(principal), {gn1, gn2});
+  ASSERT_EQ(group.notes.size(), 2u);
+  EXPECT_NE(group.notes[0].id, NotationEntityId{});
+  EXPECT_NE(group.notes[1].id, NotationEntityId{});
+  EXPECT_NE(group.notes[0].id, group.notes[1].id);
+}
+
+TEST(GraceNoteIdentityTest, SeparateGraceGroupsDoNotReuseIds) {
+  const VoiceEvent principal = make_note(pitch(Letter::kC), quarter());
+  const GraceNote  gn1a{.pitch    = pitch(Letter::kB),
+                        .duration = eighth(),
+                        .type     = GraceNoteType::kAppoggiatura};
+  const GraceGroup g1 = make_grace_group(event_id(principal), {gn1a});
+  const GraceNote  gn2a{.pitch    = pitch(Letter::kA),
+                        .duration = eighth(),
+                        .type     = GraceNoteType::kAppoggiatura};
+  const GraceGroup g2 = make_grace_group(NotationEntityId::generate(), {gn2a});
+  EXPECT_NE(g1.notes[0].id, NotationEntityId{});
+  EXPECT_NE(g2.notes[0].id, NotationEntityId{});
+  EXPECT_NE(g1.notes[0].id, g2.notes[0].id);
+}
+
+TEST(GraceNoteIdentityTest, IdsSurviveCopy) {
+  const VoiceEvent principal = make_note(pitch(Letter::kC), quarter());
+  const GraceGroup original  = make_grace_group(
+      event_id(principal), {GraceNote{.pitch    = pitch(Letter::kB),
+                                       .duration = eighth(),
+                                       .type     = GraceNoteType::kAppoggiatura,
+                                       .slashed  = true}});
+  const GraceGroup copy = original;
+  ASSERT_EQ(copy.notes.size(), 1u);
+  EXPECT_EQ(copy.notes[0].id, original.notes[0].id);
+  EXPECT_TRUE(copy.notes[0].slashed);
+}
+
+TEST(GraceNoteIdentityTest, ExplicitIdPreservedWhenNonNil) {
+  const NotationEntityId explicit_id = NotationEntityId::generate();
+  GraceGroup             group =
+      GraceGroup{NotationEntityId::generate(),
+                 NotationEntityId::generate(),
+                 {GraceNote{explicit_id, pitch(Letter::kC), eighth(),
+                            GraceNoteType::kAppoggiatura, false}}};
+  ASSERT_EQ(group.notes.size(), 1u);
+  EXPECT_EQ(group.notes[0].id, explicit_id);
+}
+
+TEST(GraceNoteIdentityTest, FactoryPreservesNonNilEmbeddedId) {
+  const NotationEntityId explicit_id = NotationEntityId::generate();
+  const VoiceEvent       principal   = make_note(pitch(Letter::kC), quarter());
+  const GraceGroup       group       = make_grace_group(
+      event_id(principal), {GraceNote{explicit_id, pitch(Letter::kB), eighth(),
+                                      GraceNoteType::kAcciaccatura, false},
+                                        GraceNote{{},
+                                      pitch(Letter::kA),
+                                      eighth(),
+                                      GraceNoteType::kAcciaccatura,
+                                      false}});
+  ASSERT_EQ(group.notes.size(), 2u);
+  // Non-nil id preserved.
+  EXPECT_EQ(group.notes[0].id, explicit_id);
+  // Nil id replaced with fresh id.
+  EXPECT_NE(group.notes[1].id, NotationEntityId{});
+  EXPECT_NE(group.notes[1].id, explicit_id);
+}
+
+TEST(GraceNoteIdentityTest, StructuralEqualityIncludesAllFields) {
+  const NotationEntityId shared_id = NotationEntityId::generate();
+  const GraceNote        a{shared_id, pitch(Letter::kC), eighth(),
+                    GraceNoteType::kAppoggiatura, false};
+  const GraceNote        b{shared_id, pitch(Letter::kC), eighth(),
+                    GraceNoteType::kAppoggiatura, false};
+  const GraceNote        c{shared_id, pitch(Letter::kD), eighth(),
+                    GraceNoteType::kAppoggiatura, false};
+  EXPECT_EQ(a, b);
+  EXPECT_NE(a, c);
 }

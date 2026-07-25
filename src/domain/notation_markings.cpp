@@ -32,6 +32,10 @@ PedalSpan make_pedal_span(Rational start, Rational end) {
 
 GraceGroup make_grace_group(NotationEntityId       principal_event,
                             std::vector<GraceNote> notes) {
+  for (GraceNote& gn : notes) {
+    if (gn.id == NotationEntityId{})
+      gn.id = NotationEntityId::generate();
+  }
   return GraceGroup{NotationEntityId::generate(), principal_event,
                     std::move(notes)};
 }
