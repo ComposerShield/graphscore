@@ -25,6 +25,7 @@ enum class NotationDiagnosticCode : std::uint8_t {
   kHairpinNotOrdered,
   kSlurDanglingEndpoint,
   kSlurNotOrdered,
+  kSlurAttachedToRest,
   kPedalSpanNotOrdered,
   kPedalSpanOutOfRange,
   kIncompleteTupletGroup,

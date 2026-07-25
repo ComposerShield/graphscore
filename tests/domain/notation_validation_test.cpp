@@ -72,9 +72,12 @@ TEST(NotationValidationTest, CleanVoiceYieldsNoDiagnostics) {
   ASSERT_TRUE(voice.append(first).ok());
   ASSERT_TRUE(voice.append(second).ok());
 
-  voice.add_hairpin(make_hairpin(event_id(first), event_id(second),
-                                 HairpinDirection::kCrescendo));
-  voice.add_slur(make_slur(event_id(first), event_id(second)));
+  ASSERT_TRUE(voice
+                  .add_hairpin(make_hairpin(event_id(first), event_id(second),
+                                            HairpinDirection::kCrescendo))
+                  .ok());
+  ASSERT_TRUE(
+      voice.add_slur(make_slur(event_id(first), event_id(second))).ok());
 
   EXPECT_TRUE(validate_voice_references(voice).empty());
 }
@@ -112,7 +115,7 @@ TEST(NotationValidationTest, HairpinWithDanglingEndpointIsFlagged) {
   const auto hairpin =
       make_hairpin(event_id(first), NotationEntityId::generate(),
                    HairpinDirection::kCrescendo);
-  voice.add_hairpin(hairpin);
+  ASSERT_TRUE(voice.add_hairpin(hairpin).ok());
 
   const auto diagnostics = validate_voice_references(voice);
   ASSERT_EQ(diagnostics.size(), 1u);
@@ -130,7 +133,7 @@ TEST(NotationValidationTest, HairpinEndBeforeStartIsFlagged) {
 
   const auto hairpin = make_hairpin(event_id(second), event_id(first),
                                     HairpinDirection::kDiminuendo);
-  voice.add_hairpin(hairpin);
+  ASSERT_TRUE(voice.add_hairpin(hairpin).ok());
 
   const auto diagnostics = validate_voice_references(voice);
   ASSERT_EQ(diagnostics.size(), 1u);
@@ -144,7 +147,7 @@ TEST(NotationValidationTest, SlurWithNonExistentEndpointIsFlagged) {
   ASSERT_TRUE(voice.append(first).ok());
 
   const auto slur = make_slur(event_id(first), NotationEntityId::generate());
-  voice.add_slur(slur);
+  ASSERT_TRUE(voice.add_slur(slur).ok());
 
   const auto diagnostics = validate_voice_references(voice);
   ASSERT_EQ(diagnostics.size(), 1u);
@@ -163,7 +166,7 @@ TEST(NotationValidationTest, SlurWithOtherVoiceEndpointIsFlagged) {
   ASSERT_TRUE(voice_two.append(in_voice_two).ok());
 
   const auto slur = make_slur(event_id(in_voice_one), event_id(in_voice_two));
-  voice_one.add_slur(slur);
+  ASSERT_TRUE(voice_one.add_slur(slur).ok());
 
   const auto diagnostics = validate_voice_references(voice_one);
   ASSERT_EQ(diagnostics.size(), 1u);
@@ -200,8 +203,11 @@ TEST(NotationValidationTest, ValidBeamOverridePasses) {
   ASSERT_TRUE(voice.append(first).ok());
   ASSERT_TRUE(voice.append(second).ok());
 
-  voice.add_beam_override(make_beam_override(
-      BeamOverride::Kind::kBreak, {event_id(first), event_id(second)}));
+  ASSERT_TRUE(
+      voice
+          .add_beam_override(make_beam_override(
+              BeamOverride::Kind::kBreak, {event_id(first), event_id(second)}))
+          .ok());
 
   EXPECT_TRUE(validate_voice_references(voice).empty());
 }
@@ -213,7 +219,7 @@ TEST(NotationValidationTest, BeamOverrideOnNonBeamableEventIsFlagged) {
 
   const auto beam_override =
       make_beam_override(BeamOverride::Kind::kBreak, {event_id(quarter_note)});
-  voice.add_beam_override(beam_override);
+  ASSERT_TRUE(voice.add_beam_override(beam_override).ok());
 
   const auto diagnostics = validate_voice_references(voice);
   ASSERT_EQ(diagnostics.size(), 1u);
@@ -232,7 +238,7 @@ TEST(NotationValidationTest, BeamOverrideOnNonAdjacentEventsIsFlagged) {
 
   const auto beam_override = make_beam_override(
       BeamOverride::Kind::kJoin, {event_id(first), event_id(last)});
-  voice.add_beam_override(beam_override);
+  ASSERT_TRUE(voice.add_beam_override(beam_override).ok());
 
   const auto diagnostics = validate_voice_references(voice);
   ASSERT_EQ(diagnostics.size(), 1u);
@@ -285,14 +291,14 @@ TEST(NotationValidationTest,
   const auto hairpin =
       make_hairpin(event_id(plain_one), NotationEntityId::generate(),
                    HairpinDirection::kCrescendo);
-  voice.add_hairpin(hairpin);
+  ASSERT_TRUE(voice.add_hairpin(hairpin).ok());
 
   const auto slur = make_slur(event_id(plain_one), event_id(conflicting));
-  voice.add_slur(slur);
+  ASSERT_TRUE(voice.add_slur(slur).ok());
 
   const auto beam_override =
       make_beam_override(BeamOverride::Kind::kBreak, {event_id(plain_one)});
-  voice.add_beam_override(beam_override);
+  ASSERT_TRUE(voice.add_beam_override(beam_override).ok());
 
   const std::vector<NotationDiagnostic> diagnostics =
       validate_voice_references(voice);
@@ -333,9 +339,12 @@ TEST(NotationValidationTest,
   const VoiceEvent second = make_note(pitch(Letter::kD), quarter());
   ASSERT_TRUE(voice.append(first).ok());
   ASSERT_TRUE(voice.append(second).ok());
-  voice.add_slur(make_slur(event_id(first), event_id(second)));
+  ASSERT_TRUE(
+      voice.add_slur(make_slur(event_id(first), event_id(second))).ok());
 
-  lane.add_pedal_span(stave_id, make_pedal_span(Rational(0), Rational(1)));
+  ASSERT_TRUE(
+      lane.add_pedal_span(stave_id, make_pedal_span(Rational(0), Rational(1)))
+          .ok());
 
   EXPECT_TRUE(validate_lane_references(lane, Rational(2)).empty());
 }
@@ -346,7 +355,7 @@ TEST(NotationValidationTest, LaneWithDanglingPedalSpanIsFlagged) {
   lane.ensure_stave(stave_id);
 
   const PedalSpan span = make_pedal_span(Rational(0), Rational(3));
-  lane.add_pedal_span(stave_id, span);
+  ASSERT_TRUE(lane.add_pedal_span(stave_id, span).ok());
 
   const auto diagnostics = validate_lane_references(lane, Rational(2));
   ASSERT_EQ(diagnostics.size(), 1u);
@@ -367,7 +376,7 @@ TEST(NotationValidationTest, MutationThatRemovesEventsLeavesStaleSpanFlagged) {
   ASSERT_TRUE(voice.append(second).ok());
 
   const auto slur = make_slur(event_id(first), event_id(second));
-  voice.add_slur(slur);
+  ASSERT_TRUE(voice.add_slur(slur).ok());
   ASSERT_TRUE(validate_voice_references(voice).empty());
 
   // Simulate the cross-measure mutation: the events are gone (e.g. cut to
@@ -389,7 +398,9 @@ TEST(NotationValidationTest, DynamicMarkingWithValidEventPasses) {
   const VoiceEvent note = make_note(pitch(Letter::kC), quarter());
   ASSERT_TRUE(voice.append(note).ok());
 
-  voice.add_dynamic(make_dynamic_marking(event_id(note), Dynamic::kMf));
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(event_id(note), Dynamic::kMf))
+          .ok());
 
   EXPECT_TRUE(validate_voice_references(voice).empty());
 }
@@ -401,7 +412,7 @@ TEST(NotationValidationTest, DynamicMarkingWithDanglingEventIsFlagged) {
 
   const auto marking =
       make_dynamic_marking(NotationEntityId::generate(), Dynamic::kMf);
-  voice.add_dynamic(marking);
+  ASSERT_TRUE(voice.add_dynamic(marking).ok());
 
   const auto diagnostics = validate_voice_references(voice);
   ASSERT_EQ(diagnostics.size(), 1u);
@@ -415,9 +426,12 @@ TEST(NotationValidationTest, GraceGroupWithNotePrincipalPasses) {
   const VoiceEvent principal = make_note(pitch(Letter::kC), quarter());
   ASSERT_TRUE(voice.append(principal).ok());
 
-  voice.add_grace_group(make_grace_group(
-      event_id(principal), {GraceNote{pitch(Letter::kD), eighth(),
-                                      GraceNoteType::kAppoggiatura, false}}));
+  ASSERT_TRUE(voice
+                  .add_grace_group(make_grace_group(
+                      event_id(principal),
+                      {GraceNote{pitch(Letter::kD), eighth(),
+                                 GraceNoteType::kAppoggiatura, false}}))
+                  .ok());
 
   EXPECT_TRUE(validate_voice_references(voice).empty());
 }
@@ -428,10 +442,12 @@ TEST(NotationValidationTest, GraceGroupWithChordPrincipalPasses) {
       quarter(), {ChordNote{pitch(Letter::kC)}, ChordNote{pitch(Letter::kE)}});
   ASSERT_TRUE(voice.append(VoiceEvent(chord)).ok());
 
-  voice.add_grace_group(
-      make_grace_group(event_id(voice.events()[0]),
-                       {GraceNote{pitch(Letter::kD), eighth(),
-                                  GraceNoteType::kAppoggiatura, false}}));
+  ASSERT_TRUE(voice
+                  .add_grace_group(make_grace_group(
+                      event_id(voice.events()[0]),
+                      {GraceNote{pitch(Letter::kD), eighth(),
+                                 GraceNoteType::kAppoggiatura, false}}))
+                  .ok());
 
   EXPECT_TRUE(validate_voice_references(voice).empty());
 }
@@ -444,7 +460,7 @@ TEST(NotationValidationTest, GraceGroupWithRestPrincipalIsFlagged) {
   const auto group = make_grace_group(
       event_id(rest_event), {GraceNote{pitch(Letter::kD), eighth(),
                                        GraceNoteType::kAppoggiatura, false}});
-  voice.add_grace_group(group);
+  ASSERT_TRUE(voice.add_grace_group(group).ok());
 
   const auto diagnostics = validate_voice_references(voice);
   ASSERT_EQ(diagnostics.size(), 1u);
@@ -462,7 +478,7 @@ TEST(NotationValidationTest, GraceGroupWithDanglingPrincipalIsFlagged) {
       make_grace_group(NotationEntityId::generate(),
                        {GraceNote{pitch(Letter::kD), eighth(),
                                   GraceNoteType::kAppoggiatura, false}});
-  voice.add_grace_group(group);
+  ASSERT_TRUE(voice.add_grace_group(group).ok());
 
   const auto diagnostics = validate_voice_references(voice);
   ASSERT_EQ(diagnostics.size(), 1u);

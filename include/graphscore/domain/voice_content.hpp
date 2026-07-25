@@ -94,36 +94,42 @@ class VoiceContent {
     return dynamics_;
   }
 
-  void add_dynamic(DynamicMarking marking) { dynamics_.push_back(marking); }
+  [[nodiscard]] Result add_dynamic(DynamicMarking marking);
+
+  [[nodiscard]] Result remove_dynamic(NotationEntityId id);
 
   [[nodiscard]] const std::vector<Hairpin>& hairpins() const noexcept {
     return hairpins_;
   }
 
-  void add_hairpin(Hairpin hairpin) { hairpins_.push_back(hairpin); }
+  [[nodiscard]] Result add_hairpin(Hairpin hairpin);
+
+  [[nodiscard]] Result remove_hairpin(NotationEntityId id);
 
   [[nodiscard]] const std::vector<Slur>& slurs() const noexcept {
     return slurs_;
   }
 
-  void add_slur(Slur slur) { slurs_.push_back(slur); }
+  [[nodiscard]] Result add_slur(Slur slur);
+
+  [[nodiscard]] Result remove_slur(NotationEntityId id);
 
   [[nodiscard]] const std::vector<BeamOverride>& beam_overrides()
       const noexcept {
     return beam_overrides_;
   }
 
-  void add_beam_override(BeamOverride override) {
-    beam_overrides_.push_back(std::move(override));
-  }
+  [[nodiscard]] Result add_beam_override(BeamOverride override);
+
+  [[nodiscard]] Result remove_beam_override(NotationEntityId id);
 
   [[nodiscard]] const std::vector<GraceGroup>& grace_groups() const noexcept {
     return grace_groups_;
   }
 
-  void add_grace_group(GraceGroup group) {
-    grace_groups_.push_back(std::move(group));
-  }
+  [[nodiscard]] Result add_grace_group(GraceGroup group);
+
+  [[nodiscard]] Result remove_grace_group(NotationEntityId id);
 
   // The exact whole-note sum of every event's resolved duration.
   [[nodiscard]] Rational total_length() const;
@@ -152,6 +158,15 @@ class VoiceContent {
   [[nodiscard]] bool operator==(const VoiceContent&) const = default;
 
  private:
+  // True if `id` appears as an event id or in any marking collection.
+  [[nodiscard]] bool marking_id_exists(NotationEntityId id) const;
+
+  // True if `id` appears in any marking collection (dynamics, hairpins,
+  // slurs, beam overrides, grace groups), ignoring events.  Used by
+  // replace_event so that self-id replacement is still rejected when
+  // the target event's id collides with a marking.
+  [[nodiscard]] bool marking_only_id_exists(NotationEntityId id) const;
+
   std::vector<VoiceEvent>     events_;
   std::vector<DynamicMarking> dynamics_;
   std::vector<Hairpin>        hairpins_;

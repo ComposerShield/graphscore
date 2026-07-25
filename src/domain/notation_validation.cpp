@@ -124,7 +124,7 @@ void append_hairpin_diagnostics(
 }
 
 void append_slur_diagnostics(
-    const std::vector<Slur>&                                 slurs,
+    const std::vector<Slur>& slurs, const std::vector<VoiceEvent>& events,
     const std::unordered_map<NotationEntityId, std::size_t>& positions,
     std::vector<NotationDiagnostic>&                         diagnostics) {
   for (const Slur& slur : slurs) {
@@ -132,6 +132,19 @@ void append_slur_diagnostics(
         slur.id, slur.start_event, slur.end_event, positions,
         NotationDiagnosticCode::kSlurDanglingEndpoint,
         NotationDiagnosticCode::kSlurNotOrdered, diagnostics);
+
+    // Both endpoints must be sounding events (Note or Chord), not Rests.
+    for (const NotationEntityId endpoint : {slur.start_event, slur.end_event}) {
+      const auto it = positions.find(endpoint);
+      if (it == positions.end())
+        continue;  // already diagnosed as dangling
+      if (std::holds_alternative<Rest>(events[it->second])) {
+        diagnostics.push_back(
+            {slur.id, NotationDiagnosticCode::kSlurAttachedToRest,
+             "slur endpoint must be a Note or Chord, not a Rest"});
+        break;  // one diagnostic per slur
+      }
+    }
   }
 }
 
@@ -265,7 +278,7 @@ std::vector<NotationDiagnostic> validate_voice_references(
   const std::unordered_map<NotationEntityId, std::size_t> positions =
       index_events_by_id(events);
   append_hairpin_diagnostics(voice.hairpins(), positions, diagnostics);
-  append_slur_diagnostics(voice.slurs(), positions, diagnostics);
+  append_slur_diagnostics(voice.slurs(), events, positions, diagnostics);
   append_beam_override_diagnostics(voice.beam_overrides(), events, positions,
                                    diagnostics);
   append_tuplet_diagnostics(events, diagnostics);

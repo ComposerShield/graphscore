@@ -78,7 +78,9 @@ class TrackLane {
   [[nodiscard]] const std::vector<PedalSpan>* pedal_spans(
       StaveId stave_id) const;
 
-  void add_pedal_span(StaveId stave_id, PedalSpan span);
+  [[nodiscard]] Result add_pedal_span(StaveId stave_id, PedalSpan span);
+
+  [[nodiscard]] Result remove_pedal_span(StaveId stave_id, NotationEntityId id);
 
   [[nodiscard]] bool operator==(const TrackLane&) const = default;
 

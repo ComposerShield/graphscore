@@ -1,9 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 add_library(graphscore_domain STATIC
+  add_beam_override_command.cpp
+  add_dynamic_command.cpp
+  add_grace_group_command.cpp
+  add_hairpin_command.cpp
   add_input_connector_command.cpp
   add_node_command.cpp
   add_output_connector_command.cpp
+  add_pedal_span_command.cpp
+  add_slur_command.cpp
   add_track_command.cpp
   archive_track_command.cpp
   bind_output_event_command.cpp
@@ -31,10 +37,16 @@ add_library(graphscore_domain STATIC
   pickdown_ownership.cpp
   project.cpp
   register_event_command.cpp
+  remove_beam_override_command.cpp
+  remove_dynamic_command.cpp
   remove_event_command.cpp
+  remove_grace_group_command.cpp
+  remove_hairpin_command.cpp
   remove_input_connector_command.cpp
   remove_node_command.cpp
   remove_output_connector_command.cpp
+  remove_pedal_span_command.cpp
+  remove_slur_command.cpp
   reset_route_command.cpp
   restore_track_command.cpp
   route_geometry.cpp

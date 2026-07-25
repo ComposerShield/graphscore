@@ -123,9 +123,11 @@ Result VoiceContent::append(VoiceEvent event) {
       return Result(ResultCode::kInvalidArgument);
   }
 
-  // Reject duplicate NotationEntityId within the voice.
+  // Reject duplicate NotationEntityId: the new event's id must not
+  // collide with any event or any marking (dynamic, hairpin, slur,
+  // beam override, grace group) already present in the voice.
   const NotationEntityId new_id = event_id(event);
-  if (event_id_exists(events_, new_id))
+  if (marking_id_exists(new_id))
     return Result(ResultCode::kInvalidArgument);
 
   try {
@@ -157,14 +159,14 @@ Result VoiceContent::insert_event(Rational position, VoiceEvent event,
   if (!index.has_value())
     return Result(ResultCode::kInvalidArgument);
 
-  // Reject duplicate NotationEntityId within the voice.
+  // Reject duplicate NotationEntityId: the new event's id must not
+  // collide with any other event id or any marking id already present
+  // in the voice.
   const NotationEntityId new_id = event_id(event);
-  if (event_id_exists(events_, new_id))
+  if (marking_id_exists(new_id))
     return Result(ResultCode::kInvalidArgument);
 
   const Rational new_dur = event_duration(event).resolved();
-
-  // Append at total_length(): plain append, no rest consumption.
   if (*index == events_.size()) {
     const Rational new_total = total_length() + new_dur;
     if (new_total > target_length)
@@ -325,10 +327,16 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
   if (*index >= events_.size())
     return Result(ResultCode::kInvalidArgument);
 
-  // Reject duplicate NotationEntityId: the replacement event may reuse the
-  // target event's own id, but must not duplicate any other event's id.
+  // Reject duplicate NotationEntityId:
+  //   - The replacement may reuse the target event's own id for the
+  //     event collection, but must never collide with any marking
+  //     (dynamic, hairpin, slur, beam override, grace group).
+  //   - If the new id differs from the target's, it must additionally
+  //     not collide with any other event.
   const NotationEntityId new_id    = event_id(event);
   const NotationEntityId target_id = event_id(events_[*index]);
+  if (marking_only_id_exists(new_id))
+    return Result(ResultCode::kInvalidArgument);
   if (new_id != target_id && event_id_exists(events_, new_id))
     return Result(ResultCode::kInvalidArgument);
 
@@ -531,6 +539,191 @@ Result VoiceContent::normalize(Rational target_length) {
 
 Result VoiceContent::validate() const {
   return validate_ties(events_);
+}
+
+bool VoiceContent::marking_id_exists(NotationEntityId id) const {
+  for (const VoiceEvent& event : events_) {
+    if (event_id(event) == id)
+      return true;
+  }
+  for (const DynamicMarking& m : dynamics_) {
+    if (m.id == id)
+      return true;
+  }
+  for (const Hairpin& m : hairpins_) {
+    if (m.id == id)
+      return true;
+  }
+  for (const Slur& m : slurs_) {
+    if (m.id == id)
+      return true;
+  }
+  for (const BeamOverride& m : beam_overrides_) {
+    if (m.id == id)
+      return true;
+  }
+  for (const GraceGroup& m : grace_groups_) {
+    if (m.id == id)
+      return true;
+  }
+  return false;
+}
+
+bool VoiceContent::marking_only_id_exists(NotationEntityId id) const {
+  for (const DynamicMarking& m : dynamics_) {
+    if (m.id == id)
+      return true;
+  }
+  for (const Hairpin& m : hairpins_) {
+    if (m.id == id)
+      return true;
+  }
+  for (const Slur& m : slurs_) {
+    if (m.id == id)
+      return true;
+  }
+  for (const BeamOverride& m : beam_overrides_) {
+    if (m.id == id)
+      return true;
+  }
+  for (const GraceGroup& m : grace_groups_) {
+    if (m.id == id)
+      return true;
+  }
+  return false;
+}
+
+Result VoiceContent::add_dynamic(DynamicMarking marking) {
+  if (marking_id_exists(marking.id))
+    return Result(ResultCode::kInvalidArgument);
+  try {
+    dynamics_.push_back(marking);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  return Result();
+}
+
+Result VoiceContent::add_hairpin(Hairpin hairpin) {
+  if (marking_id_exists(hairpin.id))
+    return Result(ResultCode::kInvalidArgument);
+  try {
+    hairpins_.push_back(hairpin);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  return Result();
+}
+
+Result VoiceContent::add_slur(Slur slur) {
+  if (marking_id_exists(slur.id))
+    return Result(ResultCode::kInvalidArgument);
+  try {
+    slurs_.push_back(slur);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  return Result();
+}
+
+Result VoiceContent::add_beam_override(BeamOverride override) {
+  if (marking_id_exists(override.id))
+    return Result(ResultCode::kInvalidArgument);
+  try {
+    beam_overrides_.push_back(std::move(override));
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  return Result();
+}
+
+Result VoiceContent::add_grace_group(GraceGroup group) {
+  if (marking_id_exists(group.id))
+    return Result(ResultCode::kInvalidArgument);
+  try {
+    grace_groups_.push_back(std::move(group));
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  return Result();
+}
+
+Result VoiceContent::remove_dynamic(NotationEntityId id) {
+  const auto it =
+      std::find_if(dynamics_.begin(), dynamics_.end(),
+                   [id](const DynamicMarking& m) { return m.id == id; });
+  if (it == dynamics_.end())
+    return Result(ResultCode::kInvalidArgument);
+  try {
+    dynamics_.erase(it);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  return Result();
+}
+
+Result VoiceContent::remove_hairpin(NotationEntityId id) {
+  const auto it = std::find_if(hairpins_.begin(), hairpins_.end(),
+                               [id](const Hairpin& m) { return m.id == id; });
+  if (it == hairpins_.end())
+    return Result(ResultCode::kInvalidArgument);
+  try {
+    hairpins_.erase(it);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  return Result();
+}
+
+Result VoiceContent::remove_slur(NotationEntityId id) {
+  const auto it = std::find_if(slurs_.begin(), slurs_.end(),
+                               [id](const Slur& m) { return m.id == id; });
+  if (it == slurs_.end())
+    return Result(ResultCode::kInvalidArgument);
+  try {
+    slurs_.erase(it);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  return Result();
+}
+
+Result VoiceContent::remove_beam_override(NotationEntityId id) {
+  const auto it =
+      std::find_if(beam_overrides_.begin(), beam_overrides_.end(),
+                   [id](const BeamOverride& m) { return m.id == id; });
+  if (it == beam_overrides_.end())
+    return Result(ResultCode::kInvalidArgument);
+  try {
+    beam_overrides_.erase(it);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  return Result();
+}
+
+Result VoiceContent::remove_grace_group(NotationEntityId id) {
+  const auto it =
+      std::find_if(grace_groups_.begin(), grace_groups_.end(),
+                   [id](const GraceGroup& m) { return m.id == id; });
+  if (it == grace_groups_.end())
+    return Result(ResultCode::kInvalidArgument);
+  try {
+    grace_groups_.erase(it);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  return Result();
 }
 
 namespace {

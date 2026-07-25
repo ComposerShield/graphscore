@@ -3,9 +3,15 @@
 #pragma once
 
 #include <graphscore/core/graphscore_core.hpp>
+#include <graphscore/domain/add_beam_override_command.hpp>
+#include <graphscore/domain/add_dynamic_command.hpp>
+#include <graphscore/domain/add_grace_group_command.hpp>
+#include <graphscore/domain/add_hairpin_command.hpp>
 #include <graphscore/domain/add_input_connector_command.hpp>
 #include <graphscore/domain/add_node_command.hpp>
 #include <graphscore/domain/add_output_connector_command.hpp>
+#include <graphscore/domain/add_pedal_span_command.hpp>
+#include <graphscore/domain/add_slur_command.hpp>
 #include <graphscore/domain/add_track_command.hpp>
 #include <graphscore/domain/archive_track_command.hpp>
 #include <graphscore/domain/articulation.hpp>
@@ -40,10 +46,16 @@
 #include <graphscore/domain/plugin_chain.hpp>
 #include <graphscore/domain/project.hpp>
 #include <graphscore/domain/register_event_command.hpp>
+#include <graphscore/domain/remove_beam_override_command.hpp>
+#include <graphscore/domain/remove_dynamic_command.hpp>
 #include <graphscore/domain/remove_event_command.hpp>
+#include <graphscore/domain/remove_grace_group_command.hpp>
+#include <graphscore/domain/remove_hairpin_command.hpp>
 #include <graphscore/domain/remove_input_connector_command.hpp>
 #include <graphscore/domain/remove_node_command.hpp>
 #include <graphscore/domain/remove_output_connector_command.hpp>
+#include <graphscore/domain/remove_pedal_span_command.hpp>
+#include <graphscore/domain/remove_slur_command.hpp>
 #include <graphscore/domain/reset_route_command.hpp>
 #include <graphscore/domain/restore_track_command.hpp>
 #include <graphscore/domain/route_geometry.hpp>

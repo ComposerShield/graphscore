@@ -1,12 +1,11 @@
 # Milestone 02 (Domain And Command Model) — Orchestration Handoff
 
 **Status as of this doc:** Phases 1–7 complete. Phases 8a (command foundation),
-8b (metadata/audition-mix commands), and 8c (fourteen reversible
-structural/config commands, split 8c-i + 8c-ii) are complete and committed.
-Phase 8's remaining work — add/remove structural commands, selection,
-clipboard, and measure ops — is Phase 8d onward; the add/remove commands need
-new domain restore-with-id/removal API before they can be exactly reversible
-(see the Phase 8c row and the "Plan for the remaining phases" 8d entry). Phase 7
+8b (metadata/audition-mix commands), 8c (fourteen reversible structural/config
+commands, split 8c-i + 8c-ii), and 8d (reversible add/remove of graph entities,
+split 8d-i..iv) are complete and committed. Phase 8e notation/tempo edit
+commands are underway: 8e-i (core voice-event edits) and 8e-ii (marking
+add/remove commands) are complete; 8e-iii (tempo-point edits) is next. Phase 7
 (Normative playback specification) was split into 7a/7b/7c per Adam's locked
 scoping rulings (see "Plan for the remaining phases"). 7a is committed
 (`063f1af`) after three review rounds that caught a false continuity claim, a
@@ -100,14 +99,15 @@ only when the whole section is approved.
 | 8d-iii | Add-track command + `add_track_with_id` / undo-only `hard_remove_track` / `Node::remove_lane` | ✅ done | `da7e0cb` |
 | 8d-iv | Add/remove node commands (full Node aggregate snapshot + cross-graph cascade) | ✅ done | `fd83039` |
 | **8d complete** | Add/remove of connectors, events, tracks, nodes — all reversible with stable ids | ✅ **done** | — |
-| 8e | Notation + tempo edit commands (scoped, split 8e-i core voice-events → 8e-ii markings → 8e-iii tempo points); closes line 77 | ⬜ next | — |
+| 8e-i | Core voice-event edit commands (set/convert/tie/untie + voice mutators) | ✅ done | `6f428ac` |
+| 8e-ii | Marking add/remove commands (dynamics/hairpins/slurs/beam overrides/grace groups/pedal spans) | ✅ done | `(this commit)` |
+| 8e-iii | Tempo-point edit commands | ⬜ next | — |
 | 8f..h | Selection model → clipboard/cut/copy/paste + node copy/paste id remapping → measure insert/delete | ⬜ remaining | — |
 | 9 | Validation service | ⬜ remaining | — |
 | — | Acceptance criteria + Test focus | ⬜ remaining (final boxes) | — |
 
-Test suite currently: **896 tests, 100% pass** after Phase 8c (`CommandTest.*`
-105→222); debug + ASan/UBSan clean with zero findings across both 8c
-increments' review rounds.
+Test suite currently: **1173 tests, 100% pass** after Phase 8e-ii; debug +
+ASan/UBSan clean with zero findings across 8e-i and 8e-ii review rounds.
 
 CHECKLIST.md M02 boxes checked so far: Dependencies, Identity and value types,
 Project and track model, Node timeline, Notation model, Graph model, Adaptive
@@ -421,7 +421,30 @@ top-level "Milestone 02 complete".
   landed clean on first review. **Still unchecked in the section:** the
   remaining notation/tempo edit commands (need `VoiceContent`/`TempoLane`
   fine-grained mutators), selection, clipboard, cut/copy/paste + clip/
-  reconnect rules, node copy/paste id remapping, and measure ops — all 8e..f.
+   reconnect rules, node copy/paste id remapping, and measure ops — all 8e..f.
+- **Phase 8e-i (`domain`) — core voice-event edit commands (done, `6f428ac`):**
+  reversible notation edit commands wrapping new positional `VoiceContent`/
+  `TrackLane` mutators (insert/remove/replace with automatic rest normalization):
+  `SetEventCommand` (set/replace a note, rest, or chord at a position — duration
+  change, pitch change, chord-build), `ConvertEventToRestCommand` (the `R` op),
+  `SetTieCommand` (tie/untie); whole-`VoiceContent` snapshot reversibility;
+  rhythmic-completeness validation on every edit via the existing `VoiceContent::
+  normalize` pipeline. Prerequisite for clipboard/paste. 1099 tests after 8e-i.
+- **Phase 8e-ii (`domain`) — marking add/remove commands (done):** 12 reversible
+  add/remove commands for dynamics, hairpins, slurs, beam overrides, grace
+  groups, and pedal spans — six `Add*Command`/`Remove*Command` pairs via new
+  `VoiceContent`/`TrackLane` marking-removal mutators and `marking_command_helpers`
+  (shared allocation guards). Hardened cross-kind notation ID uniqueness so a
+  single-id lookup cannot resolve across Dynamic/Hairpin/Slur/etc. boundaries.
+  Sounding slur endpoint validation (grace notes cannot be slur endpoints).
+  Exact whole-`VoiceContent`/whole-`TrackLane` snapshots for every marking
+  command — the same robust pattern as 8d-iv's whole-`Node` and 8e-i's whole-voice
+  snapshots. Current-timeline/reference validation: every command resolves its
+  target against the project's current timeline (no stale references across
+  undo/redo). Transactional pedal APIs: `add_pedal_span`/`remove_pedal_span` on
+  `TrackLane` with guard-before-mutate discipline. 1173 tests, all five gates +
+  ASan/UBSan green. **8e-iii tempo remains and line 79/Command and selection box
+  stays unchecked.**
 
 ## Plan for the remaining phases
 

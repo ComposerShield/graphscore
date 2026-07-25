@@ -15,11 +15,18 @@
 
 #include <graphscore/domain/graphscore_domain.hpp>
 
+using graphscore::AddBeamOverrideCommand;
+using graphscore::AddDynamicCommand;
+using graphscore::AddGraceGroupCommand;
+using graphscore::AddHairpinCommand;
 using graphscore::AddInputConnectorCommand;
 using graphscore::AddNodeCommand;
 using graphscore::AddOutputConnectorCommand;
+using graphscore::AddPedalSpanCommand;
+using graphscore::AddSlurCommand;
 using graphscore::AddTrackCommand;
 using graphscore::ArchiveTrackCommand;
+using graphscore::BeamOverride;
 using graphscore::BindOutputEventCommand;
 using graphscore::Chord;
 using graphscore::ChordNote;
@@ -33,18 +40,28 @@ using graphscore::ConvertEventToRestCommand;
 using graphscore::DisconnectCommand;
 using graphscore::Duration;
 using graphscore::Dynamic;
+using graphscore::DynamicMarking;
+using graphscore::event_id;
 using graphscore::EventId;
 using graphscore::EventListener;
+using graphscore::GraceGroup;
 using graphscore::GraceNote;
 using graphscore::GraceNoteType;
 using graphscore::Graph;
 using graphscore::GraphPosition;
+using graphscore::Hairpin;
+using graphscore::HairpinDirection;
 using graphscore::KeySignature;
 using graphscore::Letter;
+using graphscore::make_beam_override;
 using graphscore::make_chord;
+using graphscore::make_dynamic_marking;
 using graphscore::make_grace_group;
+using graphscore::make_hairpin;
 using graphscore::make_note;
+using graphscore::make_pedal_span;
 using graphscore::make_rest;
+using graphscore::make_slur;
 using graphscore::Measure;
 using graphscore::MidiChannel;
 using graphscore::Node;
@@ -54,15 +71,22 @@ using graphscore::NotationEntityId;
 using graphscore::Note;
 using graphscore::NoteValue;
 using graphscore::OutputConnector;
+using graphscore::PedalSpan;
 using graphscore::Project;
 using graphscore::ProjectId;
 using graphscore::QueuePolicy;
 using graphscore::Rational;
 using graphscore::RegisterEventCommand;
+using graphscore::RemoveBeamOverrideCommand;
+using graphscore::RemoveDynamicCommand;
 using graphscore::RemoveEventCommand;
+using graphscore::RemoveGraceGroupCommand;
+using graphscore::RemoveHairpinCommand;
 using graphscore::RemoveInputConnectorCommand;
 using graphscore::RemoveNodeCommand;
 using graphscore::RemoveOutputConnectorCommand;
+using graphscore::RemovePedalSpanCommand;
+using graphscore::RemoveSlurCommand;
 using graphscore::ResetRouteCommand;
 using graphscore::Rest;
 using graphscore::RestoreTrackCommand;
@@ -93,12 +117,14 @@ using graphscore::SetTrackMuteCommand;
 using graphscore::SetTrackNameCommand;
 using graphscore::SetTrackPanCommand;
 using graphscore::SetTrackSoloCommand;
+using graphscore::Slur;
 using graphscore::SpelledPitch;
 using graphscore::StaffLayout;
 using graphscore::StaveId;
 using graphscore::Tempo;
 using graphscore::TimeSignature;
 using graphscore::TrackId;
+using graphscore::TrackLane;
 using graphscore::Voice;
 using graphscore::VoiceContent;
 using graphscore::VoiceEvent;
@@ -400,6 +426,20 @@ Duration eighth() {
 
 Duration dotted_half() {
   return *Duration::create(NoteValue::kHalf, 1);
+}
+
+// Fill all four voices on a stave with one quarter note each and
+// normalize to `node_end`.  Required for whole-TrackLane candidate
+// validation now that validate_lane_candidate checks rhythmic
+// completeness of every voice in every stave.
+void fill_all_voices(TrackLane* lane, StaveId stave_id, Rational node_end) {
+  for (int v = 1; v <= 4; ++v) {
+    VoiceContent* vc = &lane->stave(stave_id)->voice(
+        *Voice::create(static_cast<std::uint8_t>(v)));
+    ASSERT_NE(vc, nullptr);
+    ASSERT_TRUE(vc->append(make_note(pitch_c4(), quarter())).ok());
+    ASSERT_TRUE(vc->normalize(node_end).ok());
+  }
 }
 
 }  // namespace
@@ -8011,8 +8051,10 @@ TEST(CommandTest, SetEventRejectsDanglingDynamicReference) {
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
   const NotationEntityId ev_id = graphscore::event_id(voice->events()[0]);
-  voice->add_dynamic(
-      graphscore::make_dynamic_marking(ev_id, graphscore::Dynamic::kMf));
+  ASSERT_TRUE(voice
+                  ->add_dynamic(graphscore::make_dynamic_marking(
+                      ev_id, graphscore::Dynamic::kMf))
+                  .ok());
 
   // Replace the event — would leave dynamic dangling.
   auto cmd = std::make_unique<SetEventCommand>(
@@ -8034,10 +8076,13 @@ TEST(CommandTest, ConvertEventToRestRejectsDanglingGraceReference) {
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
   const NotationEntityId ev_id = graphscore::event_id(voice->events()[0]);
-  voice->add_grace_group(graphscore::make_grace_group(
-      ev_id, {graphscore::GraceNote{pitch_e4(), eighth(),
-                                    graphscore::GraceNoteType::kAppoggiatura,
-                                    false}}));
+  ASSERT_TRUE(
+      voice
+          ->add_grace_group(graphscore::make_grace_group(
+              ev_id, {graphscore::GraceNote{
+                         pitch_e4(), eighth(),
+                         graphscore::GraceNoteType::kAppoggiatura, false}}))
+          .ok());
 
   // Convert to rest — principal event would become Rest.
   auto cmd = std::make_unique<ConvertEventToRestCommand>(
@@ -8552,8 +8597,10 @@ TEST(CommandTest, SetEventExpansionRejectsDanglingRestReference) {
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
   const NotationEntityId rest_id = event_id(voice->events()[1]);
-  voice->add_dynamic(
-      graphscore::make_dynamic_marking(rest_id, graphscore::Dynamic::kMf));
+  ASSERT_TRUE(voice
+                  ->add_dynamic(graphscore::make_dynamic_marking(
+                      rest_id, graphscore::Dynamic::kMf))
+                  .ok());
 
   const VoiceContent saved = *voice;
 
@@ -8580,8 +8627,11 @@ TEST(CommandTest, InsertConsumesRestWithMarkingRejected) {
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
   const NotationEntityId rest_id = event_id(voice->events()[0]);
-  voice->add_slur(graphscore::Slur{NotationEntityId::generate(), rest_id,
-                                   event_id(voice->events()[1])});
+  ASSERT_TRUE(
+      voice
+          ->add_slur(graphscore::Slur{NotationEntityId::generate(), rest_id,
+                                      event_id(voice->events()[1])})
+          .ok());
 
   const VoiceContent saved = *voice;
 
@@ -8606,9 +8656,11 @@ TEST(CommandTest, PartialRestConsumptionPreservesSurvivingReference) {
   ASSERT_TRUE(voice->append(make_rest(half())).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
-  const NotationEntityId rest_id = event_id(voice->events()[1]);
-  voice->add_dynamic(
-      graphscore::make_dynamic_marking(rest_id, graphscore::Dynamic::kMf));
+  const NotationEntityId rest_id2 = event_id(voice->events()[1]);
+  ASSERT_TRUE(voice
+                  ->add_dynamic(graphscore::make_dynamic_marking(
+                      rest_id2, graphscore::Dynamic::kMf))
+                  .ok());
 
   // Replace quarter with 3/8 (dotted quarter) — consumes 1/8 from the
   // half rest, leaving 3/8 remainder that keeps the original rest id.
@@ -8771,6 +8823,130 @@ TEST(CommandTest, SetEventUndoRejectedWhenTimelineShortened) {
   EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
 }
 
+// =====================================================================
+// Phase 8e-ii — SetEventCommand rejects marking-ID collisions
+// =====================================================================
+
+TEST(CommandTest, SetEventReplaceSelfIdPreservesDynamicAtEventReference) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  // Add a dynamic pointing at the note.
+  const NotationEntityId note_id      = event_id(voice->events()[0]);
+  VoiceContent           pre_markings = *voice;
+  ASSERT_TRUE(
+      voice->add_dynamic(make_dynamic_marking(note_id, Dynamic::kF)).ok());
+
+  // Replace the note with a different note length, reusing the same
+  // event id.  This must succeed: self-id is allowed, and the dynamic
+  // references the same id which is still valid after replacement.
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      VoiceEvent(Note{note_id,
+                      pitch_d4(),
+                      half(),
+                      false,
+                      {},
+                      graphscore::StemDirection::kAuto}));
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 1u);
+}
+
+TEST(CommandTest, SetEventWithMarkingCollidingIdRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  // Add a dynamic with some id.
+  const NotationEntityId marking_id = NotationEntityId::generate();
+  ASSERT_TRUE(voice
+                  ->add_dynamic(DynamicMarking{
+                      marking_id, event_id(voice->events()[0]), Dynamic::kF})
+                  .ok());
+
+  // Try to replace with an event whose id collides with the dynamic.
+  auto cmd = std::make_unique<SetEventCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
+      VoiceEvent(Note{marking_id,
+                      pitch_d4(),
+                      half(),
+                      false,
+                      {},
+                      graphscore::StemDirection::kAuto}));
+  const size_t pre_size = voice->events().size();
+  const Result r        = cmd->execute(fx.project);
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.code(), ResultCode::kInvalidArgument);
+
+  // Voice must be unchanged: same event count, 1 dynamic.
+  EXPECT_EQ(voice->events().size(), pre_size);
+  EXPECT_EQ(voice->dynamics().size(), 1u);
+}
+
+TEST(CommandTest, VoiceContentAppendRejectsMarkingIdCollision) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  // Add a hairpin with a known id.
+  const NotationEntityId id = NotationEntityId::generate();
+  ASSERT_TRUE(voice
+                  .add_hairpin(Hairpin(id, id, NotationEntityId::generate(),
+                                       HairpinDirection::kCrescendo))
+                  .ok());
+
+  // Try to append an event that reuses the hairpin's id.
+  const Result r = voice.append(VoiceEvent(Note{
+      id, pitch_c4(), quarter(), false, {}, graphscore::StemDirection::kAuto}));
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(voice.events().size(), 1u);
+  EXPECT_EQ(voice.hairpins().size(), 1u);
+}
+
+TEST(CommandTest, VoiceContentInsertEventRejectsMarkingIdCollision) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_rest(quarter())).ok());
+  ASSERT_TRUE(voice.normalize(*Rational::create(1, 2)).ok());
+
+  // Add a slur with a unique id referencing the two events.
+  const NotationEntityId id      = event_id(voice.events()[0]);
+  const NotationEntityId id2     = event_id(voice.events()[1]);
+  const NotationEntityId slur_id = NotationEntityId::generate();
+  ASSERT_TRUE(voice.add_slur(Slur(slur_id, id, id2)).ok());
+
+  const NotationEntityId insert_id = NotationEntityId::generate();
+  ASSERT_TRUE(
+      voice.add_dynamic(DynamicMarking{insert_id, id, Dynamic::kFf}).ok());
+
+  // Try to insert an event with the dynamic's id at position 1/4
+  // (the rest boundary), consuming the quarter rest's duration.
+  const Result r =
+      voice.insert_event(*Rational::create(1, 4),
+                         VoiceEvent(Note{insert_id,
+                                         pitch_d4(),
+                                         eighth(),
+                                         false,
+                                         {},
+                                         graphscore::StemDirection::kAuto}),
+                         Rational(1));
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.code(), ResultCode::kInvalidArgument);
+  // Voice unchanged: 2 events, 1 slur, 1 dynamic.
+  EXPECT_EQ(voice.events().size(), 2u);
+  EXPECT_EQ(voice.slurs().size(), 1u);
+  EXPECT_EQ(voice.dynamics().size(), 1u);
+}
+
 TEST(CommandTest, ConvertEventToRestRedoRejectedWhenTimelineExtended) {
   auto          fx   = make_notation_setup();
   Node*         node = fx.project.find_node(fx.node_id);
@@ -8916,4 +9092,2024 @@ TEST(CommandTest, SetTieRedoStaleContextRetryable) {
   const Note* n = std::get_if<Note>(&voice->events()[0]);
   ASSERT_NE(n, nullptr);
   EXPECT_TRUE(n->tied_to_next);
+}
+
+// =========================================================================
+// Phase 8e-ii — Dynamic marking add/remove
+// =========================================================================
+
+TEST(CommandTest, AddDynamicExecuteUndoRedoExactEquality) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId eid     = event_id(voice->events()[0]);
+  const DynamicMarking   marking = make_dynamic_marking(eid, Dynamic::kFf);
+
+  auto cmd = std::make_unique<AddDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), marking);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 1u);
+  EXPECT_EQ(voice->dynamics()[0].id, marking.id);
+  EXPECT_EQ(voice->dynamics()[0].at_event, eid);
+  EXPECT_EQ(voice->dynamics()[0].value, Dynamic::kFf);
+
+  const VoiceContent post_state = *voice;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 0u);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_TRUE(*voice == post_state);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 0u);
+}
+
+TEST(CommandTest, AddDynamicDuplicateIdRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId eid     = event_id(voice->events()[0]);
+  const DynamicMarking   marking = make_dynamic_marking(eid, Dynamic::kFf);
+  ASSERT_TRUE(voice->add_dynamic(marking).ok());
+
+  auto cmd = std::make_unique<AddDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), marking);
+  const Result result = cmd->execute(fx.project);
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(result.code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, AddDynamicDanglingReferenceRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const DynamicMarking marking = {NotationEntityId::generate(),
+                                  NotationEntityId::generate(), Dynamic::kFf};
+
+  auto cmd = std::make_unique<AddDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), marking);
+  const Result result = cmd->execute(fx.project);
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(result.code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(voice->dynamics().size(), 0u);
+}
+
+TEST(CommandTest, RemoveDynamicRoundTripPreservesOtherMarkings) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const DynamicMarking dyn1 =
+      make_dynamic_marking(event_id(voice->events()[0]), Dynamic::kF);
+  const DynamicMarking dyn2 =
+      make_dynamic_marking(event_id(voice->events()[1]), Dynamic::kP);
+  ASSERT_TRUE(voice->add_dynamic(dyn1).ok());
+  ASSERT_TRUE(voice->add_dynamic(dyn2).ok());
+  EXPECT_EQ(voice->dynamics().size(), 2u);
+
+  auto cmd = std::make_unique<RemoveDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), dyn1.id);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 1u);
+  EXPECT_EQ(voice->dynamics()[0].id, dyn2.id);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 2u);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 1u);
+  EXPECT_EQ(voice->dynamics()[0].id, dyn2.id);
+}
+
+TEST(CommandTest, RemoveDynamicMissingIdRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<RemoveDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1),
+      NotationEntityId::generate());
+  const Result result = cmd->execute(fx.project);
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(result.code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(voice->dynamics().size(), 0u);
+}
+
+// =========================================================================
+// Phase 8e-ii — Hairpin add/remove
+// =========================================================================
+
+TEST(CommandTest, AddHairpinWithValidSpanRoundTrip) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const Hairpin hairpin =
+      make_hairpin(event_id(voice->events()[0]), event_id(voice->events()[1]),
+                   HairpinDirection::kCrescendo);
+
+  auto cmd = std::make_unique<AddHairpinCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), hairpin);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->hairpins().size(), 1u);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->hairpins().size(), 0u);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(voice->hairpins().size(), 1u);
+}
+
+TEST(CommandTest, AddHairpinEndBeforeStartRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const Hairpin hairpin =
+      make_hairpin(event_id(voice->events()[1]), event_id(voice->events()[0]),
+                   HairpinDirection::kCrescendo);
+
+  auto cmd = std::make_unique<AddHairpinCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), hairpin);
+  const Result result = cmd->execute(fx.project);
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(voice->hairpins().size(), 0u);
+}
+
+// =========================================================================
+// Phase 8e-ii — Slur add/remove
+// =========================================================================
+
+TEST(CommandTest, AddSlurWithValidSpanRoundTrip) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const Slur slur =
+      make_slur(event_id(voice->events()[0]), event_id(voice->events()[1]));
+
+  auto cmd = std::make_unique<AddSlurCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), slur);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->slurs().size(), 1u);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->slurs().size(), 0u);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(voice->slurs().size(), 1u);
+}
+
+TEST(CommandTest, RemoveSlurPreservesHairpin) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId first_id  = event_id(voice->events()[0]);
+  const NotationEntityId second_id = event_id(voice->events()[1]);
+  const Slur             slur      = make_slur(first_id, second_id);
+  const Hairpin          hairpin =
+      make_hairpin(first_id, second_id, HairpinDirection::kCrescendo);
+  ASSERT_TRUE(voice->add_slur(slur).ok());
+  ASSERT_TRUE(voice->add_hairpin(hairpin).ok());
+
+  auto cmd = std::make_unique<RemoveSlurCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), slur.id);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->slurs().size(), 0u);
+  EXPECT_EQ(voice->hairpins().size(), 1u);
+  EXPECT_EQ(voice->hairpins()[0].id, hairpin.id);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->slurs().size(), 1u);
+  EXPECT_EQ(voice->hairpins().size(), 1u);
+}
+
+// =========================================================================
+// Phase 8e-ii — Beam override add/remove
+// =========================================================================
+
+TEST(CommandTest, AddBeamOverrideValidRoundTrip) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const VoiceEvent e1 = make_note(pitch_c4(), eighth());
+  const VoiceEvent e2 = make_note(pitch_d4(), eighth());
+  ASSERT_TRUE(voice->append(e1).ok());
+  ASSERT_TRUE(voice->append(e2).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const BeamOverride beam = make_beam_override(
+      BeamOverride::Kind::kJoin,
+      {event_id(voice->events()[0]), event_id(voice->events()[1])});
+
+  auto cmd = std::make_unique<AddBeamOverrideCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), beam);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->beam_overrides().size(), 1u);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->beam_overrides().size(), 0u);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(voice->beam_overrides().size(), 1u);
+}
+
+TEST(CommandTest, AddBeamOverrideNonAdjacentRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), eighth())).ok());
+  ASSERT_TRUE(voice->append(make_rest(half())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_e4(), eighth())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const BeamOverride beam = make_beam_override(
+      BeamOverride::Kind::kJoin,
+      {event_id(voice->events()[0]), event_id(voice->events()[2])});
+
+  auto cmd = std::make_unique<AddBeamOverrideCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), beam);
+  const Result result = cmd->execute(fx.project);
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(voice->beam_overrides().size(), 0u);
+}
+
+TEST(CommandTest, RemoveBeamOverrideMissingIdRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  auto cmd = std::make_unique<RemoveBeamOverrideCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1),
+      NotationEntityId::generate());
+  const Result result = cmd->execute(fx.project);
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(voice->beam_overrides().size(), 0u);
+}
+
+// =========================================================================
+// Phase 8e-ii — Grace group add/remove
+// =========================================================================
+
+TEST(CommandTest, AddGraceGroupValidRoundTrip) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const GraceGroup group = make_grace_group(
+      event_id(voice->events()[0]),
+      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAcciaccatura, true}});
+
+  auto cmd = std::make_unique<AddGraceGroupCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), group);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->grace_groups().size(), 1u);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->grace_groups().size(), 0u);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(voice->grace_groups().size(), 1u);
+}
+
+TEST(CommandTest, AddGraceGroupPrincipalIsRestRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_rest(quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const GraceGroup group = make_grace_group(
+      event_id(voice->events()[0]),
+      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAcciaccatura, true}});
+
+  auto cmd = std::make_unique<AddGraceGroupCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), group);
+  const Result result = cmd->execute(fx.project);
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(voice->grace_groups().size(), 0u);
+}
+
+TEST(CommandTest, RemoveGraceGroupPreservesDynamics) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId eid   = event_id(voice->events()[0]);
+  const DynamicMarking   dyn   = make_dynamic_marking(eid, Dynamic::kF);
+  const GraceGroup       group = make_grace_group(
+      eid,
+      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAcciaccatura, true}});
+  ASSERT_TRUE(voice->add_dynamic(dyn).ok());
+  ASSERT_TRUE(voice->add_grace_group(group).ok());
+
+  auto cmd = std::make_unique<RemoveGraceGroupCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), group.id);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->grace_groups().size(), 0u);
+  EXPECT_EQ(voice->dynamics().size(), 1u);
+  EXPECT_EQ(voice->dynamics()[0].id, dyn.id);
+}
+
+// =========================================================================
+// Phase 8e-ii — Pedal span add/remove
+// =========================================================================
+
+TEST(CommandTest, AddPedalSpanExecuteUndoRedo) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  ASSERT_TRUE(lane != nullptr);
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 2));
+
+  auto cmd = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
+                                                   fx.stave_id, span);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const std::vector<PedalSpan>* spans = lane->pedal_spans(fx.stave_id);
+  ASSERT_NE(spans, nullptr);
+  ASSERT_EQ(spans->size(), 1u);
+  EXPECT_EQ((*spans)[0].id, span.id);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  spans = lane->pedal_spans(fx.stave_id);
+  // Whole-lane undo restores exact pre-execute state with no pedal-spans key.
+  if (spans != nullptr)
+    EXPECT_EQ(spans->size(), 0u);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  spans = lane->pedal_spans(fx.stave_id);
+  ASSERT_NE(spans, nullptr);
+  EXPECT_EQ(spans->size(), 1u);
+  EXPECT_EQ((*spans)[0].id, span.id);
+}
+
+TEST(CommandTest, AddPedalSpanInvalidRangeRejected) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  const PedalSpan span = make_pedal_span(Rational(1), Rational(0));
+
+  auto cmd = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
+                                                   fx.stave_id, span);
+  const Result result = cmd->execute(fx.project);
+  EXPECT_FALSE(result.ok());
+  const std::vector<PedalSpan>* spans = lane->pedal_spans(fx.stave_id);
+  EXPECT_TRUE(spans == nullptr || spans->empty());
+}
+
+TEST(CommandTest, AddPedalSpanDuplicateIdRejected) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 4));
+  ASSERT_TRUE(lane->add_pedal_span(fx.stave_id, span).ok());
+
+  auto cmd = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
+                                                   fx.stave_id, span);
+  const Result result = cmd->execute(fx.project);
+  EXPECT_FALSE(result.ok());
+}
+
+TEST(CommandTest, RemovePedalSpanRoundTrip) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 2));
+  ASSERT_TRUE(lane->add_pedal_span(fx.stave_id, span).ok());
+
+  auto cmd = std::make_unique<RemovePedalSpanCommand>(fx.node_id, fx.track_id,
+                                                      fx.stave_id, span.id);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const std::vector<PedalSpan>* spans = lane->pedal_spans(fx.stave_id);
+  ASSERT_NE(spans, nullptr);
+  EXPECT_EQ(spans->size(), 0u);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  spans = lane->pedal_spans(fx.stave_id);
+  ASSERT_NE(spans, nullptr);
+  ASSERT_EQ(spans->size(), 1u);
+  EXPECT_EQ((*spans)[0].id, span.id);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  spans = lane->pedal_spans(fx.stave_id);
+  ASSERT_NE(spans, nullptr);
+  EXPECT_EQ(spans->size(), 0u);
+}
+
+TEST(CommandTest, RemovePedalSpanMissingIdRejected) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  auto cmd = std::make_unique<RemovePedalSpanCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, NotationEntityId::generate());
+  const Result result = cmd->execute(fx.project);
+  EXPECT_FALSE(result.ok());
+}
+
+TEST(CommandTest, PedalSpanMultiStaveIsolation) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  const StaveId stave_a = fx.stave_id;
+  const StaveId stave_b = StaveId::generate();
+  lane->ensure_stave(stave_a);
+  lane->ensure_stave(stave_b);
+  fill_all_voices(lane, stave_a, fx.node_end);
+  fill_all_voices(lane, stave_b, fx.node_end);
+
+  const PedalSpan span_a =
+      make_pedal_span(Rational(0), *Rational::create(1, 4));
+  ASSERT_TRUE(lane->add_pedal_span(stave_a, span_a).ok());
+
+  auto cmd = std::make_unique<AddPedalSpanCommand>(
+      fx.node_id, fx.track_id, stave_b,
+      make_pedal_span(Rational(0), *Rational::create(1, 4)));
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+
+  // Stave A unchanged.
+  const std::vector<PedalSpan>* spans_a = lane->pedal_spans(stave_a);
+  ASSERT_NE(spans_a, nullptr);
+  ASSERT_EQ(spans_a->size(), 1u);
+  EXPECT_EQ((*spans_a)[0].id, span_a.id);
+
+  // Stave B has one.
+  const std::vector<PedalSpan>* spans_b = lane->pedal_spans(stave_b);
+  ASSERT_NE(spans_b, nullptr);
+  EXPECT_EQ(spans_b->size(), 1u);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  spans_a = lane->pedal_spans(stave_a);
+  ASSERT_NE(spans_a, nullptr);
+  EXPECT_EQ(spans_a->size(), 1u);
+  // Whole-lane undo restores exact pre-execute state; stave_b had no spans.
+  spans_b = lane->pedal_spans(stave_b);
+  if (spans_b != nullptr)
+    EXPECT_EQ(spans_b->size(), 0u);
+}
+
+// =========================================================================
+// Phase 8e-ii — State misuse across the marking command family
+// =========================================================================
+
+TEST(CommandTest, MarkingCommandDoubleExecuteRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const DynamicMarking marking =
+      make_dynamic_marking(event_id(voice->events()[0]), Dynamic::kF);
+  auto cmd = std::make_unique<AddDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), marking);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_FALSE(cmd->execute(fx.project).ok());
+}
+
+TEST(CommandTest, MarkingCommandUndoBeforeExecuteRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const DynamicMarking marking =
+      make_dynamic_marking(event_id(voice->events()[0]), Dynamic::kF);
+  auto cmd = std::make_unique<AddDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), marking);
+  EXPECT_FALSE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 0u);
+}
+
+TEST(CommandTest, MarkingCommandRedoBeforeUndoRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const DynamicMarking marking =
+      make_dynamic_marking(event_id(voice->events()[0]), Dynamic::kF);
+  auto cmd = std::make_unique<AddDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), marking);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_FALSE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 1u);
+}
+
+// =========================================================================
+// Phase 8e-ii — Stale-context undo/redo rejection and retry
+// =========================================================================
+
+TEST(CommandTest, AddDynamicStaleContextUndoRejectedAndRetried) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const DynamicMarking marking =
+      make_dynamic_marking(event_id(voice->events()[0]), Dynamic::kF);
+
+  auto cmd = std::make_unique<AddDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), marking);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent post_state = *voice;
+
+  // Manually change the voice — undo must be rejected.
+  ASSERT_TRUE(voice
+                  ->add_dynamic(make_dynamic_marking(
+                      event_id(voice->events()[0]), Dynamic::kPp))
+                  .ok());
+  EXPECT_FALSE(cmd->undo(fx.project).ok());
+
+  // Restore and retry.
+  *voice = post_state;
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 0u);
+}
+
+// =========================================================================
+// Phase 8e-ii — Deterministic replay
+// =========================================================================
+
+TEST(CommandTest, AddDynamicDeterministicReplay) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId eid = event_id(voice->events()[0]);
+  const DynamicMarking   m   = make_dynamic_marking(eid, Dynamic::kFf);
+
+  auto cmd = std::make_unique<AddDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), m);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent after_execute = *voice;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_TRUE(*voice == after_execute);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_TRUE(*voice == after_execute);
+}
+
+// =========================================================================
+// Phase 8e-ii — Missing/stale node/track/stave IDs rejected
+// =========================================================================
+
+TEST(CommandTest, AddDynamicMissingNodeRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const DynamicMarking marking =
+      make_dynamic_marking(event_id(voice->events()[0]), Dynamic::kF);
+  auto cmd = std::make_unique<AddDynamicCommand>(
+      NodeId::generate(), fx.track_id, fx.stave_id, *Voice::create(1), marking);
+  const Result result = cmd->execute(fx.project);
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(result.code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, AddDynamicWrongVoiceScopeRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const DynamicMarking marking =
+      make_dynamic_marking(event_id(voice->events()[0]), Dynamic::kF);
+  auto cmd = std::make_unique<AddDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(2), marking);
+  const Result result = cmd->execute(fx.project);
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(voice->dynamics().size(), 0u);
+}
+
+// =========================================================================
+// Phase 8e-ii — VoiceContent removal mutator tests
+// =========================================================================
+
+TEST(CommandTest, VoiceContentRemoveDynamicSuccess) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  const DynamicMarking m =
+      make_dynamic_marking(event_id(voice.events()[0]), Dynamic::kF);
+  ASSERT_TRUE(voice.add_dynamic(m).ok());
+  EXPECT_EQ(voice.dynamics().size(), 1u);
+  EXPECT_TRUE(voice.remove_dynamic(m.id).ok());
+  EXPECT_EQ(voice.dynamics().size(), 0u);
+}
+
+TEST(CommandTest, VoiceContentRemoveDynamicMissingId) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  const Result r = voice.remove_dynamic(NotationEntityId::generate());
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, VoiceContentRemoveHairpinPreservesSlur) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), quarter())).ok());
+
+  const NotationEntityId first  = event_id(voice.events()[0]);
+  const NotationEntityId second = event_id(voice.events()[1]);
+  const Hairpin hp = make_hairpin(first, second, HairpinDirection::kCrescendo);
+  const Slur    sl = make_slur(first, second);
+  ASSERT_TRUE(voice.add_hairpin(hp).ok());
+  ASSERT_TRUE(voice.add_slur(sl).ok());
+
+  EXPECT_TRUE(voice.remove_hairpin(hp.id).ok());
+  EXPECT_EQ(voice.hairpins().size(), 0u);
+  EXPECT_EQ(voice.slurs().size(), 1u);
+}
+
+TEST(CommandTest, VoiceContentRemoveSlurMissingId) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), quarter())).ok());
+
+  const Result r = voice.remove_slur(NotationEntityId::generate());
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, VoiceContentRemoveBeamOverrideSuccess) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), eighth())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), eighth())).ok());
+
+  const BeamOverride beam = make_beam_override(
+      BeamOverride::Kind::kJoin,
+      {event_id(voice.events()[0]), event_id(voice.events()[1])});
+  ASSERT_TRUE(voice.add_beam_override(beam).ok());
+  EXPECT_EQ(voice.beam_overrides().size(), 1u);
+  EXPECT_TRUE(voice.remove_beam_override(beam.id).ok());
+  EXPECT_EQ(voice.beam_overrides().size(), 0u);
+}
+
+TEST(CommandTest, VoiceContentRemoveGraceGroupSuccess) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  const GraceGroup group = make_grace_group(
+      event_id(voice.events()[0]),
+      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAcciaccatura, true}});
+  ASSERT_TRUE(voice.add_grace_group(group).ok());
+  EXPECT_EQ(voice.grace_groups().size(), 1u);
+  EXPECT_TRUE(voice.remove_grace_group(group.id).ok());
+  EXPECT_EQ(voice.grace_groups().size(), 0u);
+}
+
+// =========================================================================
+// Phase 8e-ii — TrackLane removal mutator tests
+// =========================================================================
+
+TEST(CommandTest, TrackLaneRemovePedalSpanSuccess) {
+  TrackLane     lane;
+  const StaveId stave = StaveId::generate();
+  lane.ensure_stave(stave);
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 4));
+  ASSERT_TRUE(lane.add_pedal_span(stave, span).ok());
+
+  const Result r = lane.remove_pedal_span(stave, span.id);
+  EXPECT_TRUE(r.ok());
+  const std::vector<PedalSpan>* spans = lane.pedal_spans(stave);
+  ASSERT_NE(spans, nullptr);
+  EXPECT_EQ(spans->size(), 0u);
+}
+
+TEST(CommandTest, TrackLaneRemovePedalSpanMissingStave) {
+  TrackLane    lane;
+  const Result r =
+      lane.remove_pedal_span(StaveId::generate(), NotationEntityId::generate());
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.code(), ResultCode::kInvalidArgument);
+}
+
+TEST(CommandTest, TrackLaneRemovePedalSpanMissingId) {
+  TrackLane     lane;
+  const StaveId stave = StaveId::generate();
+  lane.ensure_stave(stave);
+
+  const Result r = lane.remove_pedal_span(stave, NotationEntityId::generate());
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.code(), ResultCode::kInvalidArgument);
+}
+
+// =====================================================================
+// Phase 8e-ii — TrackLane add_pedal_span transactional paths
+// =====================================================================
+
+TEST(CommandTest, TrackLaneAddPedalSpanAbsentStaveRejected) {
+  TrackLane     lane;
+  const StaveId stave = StaveId::generate();
+  // No ensure_stave call: stave is absent from staves_.
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 4));
+  const Result    r    = lane.add_pedal_span(stave, span);
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.code(), ResultCode::kInvalidArgument);
+  // Verify no orphan key was created in pedal_spans_.
+  EXPECT_EQ(lane.pedal_spans(stave), nullptr);
+}
+
+TEST(CommandTest, TrackLaneAddPedalSpanAbsentStaveLeavesNoOrphanKey) {
+  TrackLane     lane;
+  const StaveId stave_a = StaveId::generate();
+  const StaveId stave_b = StaveId::generate();
+  lane.ensure_stave(stave_a);
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 4));
+  ASSERT_TRUE(lane.add_pedal_span(stave_a, span).ok());
+
+  // Same id on an absent stave is still rejected (stave check wins,
+  // but if we change staves_ to contain it, the duplicate check
+  // would still fire).
+  const Result r = lane.add_pedal_span(stave_b, span);
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.code(), ResultCode::kInvalidArgument);
+  EXPECT_EQ(lane.pedal_spans(stave_b), nullptr);
+}
+
+TEST(CommandTest, TrackLaneAddPedalSpanAbsentKeyCommitsCorrectly) {
+  TrackLane     lane;
+  const StaveId stave = StaveId::generate();
+  lane.ensure_stave(stave);  // now the stave must exist
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 4));
+  const Result    r    = lane.add_pedal_span(stave, span);
+  EXPECT_TRUE(r.ok());
+
+  const std::vector<PedalSpan>* spans = lane.pedal_spans(stave);
+  ASSERT_NE(spans, nullptr);
+  ASSERT_EQ(spans->size(), 1u);
+  EXPECT_EQ((*spans)[0].id, span.id);
+}
+
+TEST(CommandTest, TrackLaneAddPedalSpanExistingKeyPreservesEntries) {
+  TrackLane     lane;
+  const StaveId stave = StaveId::generate();
+  lane.ensure_stave(stave);
+
+  const PedalSpan span1 = make_pedal_span(Rational(0), *Rational::create(1, 4));
+  ASSERT_TRUE(lane.add_pedal_span(stave, span1).ok());
+
+  const PedalSpan span2 =
+      make_pedal_span(*Rational::create(1, 2), *Rational::create(3, 4));
+  const Result r = lane.add_pedal_span(stave, span2);
+  EXPECT_TRUE(r.ok());
+
+  const std::vector<PedalSpan>* spans = lane.pedal_spans(stave);
+  ASSERT_NE(spans, nullptr);
+  ASSERT_EQ(spans->size(), 2u);
+  EXPECT_EQ((*spans)[0].id, span1.id);
+  EXPECT_EQ((*spans)[1].id, span2.id);
+}
+
+TEST(CommandTest, TrackLaneAddPedalSpanDuplicateAcrossStavesRejected) {
+  TrackLane     lane;
+  const StaveId stave_a = StaveId::generate();
+  const StaveId stave_b = StaveId::generate();
+  lane.ensure_stave(stave_a);
+  lane.ensure_stave(stave_b);
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 4));
+  ASSERT_TRUE(lane.add_pedal_span(stave_a, span).ok());
+
+  // Same id on a different stave is rejected before any mutation.
+  const Result r = lane.add_pedal_span(stave_b, span);
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.code(), ResultCode::kInvalidArgument);
+
+  // Verify stave_b's pedal_spans_ was never touched (absent key).
+  EXPECT_EQ(lane.pedal_spans(stave_b), nullptr);
+}
+
+// =====================================================================
+// Phase 8e-ii — Cross-kind marking ID uniqueness
+// =====================================================================
+
+TEST(CommandTest, AddSlurCrossKindDuplicateIdRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId eid_first  = event_id(voice->events()[0]);
+  const NotationEntityId eid_second = event_id(voice->events()[1]);
+
+  // Add a dynamic with a specific id.
+  const NotationEntityId shared_id = NotationEntityId::generate();
+  const DynamicMarking   dyn(shared_id, eid_first, Dynamic::kMf);
+  ASSERT_TRUE(voice->add_dynamic(dyn).ok());
+
+  // Attempt to add a slur with the same id.
+  const Slur slur(shared_id, eid_first, eid_second);
+  auto       cmd = std::make_unique<AddSlurCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), slur);
+  EXPECT_FALSE(cmd->execute(fx.project).ok());
+}
+
+TEST(CommandTest, AddHairpinCrossKindDuplicateIdRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId eid_first  = event_id(voice->events()[0]);
+  const NotationEntityId eid_second = event_id(voice->events()[1]);
+  const NotationEntityId shared_id  = NotationEntityId::generate();
+  const Slur             existing(shared_id, eid_first, eid_second);
+  ASSERT_TRUE(voice->add_slur(existing).ok());
+
+  const Hairpin hp(shared_id, eid_first, eid_second,
+                   HairpinDirection::kCrescendo);
+  auto          cmd = std::make_unique<AddHairpinCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), hp);
+  EXPECT_FALSE(cmd->execute(fx.project).ok());
+}
+
+TEST(CommandTest, AddBeamOverrideCrossKindDuplicateIdRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), eighth())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), eighth())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId shared_id = NotationEntityId::generate();
+  const DynamicMarking   dyn(shared_id, event_id(voice->events()[0]),
+                             Dynamic::kMf);
+  ASSERT_TRUE(voice->add_dynamic(dyn).ok());
+
+  const BeamOverride beam = make_beam_override(
+      BeamOverride::Kind::kJoin,
+      {event_id(voice->events()[0]), event_id(voice->events()[1])});
+  // Reassign the beam's id to collide.
+  const BeamOverride colliding(shared_id, beam.kind, beam.events);
+  auto               cmd = std::make_unique<AddBeamOverrideCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), colliding);
+  EXPECT_FALSE(cmd->execute(fx.project).ok());
+}
+
+TEST(CommandTest, AddGraceGroupCrossKindDuplicateIdRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId shared_id = NotationEntityId::generate();
+  const NotationEntityId eid       = event_id(voice->events()[0]);
+  const Hairpin          hp(shared_id, eid, eid, HairpinDirection::kCrescendo);
+  ASSERT_TRUE(voice->add_hairpin(hp).ok());
+
+  const GraceGroup group = make_grace_group(
+      eid,
+      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAppoggiatura, false}});
+  const GraceGroup colliding(shared_id, group.principal_event, group.notes);
+  auto             cmd = std::make_unique<AddGraceGroupCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), colliding);
+  EXPECT_FALSE(cmd->execute(fx.project).ok());
+}
+
+TEST(CommandTest, AddDynamicDuplicateMarkingIdRejects) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  const DynamicMarking m1 =
+      make_dynamic_marking(event_id(voice.events()[0]), Dynamic::kFf);
+  ASSERT_TRUE(voice.add_dynamic(m1).ok());
+  EXPECT_FALSE(voice.add_dynamic(m1).ok());
+}
+
+TEST(CommandTest, AddDynamicEventIdCollisionRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+  const DynamicMarking m(event_id(voice.events()[0]),  // event id
+                         event_id(voice.events()[0]), Dynamic::kFf);
+  EXPECT_FALSE(voice.add_dynamic(m).ok());
+}
+
+// =====================================================================
+// Phase 8e-ii — Slur Rest endpoint rejection via command
+// =====================================================================
+
+TEST(CommandTest, AddSlurAttachedToRestRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_rest(quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const Slur slur =
+      make_slur(event_id(voice->events()[0]), event_id(voice->events()[1]));
+  auto cmd = std::make_unique<AddSlurCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), slur);
+  EXPECT_FALSE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->slurs().size(), 0u);
+}
+
+TEST(CommandTest, AddSlurBothEndpointsRestRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_rest(quarter())).ok());
+  ASSERT_TRUE(voice->append(make_rest(quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const Slur slur =
+      make_slur(event_id(voice->events()[0]), event_id(voice->events()[1]));
+  auto cmd = std::make_unique<AddSlurCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), slur);
+  EXPECT_FALSE(cmd->execute(fx.project).ok());
+}
+
+// =====================================================================
+// Phase 8e-ii — Hairpin dangling/invalid endpoint rejection
+// =====================================================================
+
+TEST(CommandTest, AddHairpinDanglingEndpointRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const Hairpin hp =
+      make_hairpin(event_id(voice->events()[0]), NotationEntityId::generate(),
+                   HairpinDirection::kCrescendo);
+  auto cmd = std::make_unique<AddHairpinCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), hp);
+  EXPECT_FALSE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->hairpins().size(), 0u);
+}
+
+// =====================================================================
+// Phase 8e-ii — Beam override invalid events
+// =====================================================================
+
+TEST(CommandTest, AddBeamOverrideNonBeamableRestRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_rest(eighth())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), eighth())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const BeamOverride beam = make_beam_override(
+      BeamOverride::Kind::kJoin,
+      {event_id(voice->events()[0]), event_id(voice->events()[1])});
+  auto cmd = std::make_unique<AddBeamOverrideCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), beam);
+  EXPECT_FALSE(cmd->execute(fx.project).ok());
+}
+
+// =====================================================================
+// Phase 8e-ii — Grace group dangling/invalid principal
+// =====================================================================
+
+TEST(CommandTest, AddGraceGroupPrincipalNotFoundRejected) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const GraceGroup group = make_grace_group(
+      NotationEntityId::generate(),
+      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAppoggiatura, false}});
+  auto cmd = std::make_unique<AddGraceGroupCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), group);
+  EXPECT_FALSE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->grace_groups().size(), 0u);
+}
+
+// =====================================================================
+// Phase 8e-ii — Pedal span beyond node_end
+// =====================================================================
+
+TEST(CommandTest, AddPedalSpanBeyondNodeEndRejected) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  ASSERT_TRUE(lane != nullptr);
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  // node_end is 1 whole note (one 4/4 measure).  Span end = 2 is beyond it.
+  const PedalSpan span = make_pedal_span(Rational(0), Rational(2));
+  auto cmd = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
+                                                   fx.stave_id, span);
+  EXPECT_FALSE(cmd->execute(fx.project).ok());
+}
+
+// =====================================================================
+// Phase 8e-ii — Pedal span exact ordering and absent-container restoration
+// =====================================================================
+
+TEST(CommandTest, AddPedalSpanExactOrderAfterUndoRedo) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  // Add two pedal spans with distinct start positions.
+  const PedalSpan span1 = make_pedal_span(Rational(0), *Rational::create(1, 4));
+  const PedalSpan span2 =
+      make_pedal_span(*Rational::create(1, 2), *Rational::create(3, 4));
+  ASSERT_TRUE(lane->add_pedal_span(fx.stave_id, span1).ok());
+  ASSERT_TRUE(lane->add_pedal_span(fx.stave_id, span2).ok());
+
+  // Now add a third via command.
+  const PedalSpan span3 =
+      make_pedal_span(*Rational::create(1, 4), *Rational::create(1, 2));
+  auto cmd = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
+                                                   fx.stave_id, span3);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+
+  const std::vector<PedalSpan>* spans = lane->pedal_spans(fx.stave_id);
+  ASSERT_NE(spans, nullptr);
+  ASSERT_EQ(spans->size(), 3u);
+
+  const TrackLane post_add = *lane;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  spans = lane->pedal_spans(fx.stave_id);
+  ASSERT_NE(spans, nullptr);
+  ASSERT_EQ(spans->size(), 2u);
+  EXPECT_EQ((*spans)[0].id, span1.id);
+  EXPECT_EQ((*spans)[1].id, span2.id);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*lane, post_add);
+}
+
+TEST(CommandTest, RemovePedalSpanRestoresOrderExactly) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  const PedalSpan span1 = make_pedal_span(Rational(0), *Rational::create(1, 4));
+  const PedalSpan span2 =
+      make_pedal_span(*Rational::create(1, 2), *Rational::create(3, 4));
+  const PedalSpan span3 =
+      make_pedal_span(*Rational::create(1, 4), *Rational::create(7, 8));
+  ASSERT_TRUE(lane->add_pedal_span(fx.stave_id, span1).ok());
+  ASSERT_TRUE(lane->add_pedal_span(fx.stave_id, span2).ok());
+  ASSERT_TRUE(lane->add_pedal_span(fx.stave_id, span3).ok());
+
+  const TrackLane before_remove = *lane;
+
+  auto cmd = std::make_unique<RemovePedalSpanCommand>(fx.node_id, fx.track_id,
+                                                      fx.stave_id, span3.id);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+
+  const std::vector<PedalSpan>* spans = lane->pedal_spans(fx.stave_id);
+  ASSERT_NE(spans, nullptr);
+  ASSERT_EQ(spans->size(), 2u);
+  EXPECT_EQ((*spans)[0].id, span1.id);
+  EXPECT_EQ((*spans)[1].id, span2.id);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*lane, before_remove);
+}
+
+// =====================================================================
+// Phase 8e-ii — Pedal span absent container restoration
+// =====================================================================
+
+TEST(CommandTest, PedalSpanAbsentKeyPreservedAfterUndoRedo) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  const StaveId stave_a = fx.stave_id;
+  const StaveId stave_b = StaveId::generate();
+  lane->ensure_stave(stave_a);
+  lane->ensure_stave(stave_b);
+  fill_all_voices(lane, stave_a, fx.node_end);
+  fill_all_voices(lane, stave_b, fx.node_end);
+
+  // Only stave_a gets pedal spans.
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 4));
+  ASSERT_TRUE(lane->add_pedal_span(stave_a, span).ok());
+
+  auto cmd = std::make_unique<RemovePedalSpanCommand>(fx.node_id, fx.track_id,
+                                                      stave_a, span.id);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+
+  // After remove, stave_a pedal vector should be empty but the key
+  // should still exist (container not absent).
+  const std::vector<PedalSpan>* spans_a = lane->pedal_spans(stave_a);
+  EXPECT_TRUE(spans_a == nullptr || spans_a->empty());
+
+  // Stave_b still has no pedal key at all.
+  EXPECT_EQ(lane->pedal_spans(stave_b), nullptr);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  spans_a = lane->pedal_spans(stave_a);
+  ASSERT_NE(spans_a, nullptr);
+  ASSERT_EQ(spans_a->size(), 1u);
+  EXPECT_EQ((*spans_a)[0].id, span.id);
+}
+
+// =====================================================================
+// Phase 8e-ii — Pedal stale context undo/redo
+// =====================================================================
+
+TEST(CommandTest, AddPedalSpanStaleContextUndoRejected) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  const PedalSpan span1 = make_pedal_span(Rational(0), *Rational::create(1, 4));
+  auto cmd = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
+                                                   fx.stave_id, span1);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+
+  // Manually change the lane — undo must be rejected.
+  const PedalSpan span2 =
+      make_pedal_span(*Rational::create(1, 2), *Rational::create(3, 4));
+  ASSERT_TRUE(lane->add_pedal_span(fx.stave_id, span2).ok());
+
+  EXPECT_FALSE(cmd->undo(fx.project).ok());
+}
+
+TEST(CommandTest, RemovePedalSpanStaleContextRedoRejected) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 4));
+  ASSERT_TRUE(lane->add_pedal_span(fx.stave_id, span).ok());
+
+  const TrackLane before_remove = *lane;
+
+  auto cmd = std::make_unique<RemovePedalSpanCommand>(fx.node_id, fx.track_id,
+                                                      fx.stave_id, span.id);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*lane, before_remove);
+
+  // Manually change the lane — redo must be rejected.
+  const PedalSpan span2 =
+      make_pedal_span(*Rational::create(1, 2), *Rational::create(3, 4));
+  ASSERT_TRUE(lane->add_pedal_span(fx.stave_id, span2).ok());
+
+  EXPECT_FALSE(cmd->redo(fx.project).ok());
+}
+
+// =====================================================================
+// Phase 8e-ii — Pedal deterministic replay
+// =====================================================================
+
+TEST(CommandTest, AddPedalSpanDeterministicReplay) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 4));
+  auto cmd = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
+                                                   fx.stave_id, span);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const TrackLane after_execute = *lane;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*lane, after_execute);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*lane, after_execute);
+}
+
+// =====================================================================
+// Phase 8e-ii — Timeline change rejects stale undo/redo
+// =====================================================================
+
+TEST(CommandTest, AddDynamicTimelineChangeUndoRejectedAndRetryable) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const DynamicMarking marking =
+      make_dynamic_marking(event_id(voice->events()[0]), Dynamic::kF);
+  auto cmd = std::make_unique<AddDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), marking);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent post_exec = *voice;
+
+  // Replace timeline: 2/4 measure shortens node_end to 0.5.
+  // The voice was complete for node_end 1.0; undo's snapshot validation
+  // against the new node_end fails because the voice is now over-full.
+  std::vector<Measure> short_measures = {
+      Measure{*TimeSignature::create(2, 4), *KeySignature::create(0)}};
+  auto short_tl = NodeTimeline::create(std::move(short_measures), {});
+  ASSERT_TRUE(short_tl.has_value());
+  node->set_timeline(std::move(*short_tl));
+
+  // Undo must reject atomically; voice unchanged, command still kDone.
+  EXPECT_FALSE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*voice, post_exec);
+  EXPECT_EQ(cmd->undo(fx.project).code(), ResultCode::kInvalidArgument);
+
+  // Restore the exact original timeline and voice.
+  std::vector<Measure> orig_measures = {
+      Measure{*TimeSignature::create(4, 4), *KeySignature::create(0)}};
+  auto orig_tl = NodeTimeline::create(std::move(orig_measures), {});
+  ASSERT_TRUE(orig_tl.has_value());
+  node->set_timeline(std::move(*orig_tl));
+  *voice = post_exec;
+
+  // Retry succeeds.
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 0u);
+}
+
+TEST(CommandTest, AddDynamicTimelineChangeRedoRejectedAndRetryable) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const DynamicMarking marking =
+      make_dynamic_marking(event_id(voice->events()[0]), Dynamic::kF);
+  auto cmd = std::make_unique<AddDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), marking);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent post_exec = *voice;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 0u);
+  const VoiceContent post_undo = *voice;
+
+  // Replace timeline: shorten node_end.
+  std::vector<Measure> short_measures = {
+      Measure{*TimeSignature::create(2, 4), *KeySignature::create(0)}};
+  auto short_tl = NodeTimeline::create(std::move(short_measures), {});
+  ASSERT_TRUE(short_tl.has_value());
+  node->set_timeline(std::move(*short_tl));
+
+  // Redo must reject atomically; voice unchanged, command still kUndone.
+  EXPECT_FALSE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, post_undo);
+  EXPECT_EQ(cmd->redo(fx.project).code(), ResultCode::kInvalidArgument);
+
+  // Restore timeline and voice; retry succeeds.
+  std::vector<Measure> orig_measures = {
+      Measure{*TimeSignature::create(4, 4), *KeySignature::create(0)}};
+  auto orig_tl = NodeTimeline::create(std::move(orig_measures), {});
+  ASSERT_TRUE(orig_tl.has_value());
+  node->set_timeline(std::move(*orig_tl));
+  *voice = post_undo;
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, post_exec);
+}
+
+TEST(CommandTest, AddPedalSpanTimelineChangeUndoRejectedAndRetryable) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 2));
+  auto cmd = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
+                                                   fx.stave_id, span);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const TrackLane post_exec = *lane;
+
+  // Shorten timeline.
+  std::vector<Measure> short_measures = {
+      Measure{*TimeSignature::create(2, 4), *KeySignature::create(0)}};
+  auto short_tl = NodeTimeline::create(std::move(short_measures), {});
+  ASSERT_TRUE(short_tl.has_value());
+  node->set_timeline(std::move(*short_tl));
+
+  // Undo must reject atomically; lane unchanged.
+  EXPECT_FALSE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*lane, post_exec);
+  EXPECT_EQ(cmd->undo(fx.project).code(), ResultCode::kInvalidArgument);
+
+  // Restore timeline and lane; retry succeeds.
+  std::vector<Measure> orig_measures = {
+      Measure{*TimeSignature::create(4, 4), *KeySignature::create(0)}};
+  auto orig_tl = NodeTimeline::create(std::move(orig_measures), {});
+  ASSERT_TRUE(orig_tl.has_value());
+  node->set_timeline(std::move(*orig_tl));
+  *lane = post_exec;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(lane->pedal_spans(fx.stave_id), nullptr);
+}
+
+TEST(CommandTest, AddPedalSpanTimelineChangeRedoRejectedAndRetryable) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 2));
+  auto cmd = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
+                                                   fx.stave_id, span);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const TrackLane post_exec = *lane;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  const TrackLane post_undo = *lane;
+
+  // Shorten timeline.
+  std::vector<Measure> short_measures = {
+      Measure{*TimeSignature::create(2, 4), *KeySignature::create(0)}};
+  auto short_tl = NodeTimeline::create(std::move(short_measures), {});
+  ASSERT_TRUE(short_tl.has_value());
+  node->set_timeline(std::move(*short_tl));
+
+  // Redo must reject atomically.
+  EXPECT_FALSE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*lane, post_undo);
+  EXPECT_EQ(cmd->redo(fx.project).code(), ResultCode::kInvalidArgument);
+
+  // Restore timeline and lane; retry succeeds.
+  std::vector<Measure> orig_measures = {
+      Measure{*TimeSignature::create(4, 4), *KeySignature::create(0)}};
+  auto orig_tl = NodeTimeline::create(std::move(orig_measures), {});
+  ASSERT_TRUE(orig_tl.has_value());
+  node->set_timeline(std::move(*orig_tl));
+  *lane = post_undo;
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*lane, post_exec);
+}
+
+// =====================================================================
+// Phase 8e-ii — Non-target voice incompleteness blocks pedal commands
+// =====================================================================
+
+TEST(CommandTest, AddPedalSpanIncompleteNonTargetVoiceRejectedAndRetryable) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  lane->ensure_stave(fx.stave_id);
+  // Only fill voice 1 (target stave). Leave voices 2-4 empty/incomplete.
+  {
+    VoiceContent* vc = &lane->stave(fx.stave_id)->voice(*Voice::create(1));
+    ASSERT_NE(vc, nullptr);
+    ASSERT_TRUE(vc->append(make_note(pitch_c4(), quarter())).ok());
+    ASSERT_TRUE(vc->normalize(fx.node_end).ok());
+  }
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 2));
+  auto cmd = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
+                                                   fx.stave_id, span);
+
+  // Execute must reject because voice 2 is incomplete.
+  EXPECT_FALSE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+
+  // Fill voices 2-4; retry succeeds.
+  for (int v = 2; v <= 4; ++v) {
+    VoiceContent* vc =
+        &lane->stave(fx.stave_id)
+             ->voice(*Voice::create(static_cast<std::uint8_t>(v)));
+    ASSERT_NE(vc, nullptr);
+    ASSERT_TRUE(vc->append(make_note(pitch_c4(), quarter())).ok());
+    ASSERT_TRUE(vc->normalize(fx.node_end).ok());
+  }
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const std::vector<PedalSpan>* spans = lane->pedal_spans(fx.stave_id);
+  ASSERT_NE(spans, nullptr);
+  ASSERT_EQ(spans->size(), 1u);
+}
+
+TEST(CommandTest, AddPedalSpanUndoNonTargetVoiceBrokenAfterExecuteRejected) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 2));
+  auto cmd = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
+                                                   fx.stave_id, span);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const TrackLane post_exec = *lane;
+
+  // After execute, break a non-target voice by clearing it.
+  VoiceContent*      vc2 = &lane->stave(fx.stave_id)->voice(*Voice::create(2));
+  const VoiceContent saved_vc2 = *vc2;
+  vc2->clear();
+  const TrackLane broken = *lane;
+
+  // Undo must reject atomically: lane unchanged from broken state.
+  EXPECT_FALSE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*lane, broken);
+  EXPECT_EQ(cmd->undo(fx.project).code(), ResultCode::kInvalidArgument);
+
+  // Restore the broken voice from our saved copy; retry succeeds.
+  *vc2 = saved_vc2;
+  EXPECT_EQ(*lane, post_exec);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(lane->pedal_spans(fx.stave_id), nullptr);
+}
+
+// =====================================================================
+// Phase 8e-ii — Pedal command validates invalid spans on non-target
+//   stave; add_pedal_span rejects absent staves
+// =====================================================================
+
+TEST(CommandTest, AddPedalSpanInvalidSpanOnNonTargetStaveRejected) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  const StaveId stave_a = fx.stave_id;
+  const StaveId stave_b = StaveId::generate();
+  lane->ensure_stave(stave_a);
+  lane->ensure_stave(stave_b);
+  fill_all_voices(lane, stave_a, fx.node_end);
+  fill_all_voices(lane, stave_b, fx.node_end);
+
+  // Add an invalid pedal span (end > node_end) directly on stave_b.
+  const PedalSpan bad_span =
+      make_pedal_span(Rational(0), Rational(2));  // beyond node_end=1
+  ASSERT_TRUE(lane->add_pedal_span(stave_b, bad_span).ok());
+
+  // Now try to add a valid span on stave_a via command.
+  // validate_lane_candidate must see the bad span on stave_b and reject.
+  const PedalSpan good_span =
+      make_pedal_span(Rational(0), *Rational::create(1, 4));
+  auto cmd = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
+                                                   stave_a, good_span);
+  const Result r = cmd->execute(fx.project);
+  EXPECT_FALSE(r.ok());
+  EXPECT_EQ(r.code(), ResultCode::kInvalidArgument);
+
+  // The valid span was never added; stave_a has no pedal spans.
+  const std::vector<PedalSpan>* spans_a = lane->pedal_spans(stave_a);
+  EXPECT_TRUE(spans_a == nullptr || spans_a->empty());
+}
+
+// =====================================================================
+// Phase 8e-ii — Public add API cross-kind identity scope
+// =====================================================================
+
+TEST(CommandTest, VoiceContentPublicAddSlurDuplicateIdRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  const NotationEntityId eid = event_id(voice.events()[0]);
+  const Slur             slur(NotationEntityId::generate(), eid, eid);
+  ASSERT_TRUE(voice.add_slur(slur).ok());
+  EXPECT_FALSE(voice.add_slur(slur).ok());
+}
+
+TEST(CommandTest, VoiceContentPublicAddHairpinDuplicateIdRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  const NotationEntityId eid = event_id(voice.events()[0]);
+  const Hairpin          hp(NotationEntityId::generate(), eid, eid,
+                            HairpinDirection::kCrescendo);
+  ASSERT_TRUE(voice.add_hairpin(hp).ok());
+  EXPECT_FALSE(voice.add_hairpin(hp).ok());
+}
+
+TEST(CommandTest, VoiceContentPublicAddSlurCrossKindRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  const NotationEntityId eid       = event_id(voice.events()[0]);
+  const NotationEntityId shared_id = NotationEntityId::generate();
+
+  const DynamicMarking dyn(shared_id, eid, Dynamic::kFf);
+  ASSERT_TRUE(voice.add_dynamic(dyn).ok());
+
+  const Slur slur(shared_id, eid, eid);
+  EXPECT_FALSE(voice.add_slur(slur).ok());
+}
+
+TEST(CommandTest, VoiceContentPublicAddGraceGroupDuplicateRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), quarter())).ok());
+
+  const GraceGroup group = make_grace_group(
+      event_id(voice.events()[0]),
+      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAppoggiatura, false}});
+  ASSERT_TRUE(voice.add_grace_group(group).ok());
+  EXPECT_FALSE(voice.add_grace_group(group).ok());
+}
+
+TEST(CommandTest, VoiceContentPublicAddBeamOverrideDuplicateRejected) {
+  VoiceContent voice;
+  ASSERT_TRUE(voice.append(make_note(pitch_c4(), eighth())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch_d4(), eighth())).ok());
+
+  const BeamOverride beam = make_beam_override(
+      BeamOverride::Kind::kJoin,
+      {event_id(voice.events()[0]), event_id(voice.events()[1])});
+  ASSERT_TRUE(voice.add_beam_override(beam).ok());
+  EXPECT_FALSE(voice.add_beam_override(beam).ok());
+}
+
+TEST(CommandTest, TrackLaneAddPedalSpanCrossStaveDuplicateRejected) {
+  TrackLane     lane;
+  const StaveId stave_a = StaveId::generate();
+  const StaveId stave_b = StaveId::generate();
+  lane.ensure_stave(stave_a);
+  lane.ensure_stave(stave_b);
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 4));
+  ASSERT_TRUE(lane.add_pedal_span(stave_a, span).ok());
+  // Same id on a different stave should be rejected.
+  EXPECT_FALSE(lane.add_pedal_span(stave_b, span).ok());
+}
+
+// =====================================================================
+// Phase 8e-ii — Execute/undo/redo exact round-trip for every 12 commands
+// =====================================================================
+
+TEST(CommandTest, AddDynamicExactExecuteUndoRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const DynamicMarking marking =
+      make_dynamic_marking(event_id(voice->events()[0]), Dynamic::kFf);
+
+  auto cmd = std::make_unique<AddDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), marking);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent post_exec = *voice;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 0u);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, post_exec);
+}
+
+TEST(CommandTest, RemoveDynamicExactExecuteUndoRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const DynamicMarking marking =
+      make_dynamic_marking(event_id(voice->events()[0]), Dynamic::kFf);
+  ASSERT_TRUE(voice->add_dynamic(marking).ok());
+  const VoiceContent pre_exec = *voice;
+
+  auto cmd = std::make_unique<RemoveDynamicCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), marking.id);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 0u);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*voice, pre_exec);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(voice->dynamics().size(), 0u);
+}
+
+TEST(CommandTest, AddHairpinExactExecuteUndoRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const Hairpin hp =
+      make_hairpin(event_id(voice->events()[0]), event_id(voice->events()[1]),
+                   HairpinDirection::kCrescendo);
+
+  auto cmd = std::make_unique<AddHairpinCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), hp);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent post_exec = *voice;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->hairpins().size(), 0u);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, post_exec);
+}
+
+TEST(CommandTest, RemoveHairpinExactExecuteUndoRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const Hairpin hp =
+      make_hairpin(event_id(voice->events()[0]), event_id(voice->events()[1]),
+                   HairpinDirection::kCrescendo);
+  ASSERT_TRUE(voice->add_hairpin(hp).ok());
+  const VoiceContent pre_exec = *voice;
+
+  auto cmd = std::make_unique<RemoveHairpinCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), hp.id);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->hairpins().size(), 0u);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*voice, pre_exec);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(voice->hairpins().size(), 0u);
+}
+
+TEST(CommandTest, AddSlurExactExecuteUndoRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const Slur slur =
+      make_slur(event_id(voice->events()[0]), event_id(voice->events()[1]));
+
+  auto cmd = std::make_unique<AddSlurCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), slur);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent post_exec = *voice;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->slurs().size(), 0u);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, post_exec);
+}
+
+TEST(CommandTest, RemoveSlurExactExecuteUndoRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const Slur slur =
+      make_slur(event_id(voice->events()[0]), event_id(voice->events()[1]));
+  ASSERT_TRUE(voice->add_slur(slur).ok());
+  const VoiceContent pre_exec = *voice;
+
+  auto cmd = std::make_unique<RemoveSlurCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), slur.id);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->slurs().size(), 0u);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*voice, pre_exec);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(voice->slurs().size(), 0u);
+}
+
+TEST(CommandTest, AddBeamOverrideExactExecuteUndoRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), eighth())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), eighth())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const BeamOverride beam = make_beam_override(
+      BeamOverride::Kind::kJoin,
+      {event_id(voice->events()[0]), event_id(voice->events()[1])});
+
+  auto cmd = std::make_unique<AddBeamOverrideCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), beam);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent post_exec = *voice;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->beam_overrides().size(), 0u);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, post_exec);
+}
+
+TEST(CommandTest, RemoveBeamOverrideExactExecuteUndoRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), eighth())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), eighth())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const BeamOverride beam = make_beam_override(
+      BeamOverride::Kind::kJoin,
+      {event_id(voice->events()[0]), event_id(voice->events()[1])});
+  ASSERT_TRUE(voice->add_beam_override(beam).ok());
+  const VoiceContent pre_exec = *voice;
+
+  auto cmd = std::make_unique<RemoveBeamOverrideCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), beam.id);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->beam_overrides().size(), 0u);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*voice, pre_exec);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(voice->beam_overrides().size(), 0u);
+}
+
+TEST(CommandTest, AddGraceGroupExactExecuteUndoRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const GraceGroup group = make_grace_group(
+      event_id(voice->events()[0]),
+      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAppoggiatura, false}});
+
+  auto cmd = std::make_unique<AddGraceGroupCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), group);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const VoiceContent post_exec = *voice;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->grace_groups().size(), 0u);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*voice, post_exec);
+}
+
+TEST(CommandTest, RemoveGraceGroupExactExecuteUndoRedo) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const GraceGroup group = make_grace_group(
+      event_id(voice->events()[0]),
+      {GraceNote{pitch_d4(), eighth(), GraceNoteType::kAppoggiatura, false}});
+  ASSERT_TRUE(voice->add_grace_group(group).ok());
+  const VoiceContent pre_exec = *voice;
+
+  auto cmd = std::make_unique<RemoveGraceGroupCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), group.id);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->grace_groups().size(), 0u);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*voice, pre_exec);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(voice->grace_groups().size(), 0u);
+}
+
+TEST(CommandTest, AddPedalSpanExactExecuteUndoRedo) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  ASSERT_TRUE(lane != nullptr);
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 2));
+
+  auto cmd = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
+                                                   fx.stave_id, span);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const TrackLane post_exec = *lane;
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(lane->pedal_spans(fx.stave_id), nullptr);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(*lane, post_exec);
+}
+
+TEST(CommandTest, RemovePedalSpanExactExecuteUndoRedo) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+
+  lane->ensure_stave(fx.stave_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 2));
+  ASSERT_TRUE(lane->add_pedal_span(fx.stave_id, span).ok());
+  const TrackLane pre_exec = *lane;
+
+  auto cmd = std::make_unique<RemovePedalSpanCommand>(fx.node_id, fx.track_id,
+                                                      fx.stave_id, span.id);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  // Whole-lane snapshot may preserve the key with an empty vector.
+  const std::vector<PedalSpan>* spans = lane->pedal_spans(fx.stave_id);
+  EXPECT_TRUE(spans == nullptr || spans->empty());
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(*lane, pre_exec);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  // Whole-lane snapshot may preserve the key with an empty vector.
+  const std::vector<PedalSpan>* spans_redo = lane->pedal_spans(fx.stave_id);
+  EXPECT_TRUE(spans_redo == nullptr || spans_redo->empty());
 }

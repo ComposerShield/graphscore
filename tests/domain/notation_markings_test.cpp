@@ -65,7 +65,9 @@ TEST(DynamicMarkingTest, VoiceContentAccumulatesDynamics) {
   VoiceContent     voice;
   const VoiceEvent note = make_note(pitch(Letter::kC), quarter());
   ASSERT_TRUE(voice.append(note).ok());
-  voice.add_dynamic(make_dynamic_marking(event_id(note), Dynamic::kP));
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(event_id(note), Dynamic::kP))
+          .ok());
   ASSERT_EQ(voice.dynamics().size(), 1u);
   EXPECT_EQ(voice.dynamics()[0].value, Dynamic::kP);
 }
@@ -104,10 +106,13 @@ TEST(PedalSpanTest, HoldsExactStartAndEnd) {
 TEST(PedalSpanTest, TrackLaneScopesSpansPerStave) {
   TrackLane     lane;
   const StaveId stave_id = StaveId::generate();
+  lane.ensure_stave(stave_id);
   EXPECT_EQ(lane.pedal_spans(stave_id), nullptr);
 
-  lane.add_pedal_span(stave_id,
-                      make_pedal_span(Rational(0), *Rational::create(1, 2)));
+  ASSERT_TRUE(
+      lane.add_pedal_span(stave_id,
+                          make_pedal_span(Rational(0), *Rational::create(1, 2)))
+          .ok());
   const std::vector<PedalSpan>* spans = lane.pedal_spans(stave_id);
   ASSERT_NE(spans, nullptr);
   ASSERT_EQ(spans->size(), 1u);
@@ -169,8 +174,11 @@ TEST(GraceGroupTest, VoiceContentAccumulatesGraceGroups) {
   const VoiceEvent principal = make_note(pitch(Letter::kC), quarter());
   ASSERT_TRUE(voice.append(principal).ok());
 
-  voice.add_grace_group(make_grace_group(
-      event_id(principal), {GraceNote{pitch(Letter::kB), eighth()}}));
+  ASSERT_TRUE(
+      voice
+          .add_grace_group(make_grace_group(
+              event_id(principal), {GraceNote{pitch(Letter::kB), eighth()}}))
+          .ok());
 
   ASSERT_EQ(voice.grace_groups().size(), 1u);
   EXPECT_EQ(voice.grace_groups()[0].principal_event, event_id(principal));
