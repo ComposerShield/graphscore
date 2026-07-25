@@ -12,6 +12,7 @@
 #include <graphscore/domain/add_output_connector_command.hpp>
 #include <graphscore/domain/add_pedal_span_command.hpp>
 #include <graphscore/domain/add_slur_command.hpp>
+#include <graphscore/domain/add_tempo_point_command.hpp>
 #include <graphscore/domain/add_track_command.hpp>
 #include <graphscore/domain/archive_track_command.hpp>
 #include <graphscore/domain/articulation.hpp>
@@ -34,6 +35,7 @@
 #include <graphscore/domain/graph_position.hpp>
 #include <graphscore/domain/measure_map.hpp>
 #include <graphscore/domain/midi_ownership.hpp>
+#include <graphscore/domain/move_tempo_point_command.hpp>
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/node_timeline.hpp>
 #include <graphscore/domain/notation_event.hpp>
@@ -56,6 +58,7 @@
 #include <graphscore/domain/remove_output_connector_command.hpp>
 #include <graphscore/domain/remove_pedal_span_command.hpp>
 #include <graphscore/domain/remove_slur_command.hpp>
+#include <graphscore/domain/remove_tempo_point_command.hpp>
 #include <graphscore/domain/reset_route_command.hpp>
 #include <graphscore/domain/restore_track_command.hpp>
 #include <graphscore/domain/route_geometry.hpp>
@@ -76,6 +79,7 @@
 #include <graphscore/domain/set_project_name_command.hpp>
 #include <graphscore/domain/set_project_tempo_command.hpp>
 #include <graphscore/domain/set_start_node_command.hpp>
+#include <graphscore/domain/set_tempo_point_command.hpp>
 #include <graphscore/domain/set_tie_command.hpp>
 #include <graphscore/domain/set_track_gain_command.hpp>
 #include <graphscore/domain/set_track_mute_command.hpp>

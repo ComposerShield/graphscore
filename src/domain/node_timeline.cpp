@@ -103,6 +103,10 @@ Result NodeTimeline::set_tempo(std::vector<TempoPoint> points) {
   return Result();
 }
 
+void NodeTimeline::clear_tempo() noexcept {
+  tempo_.reset();
+}
+
 std::optional<TempoLane> NodeTimeline::rebuild_tempo_for_end(
     Rational new_end) const {
   if (!tempo_.has_value())

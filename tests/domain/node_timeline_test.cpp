@@ -238,6 +238,51 @@ TEST(NodeTimelineTempoTest, AcceptsTempoCoveringMainRegionAndPickdown) {
   EXPECT_EQ(timeline->tempo()->end(), *Rational::create(5, 4));
 }
 
+TEST(NodeTimelineTempoTest, ClearTempoRemovesAnExistingLane) {
+  auto timeline = NodeTimeline::create({make_measure(4, 4)}, {});
+  ASSERT_TRUE(timeline.has_value());
+  ASSERT_TRUE(timeline->set_tempo({make_point(Rational(0), 120)}).ok());
+  ASSERT_NE(timeline->tempo(), nullptr);
+
+  timeline->clear_tempo();
+  EXPECT_EQ(timeline->tempo(), nullptr);
+}
+
+TEST(NodeTimelineTempoTest, ClearTempoWithoutALaneIsASafeNoOp) {
+  auto timeline = NodeTimeline::create({make_measure(4, 4)}, {});
+  ASSERT_TRUE(timeline.has_value());
+  ASSERT_EQ(timeline->tempo(), nullptr);
+
+  timeline->clear_tempo();
+  EXPECT_EQ(timeline->tempo(), nullptr);
+
+  // Repeating it stays a no-op, and the rest of the timeline is untouched.
+  timeline->clear_tempo();
+  EXPECT_EQ(timeline->tempo(), nullptr);
+  EXPECT_EQ(timeline->node_end(), Rational(1));
+}
+
+TEST(NodeTimelineTempoTest, ClearTempoThenSetTempoRoundTrips) {
+  auto timeline = NodeTimeline::create({make_measure(4, 4)}, {});
+  ASSERT_TRUE(timeline.has_value());
+
+  const std::vector<TempoPoint> points = {
+      make_point(Rational(0), 120),
+      make_point(*Rational::create(1, 2), 90),
+  };
+  ASSERT_TRUE(timeline->set_tempo(points).ok());
+  ASSERT_NE(timeline->tempo(), nullptr);
+
+  timeline->clear_tempo();
+  ASSERT_EQ(timeline->tempo(), nullptr);
+
+  ASSERT_TRUE(timeline->set_tempo(points).ok());
+  ASSERT_NE(timeline->tempo(), nullptr);
+  EXPECT_EQ(timeline->tempo()->points(), points);
+  EXPECT_EQ(timeline->tempo()->start(), Rational(0));
+  EXPECT_EQ(timeline->tempo()->end(), Rational(1));
+}
+
 class TempoRevalidationTest : public ::testing::Test {
  protected:
   std::optional<NodeTimeline> make_timeline() {

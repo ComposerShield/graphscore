@@ -117,6 +117,12 @@ class NodeTimeline {
   // node_end() and is rejected if it would leave the lane invalid.
   [[nodiscard]] Result set_tempo(std::vector<TempoPoint> points);
 
+  // Clears the node-wide tempo lane, if any. Always succeeds: a node with
+  // no tempo lane is the valid default state (see the tempo_ member's
+  // optionality), and unlike set_pickdown/clear_pickdown there is nothing
+  // to revalidate.
+  void clear_tempo() noexcept;
+
   [[nodiscard]] const TempoLane* tempo() const noexcept {
     return tempo_ ? &*tempo_ : nullptr;
   }

@@ -10,6 +10,7 @@ add_library(graphscore_domain STATIC
   add_output_connector_command.cpp
   add_pedal_span_command.cpp
   add_slur_command.cpp
+  add_tempo_point_command.cpp
   add_track_command.cpp
   archive_track_command.cpp
   bind_output_event_command.cpp
@@ -26,6 +27,7 @@ add_library(graphscore_domain STATIC
   graph.cpp
   measure_map.cpp
   midi_ownership.cpp
+  move_tempo_point_command.cpp
   node.cpp
   node_timeline.cpp
   notation_event.cpp
@@ -47,6 +49,7 @@ add_library(graphscore_domain STATIC
   remove_output_connector_command.cpp
   remove_pedal_span_command.cpp
   remove_slur_command.cpp
+  remove_tempo_point_command.cpp
   reset_route_command.cpp
   restore_track_command.cpp
   route_geometry.cpp
@@ -67,6 +70,7 @@ add_library(graphscore_domain STATIC
   set_project_name_command.cpp
   set_project_tempo_command.cpp
   set_start_node_command.cpp
+  set_tempo_point_command.cpp
   set_tie_command.cpp
   set_track_gain_command.cpp
   set_track_mute_command.cpp
