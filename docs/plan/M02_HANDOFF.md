@@ -703,10 +703,10 @@ top-level "Milestone 02 complete".
       three named here. See the 8e-iii delivery note above. **Did not close
       line 79** — node-timeline (clef/pickdown/signature) commands are still
       missing; see the NEW GAP note in that delivery entry.
-  - **8f..h (remaining, after 8e):** **8f** the toolkit-independent selection
-    model (notehead/chord/measure/arbitrary-range/node/connector/route-segment/
-    staff-focus/insertion-caret kinds + explicit staff/track/voice scope — all
-    new representation, no mutators). **8g** clipboard fragments (relative
+  - **8f (next — SCOPED with Adam, see the dedicated section below):** the
+    toolkit-independent selection model. Kinds, identity mechanism, cardinality,
+    and validation approach are all locked; see "**Phase 8f scope (locked)**"
+    after this list. **8g** clipboard fragments (relative
     positions, staff/voice mapping, no source UUIDs) + reversible cut/copy/paste
     (identity remapping + destination rest normalization + boundary-crossing
     clip/reconnection rules) + node copy/paste id remapping (duplicate with
@@ -733,6 +733,119 @@ top-level "Milestone 02 complete".
     how 8c preceded 8d. Transaction grouping (line 78 — `CommandTransaction`
     already exists from 8a) is exercised by the multi-measure/drag operations
     in 8g/8h.
+### Phase 8f scope (locked with Adam, before any worker dispatch)
+
+Reconnaissance findings that drove the decisions (all verified in-tree):
+
+- **`Note`, `Chord`, and `Rest` already carry `NotationEntityId`**
+  (`notation_event.hpp:22-64`), and `event_id(const VoiceEvent&)` accesses it.
+  But **`ChordNote` and `GraceNote` do not** — an individual notehead inside a
+  chord had no stable identity.
+- **`graphscore_domain.hpp:98` already forward-declares `class Selection`** as
+  an unimplemented placeholder. 8f replaces it with a real header include.
+- **`NotationEntityId` uniqueness is only guaranteed within one
+  `VoiceContent`** (`voice_content.cpp:544`, `marking_id_exists`), plus pedal
+  spans unique across one `TrackLane` (`track.cpp:47-53`). There is **no**
+  node-wide or project-wide uniqueness, so any id-based selection MUST carry
+  full `(NodeId, TrackId, StaveId, Voice)` scope to be unambiguous.
+- **Commands address events positionally** (`Rational`), while **markings
+  address them by id** — an asymmetry a selection has to bridge.
+- **Route segments have no domain substrate at all**: `RouteGeometry` stores
+  only interior waypoints, endpoints are explicitly a rendering concern, and
+  an automatic route stores no geometry whatsoever.
+
+**Adam's locked rulings:**
+
+1. **Notehead identity: add `NotationEntityId` to `ChordNote`.** Matches how
+   every other selectable notation entity is addressed; rejected index-into-
+   `Chord::notes` (invalidated by every `SetEventCommand`, which replaces the
+   whole `Chord` value) and address-by-`SpelledPitch` (nothing enforces pitch
+   uniqueness within a chord). **This is a domain data-model change, not pure
+   representation** — it must be added to the `marking_id_exists` cross-kind
+   uniqueness scan, and it is an **M03 persistence obligation** (the field must
+   round-trip). Consider whether `GraceNote` should get one for the same
+   reason — it has the identical id-less shape, and 8g's clipboard will face
+   the same remapping problem for grace notes.
+2. **Route-segment selection: DEFERRED to M06** with a recorded deferral (see
+   the deferrals list). Segment geometry only becomes well-defined once the
+   canvas computes drawn paths, and M06 owns connector-segment drag
+   (`06-graph-canvas.md:70`). 8f ships every other kind; the deliverable box
+   stays open with an explicit note rather than encoding a representation with
+   known holes that M06 would discard.
+3. **Staff-focus: DROPPED as a selection kind.** Every plan-doc use of "focus"
+   is *context* for another operation, never an end state — and
+   `05-notation-editor.md:43` has Primary+Up/Down end in a note selection or a
+   caret, never in a bare focused staff. The focused staff is simply the
+   `(TrackId, StaveId)` scope of the current selection, and the
+   "nothing selected here" case is the insertion caret, which carries the same
+   scope. That case is never empty: voices are always rest-filled, and legal
+   caret positions are event boundaries ∪ `total_length()`, so position 0 is
+   always valid. Modeling it separately would be a second source of truth for
+   information the scope already carries.
+4. **Cardinality: a `Selection` is a SET of same-kind items**, with mixing
+   incompatible kinds rejected. Required by node multi-select
+   (`06-graph-canvas.md:63`) and aligned-measure-across-tracks
+   (`README.md:135`). Note `StrongId` has `operator==` and `std::hash` but
+   **no `operator<=>`** (`strong_id.hpp:27`), so this means hashed storage or
+   adding ordering — worker's choice, reviewer-checked.
+
+**Orchestrator decisions (precedent-based, not Adam-escalated — flag in review
+if any looks wrong):**
+
+5. **Selection is a snapshot value; resolution against a `Project` is a
+   separate free function.** No existing domain value type validates against
+   the aggregate at construction (`MeasureMap::create`, `TempoLane::create`,
+   `StaffLayout::create` all validate intrinsic structure only), and the
+   `notation_validation.hpp` free functions (`validate_voice_references`,
+   `validate_lane_references`) are the established shape for "does this
+   actually resolve" checks. The domain has **no observer/notification
+   mechanism** on `Project`/`Node`/`VoiceContent`, so snapshot-plus-revalidate
+   is the only design consistent with the codebase. `Selection` therefore
+   validates only intrinsic structure (scope well-formed, `start <= end`,
+   non-empty item set, kind homogeneity).
+6. **Shape: a `Selection` class holding shared scope + a `std::variant`
+   payload.** The existing forward declaration is `class Selection` (a class,
+   which cannot forward-declare a variant alias), and the scope tuple is shared
+   by most but not all kinds (node/connector need no stave/voice; pedal needs
+   no voice). `VoiceEvent = std::variant<Note, Chord, Rest>` is the in-repo
+   precedent for variant payloads.
+7. **Event addressing: carry `NotationEntityId`, not position.** Ids survive
+   rhythm edits that shift onsets; positions do not. But every voice-scoped
+   command targets by `Rational`, and `VoiceContent` has **no
+   `position_of_event(NotationEntityId)` reverse lookup** today — only
+   `find_event_index_at(Rational)`, which requires an exact boundary match.
+   8f must add that reverse lookup as a **`const` query** (not a mutator, so
+   it does not breach "pure representation"). This is the bridge 8g needs to
+   turn a selection into command targets.
+8. **Measure selection stores the ordinal index** (a `Measure` has no id —
+   `measure_map.hpp:18-23`), and must **document that 8h invalidates indices**
+   when it adds measure insert/delete. Also document the asymmetry that
+   `MeasureMap::measure_index_at` returns `nullopt` in the pickdown region, so
+   a measure-index selection **cannot name pickdown material** at all, while a
+   range selection can.
+9. **Range selection stores a raw `MusicalSpan`** (`node_timeline.hpp:23`,
+   which already exists and is exactly this primitive) and recomputes region
+   membership via `NodeTimeline::classify(MusicalSpan)` on demand. Do **not**
+   cache a `SpanClassification` — it goes stale on `set_pickdown`/
+   `clear_pickdown` and there is no mutation notification to invalidate it.
+
+**Suggested sub-increment split (own worker+reviewer+commit each):**
+
+- **8f-i — `ChordNote` identity groundwork.** Add `NotationEntityId` to
+  `ChordNote` (and decide `GraceNote`), extend the `marking_id_exists`
+  uniqueness scan, update every existing chord construction site and test.
+  This is the risky increment: it touches shipped code and the 8e-ii
+  uniqueness invariant, and it is a prerequisite for notehead selection. Doing
+  it first means 8f-ii is purely additive.
+- **8f-ii — the `Selection` representation.** Scope struct, kind variant, set
+  semantics with homogeneity enforcement, intrinsic validation, the
+  `validate_selection(const Project&, const Selection&)`-style free function,
+  and the `VoiceContent` const reverse lookup. Replace the
+  `graphscore_domain.hpp:98` forward declaration with the real include.
+
+**Per-increment gate:** the standard five gates + ASan/UBSan, as every 8x
+increment has run.
+
 - **Phase 9 — Validation service:** fast incremental + complete validation;
   diagnostics with stable ids/severity/machine code/user text; validates
   rhythmic completeness, UUID uniqueness, references, track alignment, signature
@@ -988,6 +1101,24 @@ Recorded here so the owning phase picks them up:
   no invalid-construction path, but inconsistent within the file; worth
   matching if that function is touched again.
 
+- **→ Milestone 06 (graph canvas), Adam's ruling during 8f scoping:**
+  **route-segment selection is deferred out of M02.** `RouteGeometry`
+  (`route_geometry.hpp:31-52`) stores only *interior* waypoints — endpoints are
+  explicitly a rendering concern (`:28-30`) — so the drawn path has more
+  segments than the stored list implies, and an **automatic route stores no
+  geometry at all** (the writer computes it fresh on every layout). Any
+  index-based segment reference is invalidated by `SetCustomRouteCommand`,
+  `ResetRouteCommand`, and `disconnect` (which resets a customized route to
+  automatic). M06 owns connector-segment drag (`06-graph-canvas.md:70`) and is
+  where segment geometry first becomes well-defined; define the representation
+  there, next to its only real consumer. The `02-domain-model.md` selection
+  deliverable box stays unchecked for this reason and names it.
+- **→ Milestone 03 (persistence), from the 8f `ChordNote` ruling:** once
+  `ChordNote` gains a `NotationEntityId`, that field is a **round-trip
+  obligation** — a serializer that drops or regenerates it silently breaks
+  every notehead selection and every clipboard identity remapping that
+  references a chord pitch. Same class of load-bearing-field obligation as the
+  connector-order entry already on this list.
 - **→ later (advisory only, 8e-iii, tree-wide):** `tests/domain/command_test.cpp`
   uses `assert(...)` in its setup helpers (lines ~381, ~389, and the new tempo
   helper) without including `<cassert>`. Pre-existing and consistent within the
