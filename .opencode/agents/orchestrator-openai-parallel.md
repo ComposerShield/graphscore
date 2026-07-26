@@ -63,7 +63,17 @@ builds/tests/lint) during implementation; they run **Tier 2** (full debug build,
 lint) once before handing off for review. Reviewers run **Tier 2** independently on the
 candidate and **Tier 3** (architecture, clang-tidy 18 in `build/tidy`, sanitizers) once on
 the final approved tree. Fix workers run only Tier 1 targeted regressions. Do not
-mechanically demand every expensive command from every round.
+  mechanically demand every expensive command from every round.
+- Worker prompts must require the traceability matrix and focused pre-review clang-tidy 18
+  when applicable to GraphScore-owned C/C++ production code.
+- Before dispatching a reviewer, inspect the worker report: do not accept the handoff if
+  any requirement row, implementation reference, applicable test/evidence, or focused
+  clang-tidy result is missing. Send the worker a targeted completion request instead of
+  spending a reviewer cycle.
+- Include the worker's traceability matrix in the reviewer brief. Fix prompts must require
+  affected rows and the equivalent defect family to be updated.
+- Make clear that this focused pre-review clang-tidy check does not replace the reviewer's
+  Tier 3 clang-tidy gate and should not cause a full clang-tidy run in every fix round.
 
 **Guidelines:**
 - Use the `explore` subagent for research/reconnaissance (codebase questions, architecture

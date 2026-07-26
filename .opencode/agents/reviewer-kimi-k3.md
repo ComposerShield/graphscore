@@ -50,6 +50,15 @@ against the plan's steps, `AGENTS.md`, and the ADR decisions in `docs/decisions/
 - If a configured environment genuinely blocks a required gate (missing clang-tidy 18,
   no ASan toolchain), report it once as an environment block — do not repeatedly classify
   a permission misconfiguration as a product defect.
+- Use the worker's traceability matrix as an audit index, but independently inspect
+  implementation and tests; do not trust the table as proof.
+- Check that every phase requirement has an accurate row and applicable test/evidence.
+  Missing or inaccurate rows are a NEEDS WORK finding.
+- Confirm that focused canonical clang-tidy 18 was reported for affected GraphScore-owned
+  C/C++ production targets before review; a docs/config-only N/A is valid. Do not rerun
+  that focused worker check mechanically during ordinary review, and do not treat it as
+  replacing the final Tier 3 gate.
+- On fix rounds, audit the updated matrix rows and the equivalent defect family.
 
 **Always verify independently (do not trust the worker's report):**
 - `cmake --build --preset debug` — must be clean (warnings are errors in this repo).
