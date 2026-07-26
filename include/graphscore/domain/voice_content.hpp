@@ -41,6 +41,25 @@ class VoiceContent {
   [[nodiscard]] std::optional<std::size_t> find_event_index_at(
       Rational position) const;
 
+  // Returns the exact start position of the event that owns `id`, or
+  // std::nullopt if no voice content entity carries that id.
+  //
+  // Resolution rules:
+  //  - A top-level Note, Chord, or Rest id → that event's start position.
+  //  - A ChordNote id → the owning Chord's start position.
+  //  - A GraceNote id → resolved through GraceGroup indirection:
+  //    the principal_event is followed until a top-level event or
+  //    ChordNote is found.  There is no fixed depth cap: any finite
+  //    acyclic chain of GraceNote → GraceNote principal references is
+  //    resolved.  A repeated principal_event id (cycle) or a dangling
+  //    principal returns std::nullopt.  Resolution is a bounded
+  //    non-recursive scan that cannot overflow the stack on malformed
+  //    GraceGroup references.
+  //  - A marking id (Dynamic, Hairpin, Slur, etc.) or a GraceGroup id →
+  //    std::nullopt (not a position-bearing entity).
+  [[nodiscard]] std::optional<Rational> position_of_event(
+      NotationEntityId id) const;
+
   // Inserts `event` at `position`, which must be an exact event boundary
   // (the start of an existing event), or total_length() (an append).
   //

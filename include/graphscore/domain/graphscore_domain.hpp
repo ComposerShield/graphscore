@@ -62,6 +62,7 @@
 #include <graphscore/domain/reset_route_command.hpp>
 #include <graphscore/domain/restore_track_command.hpp>
 #include <graphscore/domain/route_geometry.hpp>
+#include <graphscore/domain/selection.hpp>
 #include <graphscore/domain/set_custom_route_command.hpp>
 #include <graphscore/domain/set_event_command.hpp>
 #include <graphscore/domain/set_input_connector_name_command.hpp>
@@ -95,7 +96,6 @@
 
 namespace graphscore {
 
-class Selection;
 class ValidationService;
 
 }  // namespace graphscore

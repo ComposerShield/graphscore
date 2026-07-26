@@ -5,14 +5,10 @@ completed phase, remove or compress completed detail so the file gets SMALLER,
 not larger. Git history preserves old detail. It should contain only what the
 next agent needs for the next task plus active downstream deferrals.
 
-**Status at this doc:** Phases 1–8f-i complete and committed. **8f-ii
-(selection representation) is next.**
+**Status at this doc:** Phases 1–8f-ii complete and committed. **8g
+(clipboard, cut/copy/paste) is next.**
 
-- HEAD: `1b59fd1` ("Add stable notation note identities")
-- Tests: 1249, 100% pass (debug + ASan/UBSan clean)
-- Partial cancelled 8f-ii work is preserved in a stash named
-  `WIP phase 8f-ii before process updates` — unreviewed, not approved.
-  Refer by stash message, not unstable stash index.
+- Tests at this increment: 1335, 100% pass (debug + ASan/UBSan clean)
 
 ## Milestone scope
 
@@ -40,8 +36,7 @@ and defers Tier 3 until findings are resolved. Documentation-only changes
 require diff/frontmatter validation, not a C++ sanitizer cycle.
 
 **Commits:** one per phase/increment directly to `main`, never mention AI
-assistance. Stage by explicit paths; preserve `.claude/settings.local.json`
-and `.claude/agents/orchestrator.md` in the stash without editing.
+assistance. Stage by explicit paths.
 
 ## Progress: phases and commits
 
@@ -60,78 +55,31 @@ and `.claude/agents/orchestrator.md` in the stash without editing.
 | 8d-i..iv | Add/remove graph entities | ✅ | `910d250`, `273e0b9`, `da7e0cb`, `fd83039` |
 | 8e-i..iii | Notation + tempo edit commands | ✅ | `6f428ac`, later, `5b0d32e` |
 | 8f-i | ChordNote + GraceNote identity | ✅ | `1b59fd1` |
-| **8f-ii** | **Selection representation** | ⬜ **next** | — |
+| **8f-ii** | **Selection representation** | ✅ | this increment |
 | 8g | Clipboard, cut/copy/paste | ⬜ | — |
 | 8h | Measure insert/delete + node-timeline edit commands | ⬜ | — |
 | 9 | Validation service | ⬜ | — |
 
 CHECKLIST.md M02 boxes remaining: "Command and selection model" (still
-unchecked — 8f-ii + 8g/8h outstanding), Validation service, Acceptance
+unchecked — 8g/8h outstanding), Validation service, Acceptance
 criteria, Test focus, top-level "Milestone 02 complete".
 
-## Phase 8f-ii: Selection representation — full contract
+## Selection API (completed — 8f-ii)
 
-### Locked design (Adam's rulings)
+`Selection` (`selection.hpp`) is a `std::variant` of seven non-empty
+homogeneous deduplicated set arms — notehead, chord, full-measure, arbitrary
+range, node, connector, insertion caret — each carrying per-item scope with
+no shared "scope" field across kinds. `validate_selection(const Project&,
+const Selection&)` is a separate free function in `selection.hpp`.
 
-A `Selection` is a `std::variant` of **non-empty homogeneous SETS OF SCOPED
-ITEMS**, not one shared scope plus payload. The variant arm enforces
-homogeneity; each set is non-empty and deduplicated. Each item carries only
-its applicable scope — there is no one "scope" shared across all kinds.
+**8g clipboard commands will need:**
+- `VoiceContent::position_of_event(NotationEntityId)` — reverse identity
+  lookup; handles ChordNote and GraceNote principal chains with dangling/
+  cycle guards.
+- `TrackLane::total_length()` — deterministic max extent across staves/
+  voices (caret end-of-lane boundary).
 
-**Variant arms and their item shapes:**
-
-| Kind | Shape |
-|---|---|
-| notehead | `NodeId`, `TrackId`, `StaveId`, `Voice`, `NotationEntityId` |
-| chord | `NodeId`, `TrackId`, `StaveId`, `Voice`, top-level Chord `NotationEntityId` |
-| full measure | `NodeId`, `TrackId`, `StaveId`, ordinal measure index |
-| arbitrary range | `NodeId`, `TrackId`, `StaveId`, `Voice`, raw `MusicalSpan` |
-| node | `NodeId` |
-| connector | owning `NodeId`, `ConnectorId` (input or output) |
-| insertion caret | `NodeId`, `TrackId`, `StaveId`, `Voice`, `Rational` position |
-
-The variant arms enforce homogeneity — a mixed notehead+measure selection is
-rejected. This supports aligned selections across tracks/staves/voices and
-multi-node selections without Cartesian ambiguity.
-
-**Key rules (all locked):**
-
-- **Snapshot value + separate validator:** `Selection` validates only intrinsic
-  structure. `validate_selection(const Project&, const Selection&)` is a
-  separate free function — consistent with the existing
-  `notation_validation.hpp` pattern.
-- **Voice-scoped identity:** every item carries its full `(NodeId, TrackId,
-  StaveId, Voice)` scope. `NotationEntityId` uniqueness is voice-scoped only,
-  so id-based selection MUST carry full scope to be unambiguous.
-- **Notehead = Note/ChordNote/GraceNote** but NOT Rest or top-level Chord.
-  Notehead selection IDs must resolve to a notehead entity — rests and
-  top-level chords are excluded.
-- **Chord IDs must be top-level Chord entities** (the Chord's own
-  `NotationEntityId`, not a `ChordNote`'s id).
-- **Measure indexes:** `MeasureMap::measure_index_at` returns `nullopt` in the
-  pickdown region, so a measure-index selection cannot name pickdown material.
-  Document that 8h invalidates indices when it adds measure insert/delete.
-- **Range stores raw `MusicalSpan`** — recompute region classification via
-  `NodeTimeline::classify(MusicalSpan)` on demand; do not cache a stale
-  `SpanClassification`. Range CAN name pickdown material.
-- **Caret positions:** legal positions are event boundaries ∪
-  `TrackLane::total_length()`, so position 0 is always valid.
-- **Archived tracks invalid:** selection on an archived `TrackId` is rejected.
-- **Route-segment:** DEFERRED to M06 (see deferrals).
-- **Staff-focus:** DROPPED as a selection kind.
-
-### Prerequisite for 8f-ii: `VoiceContent::position_of_event`
-
-The domain today has `VoiceContent::find_event_index_at(Rational)` but no
-reverse lookup by `NotationEntityId`. Add a **`const`** `position_of_event`
-query (not a mutator) — this is the bridge 8g needs to turn a selection into
-command targets.
-
-### M03 round-trip obligation
-
-`ChordNote::id` and `GraceNote::id` (added in 8f-i) are load-bearing fields.
-A serializer that drops or regenerates them silently breaks every note-head
-and grace-note selection and every clipboard identity remapping.
+1335 tests (debug + ASan/UBSan clean). Deferrals unchanged (see below).
 
 ## Remaining roadmap: 8g → 8h → 9
 

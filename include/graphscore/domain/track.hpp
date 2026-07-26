@@ -67,6 +67,14 @@ class TrackLane {
     return staves_.size();
   }
 
+  // The maximum VoiceContent::total_length() across every stave and
+  // voice in this lane, or Rational(0) if no staves exist. The result
+  // is deterministic: computing a max is invariant under iteration
+  // order of the staves_ unordered_map. This is the lane-extent
+  // position used by caret validation (Selection contract: legal caret
+  // positions are event boundaries ∪ TrackLane::total_length()).
+  [[nodiscard]] Rational total_length() const;
+
   // Every stave id currently holding a StaveVoices entry, in unspecified
   // order. Used to enumerate a lane's staves, e.g. for referential
   // validation across every stave/voice.

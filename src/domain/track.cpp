@@ -3,6 +3,7 @@
 #include <graphscore/domain/track.hpp>
 
 #include <algorithm>
+#include <cassert>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -21,6 +22,21 @@ const StaveVoices* TrackLane::stave(StaveId stave_id) const {
 
 void TrackLane::ensure_stave(StaveId stave_id) {
   staves_.try_emplace(stave_id);
+}
+
+Rational TrackLane::total_length() const {
+  Rational max_len(0);
+  for (const auto& entry : staves_) {
+    const StaveVoices& sv = entry.second;
+    for (std::uint8_t v = Voice::kMin; v <= Voice::kMax; ++v) {
+      const std::optional<Voice> voice_opt = Voice::create(v);
+      assert(voice_opt.has_value());
+      const Rational len = sv.voice(*voice_opt).total_length();
+      if (len > max_len)
+        max_len = len;
+    }
+  }
+  return max_len;
 }
 
 std::vector<StaveId> TrackLane::stave_ids() const {

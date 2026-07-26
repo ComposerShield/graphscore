@@ -173,6 +173,63 @@ std::optional<std::size_t> VoiceContent::find_event_index_at(
   return index;
 }
 
+std::optional<Rational> VoiceContent::position_of_event(
+    NotationEntityId id) const {
+  // Resolve through grace-group indirection with cycle detection.
+  // A well-formed principal_event points to a top-level event or
+  // ChordNote and resolves in one hop.  Malformed data can chain
+  // GraceNote → GraceNote principals; this loop follows the chain
+  // until it reaches a top-level event / ChordNote, hits a dangling
+  // reference, or detects a repeated principal (cycle).  There is
+  // no fixed depth cap: any finite acyclic chain, however long, is
+  // resolved.
+  NotationEntityId              resolved = id;
+  std::vector<NotationEntityId> visited;
+
+  while (true) {
+    // Scan top-level events and embedded ChordNotes.
+    Rational cumulative(0);
+    for (std::size_t i = 0; i < events_.size(); ++i) {
+      const VoiceEvent& event = events_[i];
+      if (event_id(event) == resolved)
+        return cumulative;
+
+      if (const auto* chord = std::get_if<Chord>(&event)) {
+        for (const ChordNote& cn : chord->notes) {
+          if (cn.id == resolved)
+            return cumulative;
+        }
+      }
+
+      cumulative = cumulative + event_duration(event).resolved();
+    }
+
+    // Not found directly — try grace groups.
+    bool advanced = false;
+    for (const GraceGroup& g : grace_groups_) {
+      for (const GraceNote& gn : g.notes) {
+        if (gn.id == resolved) {
+          // Cycle detection: if we have already followed this
+          // principal_event, the grace chain is malformed.
+          if (std::find(visited.begin(), visited.end(), g.principal_event) !=
+              visited.end())
+            return std::nullopt;
+          visited.push_back(g.principal_event);
+
+          resolved = g.principal_event;
+          advanced = true;
+          break;
+        }
+      }
+      if (advanced)
+        break;
+    }
+
+    if (!advanced)
+      return std::nullopt;
+  }
+}
+
 Result VoiceContent::insert_event(Rational position, VoiceEvent event,
                                   Rational target_length) {
   if (const auto* chord = std::get_if<Chord>(&event)) {

@@ -22,6 +22,7 @@ add_executable(graphscore_domain_test
   pickdown_ownership_test.cpp
   project_track_test.cpp
   route_geometry_test.cpp
+  selection_test.cpp
   tempo_lane_test.cpp
   track_test.cpp
   vertical_transition_test.cpp

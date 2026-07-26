@@ -53,6 +53,7 @@ add_library(graphscore_domain STATIC
   reset_route_command.cpp
   restore_track_command.cpp
   route_geometry.cpp
+  selection.cpp
   set_custom_route_command.cpp
   set_event_command.cpp
   set_input_connector_name_command.cpp
