@@ -5,10 +5,10 @@ completed phase, remove or compress completed detail so the file gets SMALLER,
 not larger. Git history preserves old detail. It should contain only what the
 next agent needs for the next task plus active downstream deferrals.
 
-**Status at this doc:** Phases 1–8f-ii complete and committed. **8g
-(clipboard, cut/copy/paste) is next.**
+**Status at this doc:** Phases 1–8g-i complete and committed. **8g-ii
+(paste + cut commands) is next.**
 
-- Tests at this increment: 1335, 100% pass (debug + ASan/UBSan clean)
+- Tests at this increment: 1400, 100% pass (debug + ASan/UBSan clean)
 
 ## Milestone scope
 
@@ -55,39 +55,54 @@ assistance. Stage by explicit paths.
 | 8d-i..iv | Add/remove graph entities | ✅ | `910d250`, `273e0b9`, `da7e0cb`, `fd83039` |
 | 8e-i..iii | Notation + tempo edit commands | ✅ | `6f428ac`, later, `5b0d32e` |
 | 8f-i | ChordNote + GraceNote identity | ✅ | `1b59fd1` |
-| **8f-ii** | **Selection representation** | ✅ | this increment |
-| 8g | Clipboard, cut/copy/paste | ⬜ | — |
+| 8f-ii | Selection representation | ✅ | `2372330` |
+| **8g-i** | **Clipboard fragment + copy extraction** | ✅ | this increment |
+| 8g-ii | Paste + cut commands | ⬜ | — |
+| 8g-iii | Node copy/paste id remapping | ⬜ | — |
 | 8h | Measure insert/delete + node-timeline edit commands | ⬜ | — |
 | 9 | Validation service | ⬜ | — |
 
 CHECKLIST.md M02 boxes remaining: "Command and selection model" (still
-unchecked — 8g/8h outstanding), Validation service, Acceptance
+unchecked — 8g-ii/8g-iii/8h outstanding), Validation service, Acceptance
 criteria, Test focus, top-level "Milestone 02 complete".
 
-## Selection API (completed — 8f-ii)
+## Clipboard API (completed — 8g-i); what 8g-ii builds on
 
-`Selection` (`selection.hpp`) is a `std::variant` of seven non-empty
-homogeneous deduplicated set arms — notehead, chord, full-measure, arbitrary
-range, node, connector, insertion caret — each carrying per-item scope with
-no shared "scope" field across kinds. `validate_selection(const Project&,
-const Selection&)` is a separate free function in `selection.hpp`.
+`notation_fragment.hpp` — `NotationFragment` (validated `static create`,
+private ctor) + `FragmentExtraction extract_fragment(const Project&, const
+Selection&)`, a pure non-mutating query over `FullMeasureSet` and
+`ArbitraryRangeSet`.
 
-**8g clipboard commands will need:**
-- `VoiceContent::position_of_event(NotationEntityId)` — reverse identity
-  lookup; handles ChordNote and GraceNote principal chains with dangling/
-  cycle guards.
-- `TrackLane::total_length()` — deterministic max extent across staves/
-  voices (caret end-of-lane boundary).
+Facts 8g-ii must honor:
+- **Every fragment id is already fresh and source-disjoint.** Paste must
+  STILL remap to new ids, so pasting one fragment twice cannot collide.
+- Parts are keyed `(track_ordinal, stave_ordinal, voice)`; ordinals resolve
+  through `Track::index()` and `Track::layout().staves()`. Paste maps
+  ordinals onto destination tracks/staves — never by stored id.
+- Every part exactly tiles `[0, span_length())`; empty/short source voices
+  are rest-filled. A destination write is therefore always a full-span
+  replacement, not a sparse merge.
+- Measure/clef context is **informational**. `MeasureMap` has no mutators
+  until 8h, so paste must not rewrite destination signatures.
+- `PedalSpan` is TrackLane/stave-scoped (not per-voice) and stored relative.
+- Copy-side clipping is R1–R12 in the header. Paste owns the *reconnection*
+  half: clipping/reconnection into an occupied destination range.
+- Reuse `VoiceContent::insert_event`/`remove_event`/`replace_event` and
+  `normalize` for destination rest normalization — they are transactional and
+  fail atomically. Do not hand-roll rest math.
 
-1335 tests (debug + ASan/UBSan clean). Deferrals unchanged (see below).
+## Remaining roadmap: 8g-ii → 8g-iii → 8h → 9
 
-## Remaining roadmap: 8g → 8h → 9
-
-- **8g — Clipboard and cut/copy/paste:** relative positions, staff/voice
-  mapping, no source UUIDs; identity remapping + destination rest
-  normalization; boundary-crossing clip/reconnection rules for notes, ties,
-  slurs, tuplets, hairpins, pedal spans, dynamics, clef/key/time changes;
-  node copy/paste id remapping (duplicate with **fresh** ids).
+- **8g-ii — Paste and cut commands:** reversible `PasteFragmentCommand` and
+  cut, whole-container snapshot for undo (the 8d-iv/8e-i precedent), identity
+  remapping to fresh ids, destination rest normalization, and **no music
+  modified outside the destination range**. Cut = extract + delete-range in
+  one transaction. Must handle paste into an occupied range and paste at a
+  destination shorter than the fragment.
+- **8g-iii — Node copy/paste:** duplicate a node with fresh ids for the node,
+  its connectors, lanes, and every notation entity; intra-selection connector
+  edges remapped, edges leaving the selection dropped. Never duplicates a
+  stable UUID.
 - **8h — Measure insert/delete + node-timeline edit commands:** `MeasureMap`
   has no mutator at all — needs new domain API + atomic cascade across every
   voice in every track's lane. Also owns (per Adam's post-8e-iii ruling) the

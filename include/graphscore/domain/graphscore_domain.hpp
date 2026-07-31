@@ -39,6 +39,7 @@
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/node_timeline.hpp>
 #include <graphscore/domain/notation_event.hpp>
+#include <graphscore/domain/notation_fragment.hpp>
 #include <graphscore/domain/notation_markings.hpp>
 #include <graphscore/domain/notation_playback.hpp>
 #include <graphscore/domain/notation_validation.hpp>

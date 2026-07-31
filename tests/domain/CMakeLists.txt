@@ -14,6 +14,7 @@ add_executable(graphscore_domain_test
   midi_ownership_test.cpp
   node_timeline_test.cpp
   notation_event_test.cpp
+  notation_fragment_test.cpp
   notation_markings_test.cpp
   notation_playback_test.cpp
   notation_validation_test.cpp

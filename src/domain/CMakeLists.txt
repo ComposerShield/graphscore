@@ -31,6 +31,7 @@ add_library(graphscore_domain STATIC
   node.cpp
   node_timeline.cpp
   notation_event.cpp
+  notation_fragment.cpp
   notation_markings.cpp
   notation_playback.cpp
   notation_validation.cpp
