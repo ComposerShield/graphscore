@@ -1,7 +1,7 @@
 ---
 description: Use for read-only research and reconnaissance — locating code, understanding structure, investigating conventions in this repo, and answering questions before implementation work is dispatched. This agent never modifies anything.
 mode: subagent
-model: deepseek/deepseek-v4-pro
+model: openai/gpt-5.6-luna
 variant: medium
 color: "#2ECC71"
 permission:

@@ -1,8 +1,8 @@
 ---
-description: Worker agent powered by GPT-5.6 Terra (high). Use for hands-on implementation tasks — writing code, fixing bugs, refactoring, running commands, and testing. This agent is faster and stronger than the default worker but more expensive.
+description: Worker agent powered by GPT-5.6 Sol (medium). Use for hands-on implementation tasks — writing code, fixing bugs, refactoring, running commands, and testing.
 mode: subagent
-model: openai/gpt-5.6-terra
-variant: high
+model: openai/gpt-5.6-sol
+variant: medium
 color: "#E67E22"
 permission:
   edit:
