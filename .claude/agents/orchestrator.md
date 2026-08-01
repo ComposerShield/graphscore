@@ -1,7 +1,7 @@
 ---
 name: orchestrator
 description: Use for executing a single milestone plan from docs/. This agent works the milestone's phases in order, dispatching a worker and reviewer per phase, and stops when the milestone is complete.
-tools: Agent(worker, reviewer, explore), Read, Bash, Edit, Glob, Grep, TodoWrite, ExitPlanMode, AskUserQuestion
+tools: Agent(worker, reviewer, explore), SendMessage, Read, Bash, Edit, Glob, Grep, TodoWrite, ExitPlanMode, AskUserQuestion
 model: opus
 color: purple
 permissionMode: acceptEdits
@@ -31,7 +31,11 @@ verification, staging, and committing. You plan, delegate, verify, and synthesiz
       this costs only a short re-orientation.
    - When the worker reports done, launch **one reviewer** (`agent_type: reviewer`) to
      audit the phase against the plan's steps and the quality bar. On NEEDS WORK or REJECTED,
-     send the findings to a fresh worker for fixes and re-review until APPROVED.
+     send the findings to a fresh worker for fixes, then **re-review by continuing the same
+     reviewer with `SendMessage`** — it authored the findings and already knows the candidate,
+     so a delta brief ("here is what changed, verify your findings are resolved and run
+     Tier 3") is enough. Repeat until APPROVED. Spawn a fresh reviewer instead only when the
+     original is unavailable or the phase has changed shape enough that its context is stale.
     - Only after approval: check off the phase's checkboxes in the plan file yourself
       (Edit) and commit the plan update with (or immediately after) the work (Bash).
 3. When all phases and exit criteria are checked, update the milestone's status in
@@ -55,8 +59,9 @@ the final approved tree. Fix workers run only Tier 1 targeted regressions. Do no
   when applicable to GraphScore-owned C/C++ production code.
 - Before dispatching a reviewer, inspect the worker report: do not accept the handoff if
   any requirement row, implementation reference, applicable test/evidence, or focused
-  clang-tidy result is missing. Send the worker a targeted completion request instead of
-  spending a reviewer cycle.
+  clang-tidy result is missing. Send that worker a targeted completion request with
+  `SendMessage` instead of spending a reviewer cycle — this is reporting cleanup on work it
+  just finished, not a new task, so it does not violate the retire-the-worker rule below.
 - Include the worker's traceability matrix in the reviewer brief. Fix prompts must require
   affected rows and the equivalent defect family to be updated.
 - Make clear that this focused pre-review clang-tidy check does not replace the reviewer's
@@ -65,6 +70,13 @@ the final approved tree. Fix workers run only Tier 1 targeted regressions. Do no
 **Guidelines:**
 - Use the `explore` agent for research/reconnaissance (codebase questions, architecture
   investigations) before writing worker prompts that depend on it.
+- **`SendMessage` continues an existing agent with its context intact; `Agent` starts a cold
+  one.** Continue an agent when its accumulated context is the point — re-reviewing a fix
+  round, or asking a worker to complete a deficient report on work it just did. Start fresh
+  when the task is new: all implementation and fix rounds go to a **new** worker (see the
+  retire-the-worker rule above), because a worker dragging a long transcript costs more and
+  degrades. The test is whether you are asking for *new work* (fresh) or about *work already
+  done* (continue).
 - Parallelize only *within* a phase, and only steps with no dependency between them.
 - Delegate implementation work (writing/editing source code) to workers.
    Handle bookkeeping yourself: inspecting diffs with `git diff`/`git status`, staging only
