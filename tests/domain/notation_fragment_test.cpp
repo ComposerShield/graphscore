@@ -331,6 +331,36 @@ TEST(NotationFragmentTest, CreateRejectsOutOfRangeStaveOrdinal) {
                    .has_value());
 }
 
+TEST(NotationFragmentTest, CreateRejectsOutOfRangePedalSpanOrdinal) {
+  std::vector<FragmentVoicePart> parts{
+      FragmentVoicePart{0, 0, kVoice1, rest_filled(Rational(1))}};
+  std::vector<FragmentPedalSpan> pedal_spans{
+      FragmentPedalSpan{0, 1, Rational(0), rat(1, 2)}};
+  EXPECT_FALSE(NotationFragment::create(Rational(1), {FragmentTrackShape{1}},
+                                        parts, pedal_spans, {}, {}, {})
+                   .has_value());
+}
+
+TEST(NotationFragmentTest, CreateRejectsOutOfRangeClefChangeOrdinal) {
+  std::vector<FragmentVoicePart> parts{
+      FragmentVoicePart{0, 0, kVoice1, rest_filled(Rational(1))}};
+  std::vector<FragmentClefChange> clef_changes{
+      FragmentClefChange{1, 0, rat(1, 4), Clef::kBass}};
+  EXPECT_FALSE(NotationFragment::create(Rational(1), {FragmentTrackShape{1}},
+                                        parts, {}, clef_changes, {}, {})
+                   .has_value());
+}
+
+TEST(NotationFragmentTest, CreateRejectsOutOfRangeStaveContextOrdinal) {
+  std::vector<FragmentVoicePart> parts{
+      FragmentVoicePart{0, 0, kVoice1, rest_filled(Rational(1))}};
+  std::vector<FragmentStaveContext> stave_contexts{
+      FragmentStaveContext{0, 1, Clef::kTreble}};
+  EXPECT_FALSE(NotationFragment::create(Rational(1), {FragmentTrackShape{1}},
+                                        parts, {}, {}, stave_contexts, {})
+                   .has_value());
+}
+
 TEST(NotationFragmentTest, CreateRejectsDuplicatePart) {
   std::vector<FragmentVoicePart> parts{
       FragmentVoicePart{0, 0, kVoice1, rest_filled(Rational(1))},
@@ -589,12 +619,6 @@ TEST(NotationFragmentTest, ExtractRejectsMixedNodes) {
   second->lane(fx.track_a)->ensure_stave(fx.stave_a_treble);
   second->lane(fx.track_a)->stave(fx.stave_a_treble)->voice(kVoice1) =
       build_voice({make_note(pitch(Letter::kC), whole())});
-  second->lane(fx.track_a)->stave(fx.stave_a_treble)->voice(kVoice2) =
-      rest_filled(Rational(1));
-  second->lane(fx.track_a)->stave(fx.stave_a_treble)->voice(kVoice3) =
-      rest_filled(Rational(1));
-  second->lane(fx.track_a)->stave(fx.stave_a_treble)->voice(kVoice4) =
-      rest_filled(Rational(1));
 
   const Selection selection = *FullMeasureSet::create(
       {FullMeasureItem{fx.node_id, fx.track_a, fx.stave_a_treble, 0},

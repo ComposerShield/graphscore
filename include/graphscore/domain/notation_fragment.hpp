@@ -296,7 +296,9 @@ struct FragmentExtraction {
 //   - FullMeasureSet: every item shares one measure_index; the copied
 //     span is [measure_start(index), measure_start(index) +
 //     measure_length(index)); all four voices of each selected stave are
-//     copied.
+//     copied -- an unpopulated or shorter-than-span voice is rest-filled
+//     to the span, not rejected (a stave normally holds four voices of
+//     which only one is written).
 //   - ArbitraryRangeSet: every item has an identical span, and that span
 //     satisfies 0 <= start < end <= NodeTimeline::node_end(); only the
 //     named (stave, voice) pairs are copied.

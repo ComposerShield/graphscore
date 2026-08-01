@@ -20,6 +20,7 @@ add_library(graphscore_domain STATIC
   connect_command.cpp
   connector.cpp
   convert_event_to_rest_command.cpp
+  cut_fragment_command.cpp
   disconnect_command.cpp
   event_queue.cpp
   event_registry.cpp
@@ -35,6 +36,7 @@ add_library(graphscore_domain STATIC
   notation_markings.cpp
   notation_playback.cpp
   notation_validation.cpp
+  paste_fragment_command.cpp
   pickdown_bound_oracle.cpp
   pickdown_coordinates.cpp
   pickdown_ownership.cpp

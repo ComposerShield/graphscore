@@ -25,6 +25,7 @@
 #include <graphscore/domain/connect_command.hpp>
 #include <graphscore/domain/connector.hpp>
 #include <graphscore/domain/convert_event_to_rest_command.hpp>
+#include <graphscore/domain/cut_fragment_command.hpp>
 #include <graphscore/domain/disconnect_command.hpp>
 #include <graphscore/domain/event_listener.hpp>
 #include <graphscore/domain/event_occurrence.hpp>
@@ -43,6 +44,7 @@
 #include <graphscore/domain/notation_markings.hpp>
 #include <graphscore/domain/notation_playback.hpp>
 #include <graphscore/domain/notation_validation.hpp>
+#include <graphscore/domain/paste_fragment_command.hpp>
 #include <graphscore/domain/pickdown_bound_oracle.hpp>
 #include <graphscore/domain/pickdown_coordinates.hpp>
 #include <graphscore/domain/pickdown_ownership.hpp>
