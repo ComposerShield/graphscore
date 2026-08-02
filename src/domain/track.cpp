@@ -44,6 +44,8 @@ std::vector<StaveId> TrackLane::stave_ids() const {
   ids.reserve(staves_.size());
   for (const auto& entry : staves_)
     ids.push_back(entry.first);
+  std::ranges::sort(ids, {},
+                    [](const StaveId id) { return id.value().bytes(); });
   return ids;
 }
 

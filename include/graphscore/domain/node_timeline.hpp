@@ -128,6 +128,10 @@ class NodeTimeline {
 
   [[nodiscard]] const ClefLane* clef_lane(StaveId stave_id) const;
 
+  // Stable enumeration for validation; order is UUID-lexicographic rather
+  // than the unspecified order of the internal hash table.
+  [[nodiscard]] std::vector<StaveId> clef_stave_ids() const;
+
   // Narrow clef-lane mutation entry points. Each resolves `stave_id` and
   // delegates to the corresponding ClefLane operation. A missing stave or
   // invalid lane edit fails without mutation.

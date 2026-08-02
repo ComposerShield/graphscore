@@ -2,8 +2,10 @@
 
 #include <graphscore/domain/event_registry.hpp>
 
+#include <algorithm>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace graphscore {
 
@@ -64,6 +66,19 @@ const EventDefinition* EventRegistry::find_by_name(
     const std::string& name) const {
   const auto it = name_to_id_.find(name);
   return it == name_to_id_.end() ? nullptr : find_by_id(it->second);
+}
+
+std::vector<EventDefinition> EventRegistry::definitions() const {
+  std::vector<EventDefinition> result;
+  result.reserve(events_.size());
+  for (const auto& [id, definition] : events_) {
+    static_cast<void>(id);
+    result.push_back(definition);
+  }
+  std::ranges::sort(result, {}, [](const EventDefinition& definition) {
+    return definition.id.value().bytes();
+  });
+  return result;
 }
 
 }  // namespace graphscore

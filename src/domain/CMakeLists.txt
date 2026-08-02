@@ -95,6 +95,7 @@ add_library(graphscore_domain STATIC
   tempo_lane.cpp
   track.cpp
   vertical_transition.cpp
+  validation_service.cpp
   voice_content.cpp
   weighted_selection.cpp
 )

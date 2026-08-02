@@ -30,6 +30,7 @@ add_executable(graphscore_domain_test
   tempo_lane_test.cpp
   track_test.cpp
   vertical_transition_test.cpp
+  validation_service_test.cpp
   voice_content_test.cpp
   voice_normalization_test.cpp
   weighted_selection_test.cpp

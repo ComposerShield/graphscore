@@ -75,9 +75,9 @@ class TrackLane {
   // positions are event boundaries ∪ TrackLane::total_length()).
   [[nodiscard]] Rational total_length() const;
 
-  // Every stave id currently holding a StaveVoices entry, in unspecified
-  // order. Used to enumerate a lane's staves, e.g. for referential
-  // validation across every stave/voice.
+  // Every stave id currently holding a StaveVoices entry, in
+  // UUID-lexicographic order. Used to enumerate a lane's staves, e.g. for
+  // referential validation across every stave/voice.
   [[nodiscard]] std::vector<StaveId> stave_ids() const;
 
   // Sustain-pedal spans for `stave_id`, or nullptr if none have been added.

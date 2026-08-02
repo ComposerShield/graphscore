@@ -2,6 +2,7 @@
 
 #include <graphscore/domain/node_timeline.hpp>
 
+#include <algorithm>
 #include <new>
 #include <optional>
 #include <stdexcept>
@@ -213,6 +214,18 @@ ClefLane* NodeTimeline::clef_lane(StaveId stave_id) {
 const ClefLane* NodeTimeline::clef_lane(StaveId stave_id) const {
   const auto it = clef_lanes_.find(stave_id);
   return it == clef_lanes_.end() ? nullptr : &it->second;
+}
+
+std::vector<StaveId> NodeTimeline::clef_stave_ids() const {
+  std::vector<StaveId> ids;
+  ids.reserve(clef_lanes_.size());
+  for (const auto& [id, lane] : clef_lanes_) {
+    static_cast<void>(lane);
+    ids.push_back(id);
+  }
+  std::ranges::sort(ids, {},
+                    [](const StaveId id) { return id.value().bytes(); });
+  return ids;
 }
 
 Result NodeTimeline::add_clef_change(const StaveId  stave_id,

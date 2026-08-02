@@ -110,6 +110,11 @@ class Node {
     return lanes_.size();
   }
 
+  // Every actual lane key, including keys that do not resolve to a current
+  // active or archived track, in UUID-lexicographic order. This is a
+  // read-only malformed-state inspection surface for validation.
+  [[nodiscard]] std::vector<TrackId> lane_ids() const;
+
   [[nodiscard]] bool has_timeline() const noexcept {
     return timeline_.has_value();
   }

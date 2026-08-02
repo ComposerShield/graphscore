@@ -96,9 +96,10 @@ Implement the toolkit-independent source of truth for notation, graph structure,
 
 ### Validation service
 
-- [ ] Fast incremental validation for editor feedback and complete validation for save/export.
-- [ ] Diagnostics carry stable entity IDs, severity, machine-readable code, and user-facing text.
-- [ ] Validate rhythmic completeness, UUID uniqueness, references, track alignment, signature legality, graph edge integrity, event-name uniqueness, and connector cardinality.
+- [x] Fast incremental validation for editor feedback and complete validation for save/export.
+- [x] Diagnostics carry stable entity IDs, severity, machine-readable code, and user-facing text.
+- [x] Validate rhythmic completeness, UUID uniqueness, references, track alignment, signature legality, graph edge integrity, event-name uniqueness, and connector cardinality.
+- [x] **Validation service phase (done, reviewer-approved).** Delivered the public complete and scoped incremental validation service with typed, context-scoped deterministic diagnostics and a cache replacement/prior-scope contract. Validation covers rhythmic completeness, UUID uniqueness, references, track alignment, signature legality, graph edge integrity, event-name uniqueness, and connector cardinality, including archived data and orphan handling. 30 focused `ValidationService` cases; 1654 tests total. Reviewer-approved exact-tree evidence: clean debug build and 1654/1654 tests, lint, all seven architecture audits, canonical clang-tidy 18, and ASan/UBSan 1654/1654.
 
 ## Acceptance Criteria
 
@@ -119,5 +120,5 @@ Implement the toolkit-independent source of truth for notation, graph structure,
 - [ ] Deterministic generated edit sequences checked against model invariants.
 - [ ] UUID remapping, stale selection, span repair, and cross-measure mutation tests.
 - [ ] Whole-measure and arbitrary-range clipboard round trips across voices/staves, including boundary-crossing notation and paste into occupied destination ranges.
-- [ ] Incremental diagnostics compared with complete validation results.
+- [x] Incremental diagnostics compared with complete validation results.
 - [ ] Event state-machine, same-sample vertical-cycle prevention, pickdown-bound proof-oracle, MIDI ownership, and lifecycle clearing tests.

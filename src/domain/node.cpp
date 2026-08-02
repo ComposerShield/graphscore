@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace graphscore {
 
@@ -31,6 +32,18 @@ void Node::ensure_lane(TrackId track_id) {
 
 void Node::remove_lane(TrackId track_id) noexcept {
   lanes_.erase(track_id);
+}
+
+std::vector<TrackId> Node::lane_ids() const {
+  std::vector<TrackId> ids;
+  ids.reserve(lanes_.size());
+  for (const auto& [id, lane] : lanes_) {
+    static_cast<void>(lane);
+    ids.push_back(id);
+  }
+  std::ranges::sort(ids, {},
+                    [](const TrackId id) { return id.value().bytes(); });
+  return ids;
 }
 
 ConnectorId Node::add_input(std::string name) {

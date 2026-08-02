@@ -2,6 +2,18 @@
 
 cmake_minimum_required(VERSION 3.25)
 
+# CMP0156 de-duplicates libraries based on linker capabilities, but only
+# CMP0179 guarantees that the first static-library occurrence is retained.
+# Enable them together so CMake 3.29-3.30 cannot change direct-link ordering.
+set(GRAPHSCORE_HAS_ORDERED_STATIC_LIBRARY_DEDUPLICATION FALSE)
+if (POLICY CMP0156 AND POLICY CMP0179)
+  cmake_policy(SET CMP0156 NEW)
+  cmake_policy(SET CMP0179 NEW)
+  set(GRAPHSCORE_HAS_ORDERED_STATIC_LIBRARY_DEDUPLICATION TRUE)
+elseif (POLICY CMP0156)
+  cmake_policy(SET CMP0156 OLD)
+endif()
+
 project(GraphScore
   VERSION 0.1.0
   DESCRIPTION "Graph-based adaptive music notation authoring and runtime"

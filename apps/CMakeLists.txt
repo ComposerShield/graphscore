@@ -53,3 +53,22 @@ target_link_libraries(graphscore_plugin_scanner
   PRIVATE
     graphscore_vst3_host
 )
+
+# CMake 3.25-3.30 cannot both de-duplicate static libraries and guarantee that
+# the first occurrence is retained. Preserve repeated direct-edge ordering on
+# those versions while suppressing only the Apple linker's duplicate warning.
+if (APPLE AND NOT GRAPHSCORE_HAS_ORDERED_STATIC_LIBRARY_DEDUPLICATION)
+  include(CheckLinkerFlag)
+  check_linker_flag(CXX "LINKER:-no_warn_duplicate_libraries"
+    GRAPHSCORE_LINKER_SUPPORTS_NO_WARN_DUPLICATE_LIBRARIES)
+  if (NOT GRAPHSCORE_LINKER_SUPPORTS_NO_WARN_DUPLICATE_LIBRARIES)
+    message(FATAL_ERROR
+      "CMake 3.25-3.30 requires an Apple linker with "
+      "-no_warn_duplicate_libraries; upgrade CMake to 3.31 or newer")
+  endif()
+
+  target_link_options(graphscore_writer_app PRIVATE
+    "LINKER:-no_warn_duplicate_libraries")
+  target_link_options(graphscore_plugin_scanner PRIVATE
+    "LINKER:-no_warn_duplicate_libraries")
+endif()

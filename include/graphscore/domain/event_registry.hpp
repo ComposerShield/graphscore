@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <graphscore/core/graphscore_core.hpp>
 
@@ -53,6 +54,11 @@ class EventRegistry {
       const std::string& name) const;
 
   [[nodiscard]] std::size_t size() const noexcept { return events_.size(); }
+
+  // Returns every definition in stable UUID order. Validation and
+  // persistence need complete registry traversal without exposing either
+  // internal hash table for mutation.
+  [[nodiscard]] std::vector<EventDefinition> definitions() const;
 
  private:
   std::unordered_map<EventId, EventDefinition> events_;
