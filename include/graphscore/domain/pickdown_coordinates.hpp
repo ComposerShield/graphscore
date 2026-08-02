@@ -80,10 +80,24 @@ namespace graphscore {
 // create or mutate a NodeTimeline today; pickdown_coordinates_test.cpp
 // pins this with both NodeTimeline::create()'s existing empty-measures
 // rejection and an explicit check that pickdown mutation never changes
-// measures().measure_count(). A future phase that adds a measure-insert/
-// -delete mutator (docs/plan/02-domain-model.md's Phase 8 "atomic
-// measure insert/delete") must preserve this invariant itself when it
-// lands -- there is no separate guard here for it to inherit.
+// measures().measure_count(). MeasureMap::remove_measure
+// (measure_map.cpp) -- landed in Phase 8h-i -- now carries the
+// container-level half of this guard itself: it refuses to remove a
+// map's last remaining measure, so a MeasureMap can never reach zero
+// measures through its own mutator. The residual obligation is at the
+// NodeTimeline level: NodeTimeline still exposes no measure-mutating
+// entry point (mutable access to its MeasureMap remains private), so the
+// invariant continues to hold today by construction alone. Phase 8h-ii's
+// NodeTimeline-level measure-removal entry point must route through
+// MeasureMap::remove_measure (inheriting its non-empty guard) rather than
+// reaching into measures_ directly, and must not open any other path that
+// could leave a NodeTimeline with zero measures. This is not a
+// theoretical concern: two live call sites already assume at least one
+// measure unconditionally -- pickdown_coordinate_at_position's internal
+// helper (pickdown_coordinates.cpp) and NodeTimeline::set_pickdown
+// (node_timeline.cpp), both computing measure_count() - 1 on an unsigned
+// std::size_t -- so a future path that let measure_count() reach 0 would
+// underflow both, not merely violate this comment.
 struct PickdownCoordinate {
   Rational                   position;
   Rational                   offset;

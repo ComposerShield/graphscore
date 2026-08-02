@@ -99,13 +99,16 @@ struct PasteAnchor {
 // freshly regenerated ids.
 //
 // Clef changes are NOT applied by this increment. The fragment carries
-// them (NotationFragment::clef_changes()), but ClefLane exposes only
-// add_change with no removal, so applying a fragment's clef changes could
-// neither clear a conflicting destination change nor be undone without a
-// mutator this increment does not own (per the milestone plan, clef-change
-// commands are Phase 8h). The same deferral applies to
-// measure_contexts()/stave_contexts(): they remain informational only,
-// never applied to the destination.
+// them (NotationFragment::clef_changes()), and ClefLane and MeasureMap now
+// have the container-level mutators an application would need -- add_change,
+// remove_change, move_change, set_change (Phase 8h-i) -- but wiring paste
+// to actually apply a fragment's clef and signature context to the
+// destination is command-level work this increment does not own: Phase
+// 8h-iv wires paste to apply copied clef and signature context, once
+// 8h-ii/8h-iii land the clef-change and time/key-signature commands those
+// applications compose with. Until then, measure_contexts()/
+// stave_contexts()/clef_changes() remain informational only, never
+// applied to the destination.
 //
 // Reversibility: whole-lane snapshot, the 8d-iv/8e-i precedent. Every
 // TrackLane the paste actually touches is snapshotted by value before any

@@ -27,6 +27,16 @@ struct ClefChange {
 // node therefore owns an independent ClefLane, starting from its
 // StaveDefinition default clef, kept in a NodeTimeline collection keyed by
 // StaveId (mirroring the existing Node lane collection keyed by TrackId).
+//
+// No ClefChange can ever exist at a negative position: add_change and
+// move_change are the only paths that insert into changes_, and both
+// reject a negative position outright (add_change rejects position,
+// move_change rejects to); remove_change and set_change never write a
+// position at all. remove_change/set_change therefore need no
+// negative-position check of their own -- a lookup at a negative position
+// necessarily misses. This is a structural invariant of this class, so a
+// future deserializing constructor (e.g. Milestone 03 persistence) that
+// populates changes_ by any other path must preserve it itself.
 class ClefLane {
  public:
   explicit ClefLane(Clef default_clef) noexcept : default_clef_(default_clef) {}
@@ -40,6 +50,25 @@ class ClefLane {
   [[nodiscard]] const std::vector<ClefChange>& changes() const noexcept {
     return changes_;
   }
+
+  // Removes the change recorded at exactly `position`. Fails with
+  // kInvalidArgument if no change is recorded there, leaving the lane
+  // unchanged.
+  [[nodiscard]] Result remove_change(Rational position);
+
+  // Moves the change recorded at exactly `from` to `to`, preserving its
+  // clef. Fails with kInvalidArgument if no change is recorded at `from`,
+  // if `to` is negative, or if a change is already recorded at `to`
+  // (checked after the `from` entry is notionally removed, so moving a
+  // change to its own position is not a self-conflict). Leaves the lane
+  // unchanged on failure.
+  [[nodiscard]] Result move_change(Rational from, Rational to);
+
+  // Replaces the clef of the change recorded at exactly `position`. Fails
+  // with kInvalidArgument if no change is recorded there, leaving the
+  // lane unchanged. Unlike add_change, this requires an existing change
+  // at `position` rather than rejecting one.
+  [[nodiscard]] Result set_change(Rational position, Clef clef);
 
   // The clef in effect at `position`: the most recent change at or before
   // `position`, or default_clef() if none has occurred yet.
