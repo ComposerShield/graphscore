@@ -5,67 +5,53 @@ completed phase, remove or compress completed detail so the file gets SMALLER,
 not larger. Git history preserves old detail. It should contain only what the
 next agent needs for the next task plus active downstream deferrals.
 
-## Status: PHASE 8g-ii COMPLETE, COMMITTED, REVIEWER-APPROVED
+## Status: PHASE 8g-iii COMPLETE, COMMITTED, REVIEWER-APPROVED
 
-Phases 1–8g-ii are complete and committed. Phase 8g-ii (paste + cut commands)
-is complete and reviewer-approved; its implementation and phase documentation
-were committed together. Consult git history for the commit identity if needed.
-Phase 8g-iii is next.
-
-Final exact-tree Tier 3 passed: warning-free debug build; 1481/1481 debug
-tests; lint; all seven architecture audits; canonical clang-tidy 18; and
-ASan/UBSan build plus 1481/1481 tests. TSan is not applicable because this
-phase adds no concurrent behavior. The phase adds 78 `ClipboardCommand` tests.
+Phases 1–8g-iii are complete and committed; 8h is next. 8g-iii
+(`DuplicateNodesCommand`, 25 new cases) is reviewer-approved. Final exact-tree
+Tier 3 passed: warning-free debug build, 1506/1506 tests, lint, all seven
+audits, clang-tidy 18, and ASan/UBSan (1506/1506). TSan N/A — no concurrency.
 
 ## Progress
 
 | # | Section | State |
 |---|---|---|
-| 1–8g-ii | Domain model through clipboard cut + paste commands | ✅ complete |
-| 8g-iii | Node copy/paste id remapping | ⬜ next |
-| 8h | Measure insert/delete + node-timeline edit commands | ⬜ |
+| 1–8g-iii | Domain model through clipboard and node duplication | ✅ complete |
+| 8h | Measure insert/delete + node-timeline edit commands | ⬜ next |
 | 9 | Validation service | ⬜ |
 
-The CHECKLIST.md “Command and selection model” box remains unchecked until
-8g-iii and 8h finish. Validation, Acceptance Criteria, Test Focus, and the
-top-level Milestone 02 box also remain unchecked.
+The CHECKLIST.md “Command and selection model” box remains unchecked until 8h
+finishes. Validation, Acceptance Criteria, Test Focus, and the top-level
+Milestone 02 box also remain unchecked.
 
-## Load-bearing clipboard facts
+## Load-bearing facts for 8h
 
-- `NotationFragment` is a validated value type; `extract_fragment` is a pure
-  copy query over full-measure and arbitrary-range selections. Copy-side rules
-  R1–R12 are documented in `notation_fragment.hpp`.
-- `PasteFragmentCommand` and `CutFragmentCommand` perform complete-span
-  replacement, including genuinely empty/no-stave destinations. They preserve
-  exact undo/redo, no-throw allocation/failure atomicity, and lifecycle/stale
-  atomicity across all affected lanes.
-- Every paste remaps event, note, grace-note, and marking identities again,
-  even though fragment identities are already source-disjoint.
-- Parts use `(track_ordinal, stave_ordinal, voice)` and map only referenced
-  coordinates; never use unordered `TrackLane::stave_ids()` for mapping.
-- Boundary handling is deterministic and directional: crossing events and
-  markings are clipped, outgoing ties are severed where required, and pedal
-  spans remain TrackLane/stave-scoped.
-- Pitch is clef-independent. Paste copies `SpelledPitch` verbatim and must not
-  adjust pitch, octave, or accidental or apply `clef_at_origin`.
-- `MeasureMap` and `ClefLane` mutation is deferred to 8h. Paste therefore does
-  not apply copied interior clef/key/time changes or rewrite destination
-  signatures. The broader clipping/reconnection plan box stays unchecked
-  until that work lands.
+- **`MeasureMap` and `ClefLane` have no mutators — 8h must add them.** Hence
+  paste applies no copied interior clef/key/time change and rewrites no
+  destination signature; the clipping/reconnection box stays unchecked till 8h.
+- Clipboard rules R1–R12 are documented in `notation_fragment.hpp`. Map staves by
+  `(track_ordinal, stave_ordinal, voice)`, never by unordered
+  `TrackLane::stave_ids()`. Pitch is clef-independent: copy `SpelledPitch`
+  verbatim, never apply `clef_at_origin`.
+- Identity is regenerated on every copy/paste/duplicate even when the source is
+  already id-disjoint, so one fragment pasted twice cannot duplicate a UUID.
+- `NodeTimeline`, `MeasureMap`, `ClefLane`, and `TempoLane` carry **no** ids —
+  8g-iii relies on this to copy a timeline verbatim. If 8h adds an id-bearing
+  measure or clef entity, `DuplicateNodesCommand` must regenerate it too.
+- `Project::remove_node` cascades into *other* nodes' output destinations and
+  resets their routes. Any command removing more than one node must repair that
+  cascade on rollback, not just re-add its own nodes.
+- Reversibility pattern throughout 8e–8g: whole-container snapshot (copy the
+  `VoiceContent`/`TrackLane`/`Node`, restore on undo), not per-edit inverses.
 
 ## Remaining roadmap
 
-- **8g-iii — Node copy/paste:** duplicate a node with fresh ids for the node,
-  its connectors, lanes, and every notation entity; remap intra-selection
-  connector edges and drop edges leaving the selection. Never duplicate a
-  stable UUID.
 - **8h — Measure insert/delete + node-timeline edit commands:** add the domain
   mutation needed for an atomic cascade across every lane. This phase also owns
   per-measure time/key changes, clef changes (including copied interior clef
   application), and pickdown set/clear.
 - **Phase 9 — Validation service:** incremental and complete validation with
-  stable ids, severity, machine-readable codes, text, and deterministic
-  diagnostics.
+  stable ids, severity, machine-readable codes, text, deterministic diagnostics.
 - Finally verify Acceptance Criteria and Test Focus, update the remaining M02
   boxes, and stop; do not start M03.
 
@@ -80,6 +66,19 @@ top-level Milestone 02 box also remain unchecked.
   enforce `EventStateMachine::clear_event` when the last output is unbound.
 - **Later advisory:** orphan event queues are not reclaimed, and zero-capacity
   FIFO listeners silently swallow occurrences.
+- **8g-iii advisory (open):** `DuplicateNodesCommand`'s stale-context pre-check
+  (undo after a duplicate was removed behind the command's back) is reachable
+  without fault injection but untested. ~10 lines; take it when next in the file.
+
+## Testability limits (learned in 8g-iii)
+
+No fault-injection allocator exists, and tests see only `include/` — never
+`src/domain/*.hpp`. So OOM and `kFaulted` branches of leaf commands talking
+directly to `Project` have no substitutable seam (unlike `CommandTransaction`,
+which mocks sub-`Command`s) and are verifiable by inspection only. Design such
+rollbacks fail-safe by construction, so a residual bug latches `kFaulted`
+(visible) rather than silently under-reporting. To actually cover one, lift the
+repair body into a named operation and drive it by damaging the project first.
 
 ## Environment quirks
 

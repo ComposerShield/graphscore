@@ -27,6 +27,7 @@
 #include <graphscore/domain/convert_event_to_rest_command.hpp>
 #include <graphscore/domain/cut_fragment_command.hpp>
 #include <graphscore/domain/disconnect_command.hpp>
+#include <graphscore/domain/duplicate_nodes_command.hpp>
 #include <graphscore/domain/event_listener.hpp>
 #include <graphscore/domain/event_occurrence.hpp>
 #include <graphscore/domain/event_queue.hpp>

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Internal helpers shared by PasteFragmentCommand and CutFragmentCommand.
-// Not installed; included only by src/domain/*_fragment_command.cpp files.
+// Internal helpers shared by PasteFragmentCommand, CutFragmentCommand, and
+// DuplicateNodesCommand. Not installed; included only by the command .cpp
+// files that need them (src/domain/*_fragment_command.cpp and
+// src/domain/duplicate_nodes_command.cpp).
 
 #pragma once
 

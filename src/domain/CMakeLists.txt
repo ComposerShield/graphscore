@@ -22,6 +22,7 @@ add_library(graphscore_domain STATIC
   convert_event_to_rest_command.cpp
   cut_fragment_command.cpp
   disconnect_command.cpp
+  duplicate_nodes_command.cpp
   event_queue.cpp
   event_registry.cpp
   event_state_machine.cpp

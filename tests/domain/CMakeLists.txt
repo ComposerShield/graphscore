@@ -6,6 +6,7 @@ add_executable(graphscore_domain_test
   clipboard_command_test.cpp
   command_test.cpp
   connector_test.cpp
+  duplicate_nodes_command_test.cpp
   event_queue_test.cpp
   event_registry_test.cpp
   event_state_machine_test.cpp
