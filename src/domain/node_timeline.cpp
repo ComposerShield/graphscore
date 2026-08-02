@@ -25,6 +25,16 @@ std::optional<NodeTimeline> NodeTimeline::create(
 NodeTimeline::NodeTimeline(MeasureMap measures)
     : measures_(std::move(measures)) {}
 
+Result NodeTimeline::set_measure_key_signature(
+    const std::size_t measure_index, const KeySignature key_signature) {
+  if (measure_index >= measures_.measure_count())
+    return Result(ResultCode::kInvalidArgument);
+
+  Measure replacement       = measures_.measure(measure_index);
+  replacement.key_signature = key_signature;
+  return measures_.set_measure(measure_index, replacement);
+}
+
 Result NodeTimeline::set_pickdown(Rational duration) {
   const std::size_t last_index           = measures_.measure_count() - 1;
   const Rational boundary_measure_length = measures_.measure_length(last_index);
@@ -91,6 +101,39 @@ ClefLane* NodeTimeline::clef_lane(StaveId stave_id) {
 const ClefLane* NodeTimeline::clef_lane(StaveId stave_id) const {
   const auto it = clef_lanes_.find(stave_id);
   return it == clef_lanes_.end() ? nullptr : &it->second;
+}
+
+Result NodeTimeline::add_clef_change(const StaveId  stave_id,
+                                     const Rational position, const Clef clef) {
+  ClefLane* lane = clef_lane(stave_id);
+  if (lane == nullptr)
+    return Result(ResultCode::kInvalidArgument);
+  return lane->add_change(position, clef);
+}
+
+Result NodeTimeline::remove_clef_change(const StaveId  stave_id,
+                                        const Rational position) {
+  ClefLane* lane = clef_lane(stave_id);
+  if (lane == nullptr)
+    return Result(ResultCode::kInvalidArgument);
+  return lane->remove_change(position);
+}
+
+Result NodeTimeline::move_clef_change(const StaveId  stave_id,
+                                      const Rational from, const Rational to) {
+  ClefLane* lane = clef_lane(stave_id);
+  if (lane == nullptr)
+    return Result(ResultCode::kInvalidArgument);
+  return lane->move_change(from, to);
+}
+
+Result NodeTimeline::restore_clef_lane(const StaveId stave_id,
+                                       ClefLane      replacement) noexcept {
+  ClefLane* lane = clef_lane(stave_id);
+  if (lane == nullptr || lane->default_clef() != replacement.default_clef())
+    return Result(ResultCode::kInvalidArgument);
+  *lane = std::move(replacement);
+  return Result();
 }
 
 Result NodeTimeline::set_tempo(std::vector<TempoPoint> points) {

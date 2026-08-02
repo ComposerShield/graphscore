@@ -5,25 +5,21 @@ completed phase, remove or compress completed detail so the file gets SMALLER,
 not larger. Git history preserves old detail. It should contain only what the
 next agent needs for the next task plus active downstream deferrals.
 
-## Status: PHASE 8h-i COMPLETE, COMMITTED, REVIEWER-APPROVED
+## Status: PHASE 8h-ii COMPLETE, REVIEWER-APPROVED
 
-Phases 1–8h-i are complete and committed; **8h-ii is next**. 8h-i (measure/clef
-mutation primitives, 23 new cases) is reviewer-approved after two documentation
-fix rounds; its production logic was correct from the first candidate. Tier 3
-passed pre-fix (1529/1529, lint, seven audits, clang-tidy 18, ASan/UBSan); final
-tree is 1531/1531 with lint and build clean, the sanitizer cycle not repeated for
-a comment-only delta per AGENTS.md.
+Phases 1–8h-ii are complete; **8h-iii is next**. The 8h-ii exact tree passed a
+clean debug build, 1552/1552 CTest, lint over 318 files, all seven architecture
+audits, clang-tidy 18, and ASan/UBSan 1552/1552. TSan is not applicable.
 
-**The four-way 8h split and every load-bearing fact for 8h-ii/iii/iv live in
-`02-domain-model.md` under the measure-operations box. Read it before 8h-ii.**
+**The four-way 8h split and full load-bearing facts for 8h-iii/iv live in
+`02-domain-model.md` under the measure-operations box. Read it before 8h-iii.**
 
 ## Progress
 
 | # | Section | State |
 |---|---|---|
-| 1–8h-i | Domain model through measure/clef mutation primitives | ✅ complete |
-| 8h-ii | Key-signature, clef, and pickdown commands | ⬜ next |
-| 8h-iii | Measure insert/delete + time-signature, atomic cascade | ⬜ |
+| 1–8h-ii | Domain model through non-length-changing timeline commands | ✅ complete |
+| 8h-iii | Measure insert/delete + time-signature, atomic cascade | ⬜ next |
 | 8h-iv | Paste applies copied clef/signature context | ⬜ |
 | 9 | Validation service | ⬜ |
 
@@ -33,14 +29,20 @@ Milestone 02 box also remain unchecked.
 
 ## Load-bearing facts
 
-- **8h-ii's `NodeTimeline` measure-removal entry point must route through
+- **8h-iii's eventual `NodeTimeline` measure-removal entry point must delegate to
   `MeasureMap::remove_measure`** to inherit its non-empty guard, never reaching
   into `measures_`. Two live sites compute `measure_count() - 1` on an unsigned
   `std::size_t` and underflow on an empty map. See `pickdown_coordinates.hpp`.
 - Any edit changing a measure's *length* (insert, delete, time-signature change)
-  must cascade into the tempo lane, pickdown duration, and per-voice
-  normalization; a key-signature change must not. `MeasureMap` has no pickdown or
-  tempo knowledge and does neither itself — the caller owns that.
+  must atomically cascade through every active and archived track lane, the tempo
+  lane, pickdown, and per-voice normalization. A key-signature change does not.
+- Only pedal spans, clef changes, and tempo points carry absolute `Rational`
+  positions and need shifting; id-referenced markings and ties survive. Rebuild
+  each voice in three regions because `VoiceContent::insert_event` does not shift
+  later material. Position-zero tempo cannot move. Shift clefs right-to-left when
+  moving right and left-to-right when moving left, or restore a whole-lane
+  snapshot. Raw-index measure selections are revalidated, not auto-updated;
+  compatibility diagnostics are a live query, not stored state.
 - Clipboard rules R1–R12 live in `notation_fragment.hpp`. Map staves by
   `(track_ordinal, stave_ordinal, voice)`, never unordered `stave_ids()`. Pitch
   is clef-independent: copy `SpelledPitch` verbatim, never apply
@@ -48,14 +50,11 @@ Milestone 02 box also remain unchecked.
   when the source is already id-disjoint.
 - `NodeTimeline`, `MeasureMap`, `ClefLane`, `TempoLane` carry **no** ids —
   8g-iii copies timelines verbatim on that basis. Do not add one.
-- `Project::remove_node` cascades into *other* nodes' destinations and routes;
-  a multi-node command must repair that cascade on rollback.
-- Reversibility pattern throughout 8e–8h: whole-container snapshot (copy the
-  `VoiceContent`/`TrackLane`/`Node`, restore on undo), not per-edit inverses.
+- Whole-container snapshots, not per-edit inverses, remain the 8e–8h pattern.
 
 ## Remaining roadmap
 
-- **8h-ii, 8h-iii, 8h-iv** — scope and load-bearing facts in `02-domain-model.md`.
+- **8h-iii, 8h-iv** — scope and load-bearing facts in `02-domain-model.md`.
 - **Phase 9 — Validation service:** incremental and complete validation with
   stable ids, severity, machine-readable codes, text, deterministic diagnostics.
 - Then verify Acceptance Criteria and Test Focus, update the remaining M02 boxes,

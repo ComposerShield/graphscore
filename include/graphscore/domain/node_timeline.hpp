@@ -69,6 +69,12 @@ class NodeTimeline {
     return measures_;
   }
 
+  // Replaces only the key signature of one measure, preserving its time
+  // signature and therefore every measure start and timeline length. Fails
+  // when `measure_index` is out of range.
+  [[nodiscard]] Result set_measure_key_signature(std::size_t  measure_index,
+                                                 KeySignature key_signature);
+
   // Sets (or replaces) the optional pickdown region trailing the main
   // region. Fails if `duration` is not strictly greater than zero and
   // strictly less than the length of the boundary's active measure (the
@@ -108,6 +114,24 @@ class NodeTimeline {
   [[nodiscard]] ClefLane* clef_lane(StaveId stave_id);
 
   [[nodiscard]] const ClefLane* clef_lane(StaveId stave_id) const;
+
+  // Narrow clef-lane mutation entry points. Each resolves `stave_id` and
+  // delegates to the corresponding ClefLane operation. A missing stave or
+  // invalid lane edit fails without mutation.
+  [[nodiscard]] Result add_clef_change(StaveId stave_id, Rational position,
+                                       Clef clef);
+
+  [[nodiscard]] Result remove_clef_change(StaveId stave_id, Rational position);
+
+  [[nodiscard]] Result move_clef_change(StaveId stave_id, Rational from,
+                                        Rational to);
+
+  // Replaces one stave's complete lane from an already-prepared snapshot.
+  // Fails if the stave is missing or the replacement's default clef differs
+  // from the target lane's; committing an accepted replacement does not
+  // allocate.
+  [[nodiscard]] Result restore_clef_lane(StaveId  stave_id,
+                                         ClefLane replacement) noexcept;
 
   // Sets (or replaces) the node-wide tempo lane. Fails unless `points`
   // satisfies TempoLane::create against [0/1, node_end()): non-empty,

@@ -4,6 +4,7 @@
 
 #include <graphscore/core/graphscore_core.hpp>
 #include <graphscore/domain/add_beam_override_command.hpp>
+#include <graphscore/domain/add_clef_change_command.hpp>
 #include <graphscore/domain/add_dynamic_command.hpp>
 #include <graphscore/domain/add_grace_group_command.hpp>
 #include <graphscore/domain/add_hairpin_command.hpp>
@@ -18,6 +19,7 @@
 #include <graphscore/domain/articulation.hpp>
 #include <graphscore/domain/audition_mix.hpp>
 #include <graphscore/domain/bind_output_event_command.hpp>
+#include <graphscore/domain/clear_pickdown_command.hpp>
 #include <graphscore/domain/clef_lane.hpp>
 #include <graphscore/domain/command.hpp>
 #include <graphscore/domain/command_history.hpp>
@@ -37,6 +39,7 @@
 #include <graphscore/domain/graph_position.hpp>
 #include <graphscore/domain/measure_map.hpp>
 #include <graphscore/domain/midi_ownership.hpp>
+#include <graphscore/domain/move_clef_change_command.hpp>
 #include <graphscore/domain/move_tempo_point_command.hpp>
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/node_timeline.hpp>
@@ -53,6 +56,7 @@
 #include <graphscore/domain/project.hpp>
 #include <graphscore/domain/register_event_command.hpp>
 #include <graphscore/domain/remove_beam_override_command.hpp>
+#include <graphscore/domain/remove_clef_change_command.hpp>
 #include <graphscore/domain/remove_dynamic_command.hpp>
 #include <graphscore/domain/remove_event_command.hpp>
 #include <graphscore/domain/remove_grace_group_command.hpp>
@@ -71,6 +75,7 @@
 #include <graphscore/domain/set_event_command.hpp>
 #include <graphscore/domain/set_input_connector_name_command.hpp>
 #include <graphscore/domain/set_listener_policy_command.hpp>
+#include <graphscore/domain/set_measure_key_signature_command.hpp>
 #include <graphscore/domain/set_node_color_command.hpp>
 #include <graphscore/domain/set_node_name_command.hpp>
 #include <graphscore/domain/set_node_notes_command.hpp>
@@ -80,6 +85,7 @@
 #include <graphscore/domain/set_output_priority_command.hpp>
 #include <graphscore/domain/set_output_type_command.hpp>
 #include <graphscore/domain/set_output_weight_command.hpp>
+#include <graphscore/domain/set_pickdown_command.hpp>
 #include <graphscore/domain/set_project_dynamic_command.hpp>
 #include <graphscore/domain/set_project_name_command.hpp>
 #include <graphscore/domain/set_project_tempo_command.hpp>

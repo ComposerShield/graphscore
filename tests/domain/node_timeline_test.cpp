@@ -2,11 +2,13 @@
 
 #include <gtest/gtest.h>
 
+#include <utility>
 #include <vector>
 
 #include <graphscore/domain/graphscore_domain.hpp>
 
 using graphscore::Clef;
+using graphscore::ClefLane;
 using graphscore::KeySignature;
 using graphscore::Measure;
 using graphscore::MusicalSpan;
@@ -73,6 +75,119 @@ TEST(NodeTimelineTest, GrandStaffStaveClefLanesAreIndependent) {
             Clef::kAlto);
   EXPECT_EQ(timeline->clef_lane(staves[1].id)->clef_at(Rational(2)),
             Clef::kBass);
+}
+
+TEST(NodeTimelineTest, SetMeasureKeySignaturePreservesMeterAndDerivedState) {
+  const Measure first    = make_measure(3, 4);
+  const Measure second   = make_measure(5, 8);
+  auto          timeline = NodeTimeline::create({first, second}, {});
+  ASSERT_TRUE(timeline.has_value());
+  const Rational first_start  = timeline->measures().measure_start(0);
+  const Rational second_start = timeline->measures().measure_start(1);
+  const Rational total        = timeline->measures().total_length();
+
+  const KeySignature replacement = *KeySignature::create(-4);
+  ASSERT_TRUE(timeline->set_measure_key_signature(0, replacement).ok());
+
+  EXPECT_EQ(timeline->measures().measure(0).time_signature,
+            first.time_signature);
+  EXPECT_EQ(timeline->measures().measure(0).key_signature, replacement);
+  EXPECT_EQ(timeline->measures().measure(1), second);
+  EXPECT_EQ(timeline->measures().measure_start(0), first_start);
+  EXPECT_EQ(timeline->measures().measure_start(1), second_start);
+  EXPECT_EQ(timeline->measures().total_length(), total);
+}
+
+TEST(NodeTimelineTest, SetMeasureKeySignatureRejectsMissingIndexAtomically) {
+  auto timeline = NodeTimeline::create({make_measure(4, 4)}, {});
+  ASSERT_TRUE(timeline.has_value());
+  const Measure before = timeline->measures().measure(0);
+
+  EXPECT_EQ(
+      timeline->set_measure_key_signature(1, *KeySignature::create(3)).code(),
+      graphscore::ResultCode::kInvalidArgument);
+  EXPECT_EQ(timeline->measures().measure(0), before);
+}
+
+TEST(NodeTimelineTest, ClefMutationEntryPointsDelegateToSelectedStaveOnly) {
+  const std::vector<StaveDefinition> staves = {
+      {StaveId::generate(), Clef::kTreble},
+      {StaveId::generate(), Clef::kBass},
+  };
+  auto timeline = NodeTimeline::create({make_measure(4, 4)}, staves);
+  ASSERT_TRUE(timeline.has_value());
+
+  ASSERT_TRUE(
+      timeline->add_clef_change(staves[0].id, Rational(1), Clef::kAlto).ok());
+  EXPECT_TRUE(timeline->clef_lane(staves[1].id)->changes().empty());
+  ASSERT_TRUE(
+      timeline->move_clef_change(staves[0].id, Rational(1), Rational(2)).ok());
+  EXPECT_EQ(timeline->clef_lane(staves[0].id)->changes()[0].position,
+            Rational(2));
+  ASSERT_TRUE(timeline->remove_clef_change(staves[0].id, Rational(2)).ok());
+  EXPECT_TRUE(timeline->clef_lane(staves[0].id)->changes().empty());
+  EXPECT_TRUE(timeline->clef_lane(staves[1].id)->changes().empty());
+}
+
+TEST(NodeTimelineTest, ClefMutationEntryPointsRejectMissingStaveAtomically) {
+  const StaveDefinition stave{StaveId::generate(), Clef::kTreble};
+  auto timeline = NodeTimeline::create({make_measure(4, 4)}, {stave});
+  ASSERT_TRUE(timeline.has_value());
+  const ClefLane before  = *timeline->clef_lane(stave.id);
+  const StaveId  missing = StaveId::generate();
+
+  EXPECT_FALSE(
+      timeline->add_clef_change(missing, Rational(0), Clef::kBass).ok());
+  EXPECT_FALSE(timeline->remove_clef_change(missing, Rational(0)).ok());
+  EXPECT_FALSE(
+      timeline->move_clef_change(missing, Rational(0), Rational(1)).ok());
+  EXPECT_EQ(*timeline->clef_lane(stave.id), before);
+}
+
+TEST(NodeTimelineTest, RestoreClefLaneEnforcesDefaultClefOwnershipAtomically) {
+  const StaveDefinition stave{StaveId::generate(), Clef::kTreble};
+  auto timeline = NodeTimeline::create({make_measure(4, 4)}, {stave});
+  ASSERT_TRUE(timeline.has_value());
+  ASSERT_TRUE(
+      timeline->add_clef_change(stave.id, Rational(1), Clef::kAlto).ok());
+  const ClefLane before = *timeline->clef_lane(stave.id);
+
+  ClefLane wrong_default(Clef::kBass);
+  ASSERT_TRUE(wrong_default.add_change(Rational(2), Clef::kTenor).ok());
+  EXPECT_EQ(timeline->restore_clef_lane(stave.id, wrong_default).code(),
+            graphscore::ResultCode::kInvalidArgument);
+  EXPECT_EQ(*timeline->clef_lane(stave.id), before);
+
+  ClefLane replacement(Clef::kTreble);
+  ASSERT_TRUE(replacement.add_change(Rational(2), Clef::kTenor).ok());
+  EXPECT_EQ(
+      timeline->restore_clef_lane(StaveId::generate(), std::move(replacement))
+          .code(),
+      graphscore::ResultCode::kInvalidArgument);
+  EXPECT_EQ(*timeline->clef_lane(stave.id), before);
+}
+
+TEST(NodeTimelineTest,
+     ClefMutationEntryPointsRejectInvalidLaneEditsAtomically) {
+  const StaveDefinition stave{StaveId::generate(), Clef::kTreble};
+  auto timeline = NodeTimeline::create({make_measure(4, 4)}, {stave});
+  ASSERT_TRUE(timeline.has_value());
+  ASSERT_TRUE(
+      timeline->add_clef_change(stave.id, Rational(1), Clef::kBass).ok());
+  ASSERT_TRUE(
+      timeline->add_clef_change(stave.id, Rational(2), Clef::kAlto).ok());
+  const ClefLane before = *timeline->clef_lane(stave.id);
+
+  EXPECT_FALSE(
+      timeline->add_clef_change(stave.id, Rational(-1), Clef::kTenor).ok());
+  EXPECT_FALSE(
+      timeline->add_clef_change(stave.id, Rational(1), Clef::kTenor).ok());
+  EXPECT_FALSE(timeline->remove_clef_change(stave.id, Rational(3)).ok());
+  EXPECT_FALSE(
+      timeline->move_clef_change(stave.id, Rational(1), Rational(-1)).ok());
+  EXPECT_FALSE(
+      timeline->move_clef_change(stave.id, Rational(1), Rational(2)).ok());
+  EXPECT_EQ(*timeline->clef_lane(stave.id), before);
 }
 
 class PickdownTest : public ::testing::Test {

@@ -2,6 +2,7 @@
 
 add_library(graphscore_domain STATIC
   add_beam_override_command.cpp
+  add_clef_change_command.cpp
   add_dynamic_command.cpp
   add_grace_group_command.cpp
   add_hairpin_command.cpp
@@ -15,6 +16,7 @@ add_library(graphscore_domain STATIC
   archive_track_command.cpp
   bind_output_event_command.cpp
   clef_lane.cpp
+  clear_pickdown_command.cpp
   command_history.cpp
   command_transaction.cpp
   connect_command.cpp
@@ -29,6 +31,7 @@ add_library(graphscore_domain STATIC
   graph.cpp
   measure_map.cpp
   midi_ownership.cpp
+  move_clef_change_command.cpp
   move_tempo_point_command.cpp
   node.cpp
   node_timeline.cpp
@@ -44,6 +47,7 @@ add_library(graphscore_domain STATIC
   project.cpp
   register_event_command.cpp
   remove_beam_override_command.cpp
+  remove_clef_change_command.cpp
   remove_dynamic_command.cpp
   remove_event_command.cpp
   remove_grace_group_command.cpp
@@ -62,6 +66,7 @@ add_library(graphscore_domain STATIC
   set_event_command.cpp
   set_input_connector_name_command.cpp
   set_listener_policy_command.cpp
+  set_measure_key_signature_command.cpp
   set_node_color_command.cpp
   set_node_name_command.cpp
   set_node_notes_command.cpp
@@ -71,6 +76,7 @@ add_library(graphscore_domain STATIC
   set_output_priority_command.cpp
   set_output_type_command.cpp
   set_output_weight_command.cpp
+  set_pickdown_command.cpp
   set_project_dynamic_command.cpp
   set_project_name_command.cpp
   set_project_tempo_command.cpp
