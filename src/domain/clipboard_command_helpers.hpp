@@ -116,9 +116,11 @@ struct PasteMapping {
   // track_ordinal, then compact them so only those staves are consumed in
   // the destination.  The fragment shape's declared stave_count is not
   // used for overflow — only distinct referenced ordinals matter.
-  // The union of fragment voice parts AND stave-scoped pedal spans forms
-  // the mapping: pedal spans can name a stave no voice part references,
-  // and that stave must be mapped/created as a destination stave.
+  // The union of fragment voice parts, stave-scoped pedal spans, AND clef
+  // changes forms the mapping: a pedal span or a clef change can each name
+  // a stave no voice part references, and that stave must still be
+  // mapped/created as a destination stave so it resolves rather than
+  // silently failing the whole paste.
   std::vector<std::set<std::size_t>> used(fragment.tracks().size());
   for (const FragmentVoicePart& part : fragment.parts()) {
     if (part.track_ordinal < used.size())
@@ -127,6 +129,10 @@ struct PasteMapping {
   for (const FragmentPedalSpan& span : fragment.pedal_spans()) {
     if (span.track_ordinal < used.size())
       used[span.track_ordinal].insert(span.stave_ordinal);
+  }
+  for (const FragmentClefChange& change : fragment.clef_changes()) {
+    if (change.track_ordinal < used.size())
+      used[change.track_ordinal].insert(change.stave_ordinal);
   }
 
   PasteMapping mapping;
@@ -918,10 +924,19 @@ static_assert(std::is_nothrow_move_assignable_v<TrackLane>,
 // Uses validate_clipboard_lane_candidate (permissive of raw-empty voices)
 // so that a pre-snapshot captured exactly as the original lane state
 // (without pre-normalization) restores correctly.
-[[nodiscard]] inline Result multi_lane_restore_snapshot(
+//
+// Split into prepare_lane_restore (validate + build every candidate,
+// touching no live lane, may allocate) and commit_lane_restore (publish
+// every prepared candidate, noexcept) so a caller that must interleave
+// another reversible edit — e.g. PasteFragmentCommand's clef-lane
+// creation, itself fallible — between validation and publication can do so
+// without risking a partial commit. multi_lane_restore_snapshot itself
+// remains the simple all-in-one entry point Cut and Paste's own undo/redo
+// use directly.
+[[nodiscard]] inline Result prepare_lane_restore(
     const std::vector<std::pair<TrackId, TrackLane>>& pre_snapshot,
     const std::vector<std::pair<TrackId, TrackLane>>& expected_current,
-    NodeId node_id, Project& project) {
+    NodeId node_id, Project& project, std::optional<LaneRestoreBundle>& out) {
   if (pre_snapshot.size() != expected_current.size())
     return Result(ResultCode::kInternalError);
 
@@ -933,7 +948,6 @@ static_assert(std::is_nothrow_move_assignable_v<TrackLane>,
     return Result(ResultCode::kInvalidArgument);
   const Rational node_end = timeline->node_end();
 
-  std::optional<LaneRestoreBundle> commit;
   try {
     std::vector<TrackLane*> live_lanes;
     live_lanes.reserve(pre_snapshot.size());
@@ -962,7 +976,7 @@ static_assert(std::is_nothrow_move_assignable_v<TrackLane>,
       candidates.push_back(std::move(candidate));
     }
 
-    commit.emplace(
+    out.emplace(
         LaneRestoreBundle{std::move(live_lanes), std::move(candidates)});
   } catch (const std::bad_alloc&) {
     return Result(ResultCode::kOutOfMemory);
@@ -971,11 +985,28 @@ static_assert(std::is_nothrow_move_assignable_v<TrackLane>,
   } catch (...) {
     return Result(ResultCode::kInternalError);
   }
+  return Result();
+}
 
+// Publishes a bundle prepare_lane_restore already validated and built.
+// Precondition: `bundle` came from a successful prepare_lane_restore call
+// on the same node whose live lanes have not changed since. Cannot fail.
+inline void commit_lane_restore(LaneRestoreBundle& bundle) noexcept {
   static_assert(std::is_nothrow_move_assignable_v<TrackLane>);
-  for (std::size_t i = 0; i < commit->live_lanes.size(); ++i)
-    *commit->live_lanes[i] = std::move(commit->candidates[i]);
+  for (std::size_t i = 0; i < bundle.live_lanes.size(); ++i)
+    *bundle.live_lanes[i] = std::move(bundle.candidates[i]);
+}
 
+[[nodiscard]] inline Result multi_lane_restore_snapshot(
+    const std::vector<std::pair<TrackId, TrackLane>>& pre_snapshot,
+    const std::vector<std::pair<TrackId, TrackLane>>& expected_current,
+    NodeId node_id, Project& project) {
+  std::optional<LaneRestoreBundle> bundle;
+  const Result                     prepare_result = prepare_lane_restore(
+      pre_snapshot, expected_current, node_id, project, bundle);
+  if (!bundle.has_value())
+    return prepare_result;
+  commit_lane_restore(*bundle);
   return Result();
 }
 

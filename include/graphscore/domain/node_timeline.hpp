@@ -146,6 +146,27 @@ class NodeTimeline {
   [[nodiscard]] Result restore_clef_lane(StaveId  stave_id,
                                          ClefLane replacement) noexcept;
 
+  // Creates a brand-new clef lane for `stave_id` from `lane`. Fails with
+  // kInvalidArgument, leaving the timeline unchanged, if a lane already
+  // exists for `stave_id` -- use restore_clef_lane to replace one that
+  // exists. May allocate. Paired with remove_clef_lane so a reversible
+  // command that must apply notation to a stave with no clef lane yet
+  // (e.g. a paste touching a track added after the node's timeline was
+  // created) can undo the creation exactly, mirroring the
+  // Project::hard_remove_track/add_track_with_id undo-only precedent.
+  //
+  // Precondition (caller-enforced): `lane.default_clef()` must equal
+  // `stave_id`'s own StaveDefinition::default_clef. NodeTimeline has no
+  // track/layout view of its own, so it cannot check stave ownership
+  // itself -- restore_clef_lane relies on the lane it later replaces having
+  // been created with the correct default clef in the first place.
+  [[nodiscard]] Result create_clef_lane(StaveId stave_id, ClefLane lane);
+
+  // Removes stave_id's clef lane entirely, restoring "no clef lane" for
+  // that stave. No-op if none is present. Undo-only counterpart to
+  // create_clef_lane; never allocates.
+  void remove_clef_lane(StaveId stave_id) noexcept;
+
   // Sets (or replaces) the node-wide tempo lane. Fails unless `points`
   // satisfies TempoLane::create against [0/1, node_end()): non-empty,
   // starting exactly at 0/1, strictly ordered, and covering the whole node

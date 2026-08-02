@@ -248,6 +248,17 @@ Result NodeTimeline::restore_clef_lane(const StaveId stave_id,
   return Result();
 }
 
+Result NodeTimeline::create_clef_lane(const StaveId stave_id, ClefLane lane) {
+  if (clef_lanes_.contains(stave_id))
+    return Result(ResultCode::kInvalidArgument);
+  clef_lanes_.emplace(stave_id, std::move(lane));
+  return Result();
+}
+
+void NodeTimeline::remove_clef_lane(const StaveId stave_id) noexcept {
+  clef_lanes_.erase(stave_id);
+}
+
 Result NodeTimeline::set_tempo(std::vector<TempoPoint> points) {
   std::optional<TempoLane> lane =
       TempoLane::create(std::move(points), Rational(0), node_end());

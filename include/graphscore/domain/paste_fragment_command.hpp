@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <graphscore/core/graphscore_core.hpp>
+#include <graphscore/domain/clef_lane.hpp>
 #include <graphscore/domain/command.hpp>
 #include <graphscore/domain/notation_fragment.hpp>
 #include <graphscore/domain/track.hpp>
@@ -56,8 +57,36 @@ struct PasteAnchor {
 // [anchor.position, anchor.position + fragment.span_length()). execute()
 // fails kInvalidArgument, leaving the project unchanged, if
 // anchor.position is negative or if the range's end exceeds the
-// destination node's NodeTimeline::node_end(). Paste never grows the node
-// -- MeasureMap gains mutators only in a later increment (8h).
+// destination node's NodeTimeline::node_end(). Paste never grows the node --
+// MeasureMap contents are never rewritten by a paste; see the meter
+// compatibility gate below for the one place a paste's meaning depends on
+// the destination's time signature.
+//
+// Meter compatibility gate (locked, Phase 8h-iv): time and key signatures
+// live on Measure inside MeasureMap, per-measure and node-wide -- shared by
+// every one of a node's tracks, not stave-scoped like clef. Applying a
+// copied time signature would change a measure's length, hence node_end(),
+// colliding with "paste never grows the node" above and shifting every
+// track's later material, contradicting "modify no music outside the
+// destination range". Paste therefore never applies a time signature, and
+// instead validates compatibility before touching anything: the set of
+// distinct TimeSignature values across fragment.measure_contexts() and the
+// set of distinct TimeSignature values of the destination measures
+// overlapping [anchor.position, range_end) must each contain exactly one
+// value, and those two values must be equal, or execute() fails
+// kInvalidArgument with the project completely unmutated. A destination
+// range extending into the pickdown region (where MeasureMap has no
+// containing measure) is governed there by the last main-region measure's
+// time signature, matching NotationFragment's own pickdown-origin
+// extraction rule. Same-meter paste -- including non-measure-aligned paste
+// -- is unaffected; cross-meter paste, which previously succeeded while
+// silently misaligning barlines, now fails loudly. A caller wanting a
+// meter change composes SetMeasureTimeSignatureCommand with
+// PasteFragmentCommand in one CommandTransaction. Key signature
+// (FragmentMeasureContext::key_signature) is never applied and never
+// validated: pitches are stored absolutely, so a key difference changes no
+// sounding content, and silently re-keying a node-wide measure across
+// every track would be a worse outcome than ignoring it.
 //
 // Reconnection (the paste-side half of notation_fragment.hpp's R1-R12):
 // per destination voice actually referenced by a fragment part, the voice
@@ -98,23 +127,56 @@ struct PasteAnchor {
 // Fragment pedal spans are added at anchor.position-relative offsets with
 // freshly regenerated ids.
 //
-// Clef changes are NOT applied by this increment. The fragment carries
-// them (NotationFragment::clef_changes()), and ClefLane and MeasureMap now
-// have the container-level mutators an application would need -- add_change,
-// remove_change, move_change, set_change (Phase 8h-i) -- but wiring paste
-// to actually apply a fragment's clef and signature context to the
-// destination is command-level work this increment does not own: Phase
-// 8h-iv wires paste to apply copied clef and signature context, once
-// 8h-ii/8h-iii land the clef-change and time/key-signature commands those
-// applications compose with. Until then, measure_contexts()/
-// stave_contexts()/clef_changes() remain informational only, never
-// applied to the destination.
+// Clef changes (locked, Phase 8h-iv): unlike time/key signature, clef is
+// per-stave, not node-wide, so applying it does not touch any other
+// track. Every entry of fragment.clef_changes() is applied at
+// anchor.position + change.position, on the destination stave the entry's
+// (track_ordinal, stave_ordinal) resolves to through the same paste
+// mapping used for voice/pedal reconnection above -- there is no second
+// mapping path. fragment.stave_contexts()/clef_at_origin is NEVER applied:
+// the destination stave's own clef correctly governs display of
+// absolutely-stored pitches (8g-ii's clef-independent pitch invariance),
+// so clef_at_origin remains a reference value only. Replace, don't
+// interleave: on every stave the paste's own reconnection touches --
+// every stave a fragment voice part or pedal span actually maps onto, the
+// same set used above, unioned with every stave a fragment clef change
+// names -- existing destination clef changes already inside
+// [anchor.position, range_end) are removed before that stave's own
+// fragment changes (if any) are added. This holds even when the fragment
+// names no clef change at all for a stave whose notes it wholly replaces:
+// a stale destination clef change stranded inside the overwritten range
+// does not survive just because the fragment is silent about that stave's
+// clef. A clef change naming a stave no voice part or pedal span
+// references is likewise never dropped -- it resolves through the same
+// paste mapping as everything else. Containment: each affected stave's
+// prevailing clef at range_end is captured from the pre-edit lane before
+// any change, and re-asserted with a clef change at range_end if and only
+// if the post-edit prevailing clef there would otherwise differ --
+// skipped when range_end equals node_end() (no later music to protect) or
+// when a destination clef change already sits exactly at range_end. This
+// proves the paste alters no notation after its own range. A stave whose
+// resulting clef lane would be unchanged from its pre-edit state gains
+// neither a snapshot nor a newly created lane. A destination stave with no
+// clef lane yet (e.g. one on a track added after the node's timeline was
+// created) gains one via NodeTimeline::create_clef_lane on first use and
+// loses it again via NodeTimeline::remove_clef_lane if the paste is
+// undone; a stave that already has a lane is updated in place via
+// NodeTimeline::restore_clef_lane. Every clef-lane creation this
+// increment performs happens only after every other fallible step of the
+// paste has already succeeded, so a creation failure (out of memory) still
+// leaves the whole paste, including every other stave's clef lane,
+// completely unmutated.
 //
-// Reversibility: whole-lane snapshot, the 8d-iv/8e-i precedent. Every
-// TrackLane the paste actually touches is snapshotted by value before any
-// mutation and restored on undo; undo/redo reject stale context (the live
-// lane no longer matching the expected snapshot) with kInvalidArgument
-// rather than blindly restoring, and remain retryable afterward.
+// Reversibility: whole-lane snapshot, the 8d-iv/8e-i precedent, extended to
+// clef lanes. Every TrackLane the paste actually touches is snapshotted by
+// value before any mutation and restored on undo; every stave whose clef
+// lane the paste actually changes is likewise snapshotted -- as
+// std::optional<ClefLane>, where an empty optional means "this stave had
+// no clef lane before the paste" -- and restored (or removed, if it had
+// none) on undo. Undo/redo reject stale context (the live lane, TrackLane
+// or ClefLane, no longer matching the expected snapshot) with
+// kInvalidArgument rather than blindly restoring, and remain retryable
+// afterward.
 class PasteFragmentCommand : public Command {
  public:
   PasteFragmentCommand(NotationFragment fragment, PasteAnchor anchor)
@@ -130,6 +192,16 @@ class PasteFragmentCommand : public Command {
 
   std::optional<std::vector<std::pair<TrackId, TrackLane>>> pre_snapshot_;
   std::optional<std::vector<std::pair<TrackId, TrackLane>>> post_snapshot_;
+
+  // Per stave whose clef lane the paste actually changes, matched by index
+  // between the two vectors (mirroring pre_snapshot_/post_snapshot_ above).
+  // clef_pre_snapshot_[i].second is std::nullopt iff that stave had no
+  // clef lane before execute(); clef_post_snapshot_[i].second is always
+  // engaged (execute() creates a lane on first use).
+  std::optional<std::vector<std::pair<StaveId, std::optional<ClefLane>>>>
+                                                           clef_pre_snapshot_;
+  std::optional<std::vector<std::pair<StaveId, ClefLane>>> clef_post_snapshot_;
+
   State state_ = State::kFresh;
 };
 
