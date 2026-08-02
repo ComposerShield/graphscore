@@ -6,10 +6,14 @@
 # hook, so a contributor who has not run scripts/bootstrap.sh — or who
 # committed with --no-verify — still cannot merge code that fails them.
 #
+# The one current exception is the const-correctness analysis: its job is
+# commented out below pending a larger runner, so clang-tidy is enforced only
+# by .githooks/pre-commit until that job comes back.
+#
 # Job layout (docs/plan/01-toolchain-ci.md, "GitHub Actions"):
 #
 #   lint            cpplint + clang-format verification, whole tree
-#   clang-tidy      const-correctness analysis, one Clang runner
+#   clang-tidy      const-correctness analysis — DISABLED, see the job block
 #   test            build + GTest on the four natively-tested platforms
 #   cross-build     Windows arm64 and Linux arm64, compile only
 #   sanitizers      ASan/UBSan and TSan on Linux Clang
@@ -69,40 +73,55 @@ jobs:
   # ---------------------------------------------------------------------
   # Const-correctness analysis. clang-tidy is slow, so it is its own job on
   # one runner rather than a property of every build.
-  # ---------------------------------------------------------------------
-  clang-tidy:
-    name: clang-tidy (const-correctness)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      # Pinned. clang-tidy's checks and their defaults change between
-      # releases, so an unpinned version turns an unrelated toolchain bump
-      # into a red build, and makes local reproduction guesswork.
-      - name: Install toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-18 clang-tidy-18 ninja-build
-          sudo update-alternatives --install \
-            /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-18 100
-
-      # The compiler is pinned to the same release as the analyzer: clang-tidy
-      # reads the compile flags but parses with its own frontend, so a
-      # version skew between them produces diagnostics that cannot be
-      # reproduced with either version alone.
-      - name: Configure
-        run: |
-          cmake --preset debug \
-            -DCMAKE_C_COMPILER=clang-18 \
-            -DCMAKE_CXX_COMPILER=clang++-18 \
-            -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON \
-            -DGRAPHSCORE_BUILD_WRITER=OFF
-
-      # -k 0 keeps going after the first failing translation unit, so one run
-      # reports every finding. Stopping at the first file turns a review into
-      # one round trip per file.
-      - name: Build with clang-tidy
-        run: cmake --build --preset debug -- -k 0
+  #
+  # TEMPORARILY DISABLED. This job is the critical path of the workflow:
+  # clang-tidy re-parses every translation unit with its own frontend, and the
+  # work is embarrassingly parallel, so it scales almost linearly with core
+  # count. The fix is the 16-core larger runner named below instead of the
+  # standard image, but larger runners require a Team or Enterprise Cloud plan
+  # and this repository sits under a personal account, so the label would not
+  # resolve -- the job would queue indefinitely rather than fail. Until the
+  # repository moves to an organization account, the analysis is left to the
+  # tracked Git hooks: .githooks/pre-commit runs the same clang-tidy 18
+  # analysis locally and blocks the commit on findings.
+  #
+  # To re-enable: provision the larger runner, uncomment this block, and drop
+  # the note above. Ninja sizes its own job pool from the detected core count,
+  # so no -j flag is needed.
+  #
+  # clang-tidy:
+  #   name: clang-tidy (const-correctness)
+  #   runs-on: ubuntu-latest-16-cores
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     # Pinned. clang-tidy's checks and their defaults change between
+  #     # releases, so an unpinned version turns an unrelated toolchain bump
+  #     # into a red build, and makes local reproduction guesswork.
+  #     - name: Install toolchain
+  #       run: |
+  #         sudo apt-get update
+  #         sudo apt-get install -y clang-18 clang-tidy-18 ninja-build
+  #         sudo update-alternatives --install \
+  #           /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-18 100
+  #
+  #     # The compiler is pinned to the same release as the analyzer:
+  #     # clang-tidy reads the compile flags but parses with its own frontend,
+  #     # so a version skew between them produces diagnostics that cannot be
+  #     # reproduced with either version alone.
+  #     - name: Configure
+  #       run: |
+  #         cmake --preset debug \
+  #           -DCMAKE_C_COMPILER=clang-18 \
+  #           -DCMAKE_CXX_COMPILER=clang++-18 \
+  #           -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON \
+  #           -DGRAPHSCORE_BUILD_WRITER=OFF
+  #
+  #     # -k 0 keeps going after the first failing translation unit, so one
+  #     # run reports every finding. Stopping at the first file turns a review
+  #     # into one round trip per file.
+  #     - name: Build with clang-tidy
+  #       run: cmake --build --preset debug -- -k 0
 
   # ---------------------------------------------------------------------
   # Native build and test.

@@ -207,6 +207,13 @@ writer target cannot be linked from it.
 - The sanitizer and clang-tidy CI jobs configure with
   `-DGRAPHSCORE_BUILD_WRITER=OFF`. Instrumenting or analysing SDL3 costs most
   of those jobs' time on third-party code GraphScore does not own.
+- The clang-tidy CI job is currently commented out in
+  `.github/workflows/ci.yml`. It was the workflow's critical path, and the
+  fix — a 16-core larger runner — needs a Team or Enterprise Cloud plan that
+  a personal-account repository cannot provision. Until this repository moves
+  to an organization account, const-correctness is enforced only by
+  `.githooks/pre-commit`, so running `./scripts/bootstrap.sh` is no longer
+  optional: without the hooks installed, nothing checks it.
 - Linux needs X11, Wayland, and xkbcommon development packages for the SDL3
   build; see `.github/workflows/ci.yml` for the exact list.
 - SDL3 at the pinned SHA needs three macOS frameworks linked that it does not
