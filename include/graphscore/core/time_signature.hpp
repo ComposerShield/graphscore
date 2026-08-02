@@ -8,14 +8,14 @@
 namespace graphscore {
 
 // Musical time signature. denominator must be a power of two (1 = whole
-// note through 128 = 128th note); numerator is bounded generously enough
+// note through 64 = sixty-fourth note); numerator is bounded generously enough
 // to cover any practical meter without becoming an unbounded integer.
 class TimeSignature {
  public:
   static constexpr std::uint8_t  kMinNumerator   = 1;
   static constexpr std::uint8_t  kMaxNumerator   = 64;
   static constexpr std::uint16_t kMinDenominator = 1;
-  static constexpr std::uint16_t kMaxDenominator = 128;
+  static constexpr std::uint16_t kMaxDenominator = 64;
 
   constexpr TimeSignature() = default;
 

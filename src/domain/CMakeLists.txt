@@ -23,12 +23,14 @@ add_library(graphscore_domain STATIC
   connector.cpp
   convert_event_to_rest_command.cpp
   cut_fragment_command.cpp
+  delete_measure_command.cpp
   disconnect_command.cpp
   duplicate_nodes_command.cpp
   event_queue.cpp
   event_registry.cpp
   event_state_machine.cpp
   graph.cpp
+  insert_measure_command.cpp
   measure_map.cpp
   midi_ownership.cpp
   move_clef_change_command.cpp
@@ -67,6 +69,7 @@ add_library(graphscore_domain STATIC
   set_input_connector_name_command.cpp
   set_listener_policy_command.cpp
   set_measure_key_signature_command.cpp
+  set_measure_time_signature_command.cpp
   set_node_color_command.cpp
   set_node_name_command.cpp
   set_node_notes_command.cpp

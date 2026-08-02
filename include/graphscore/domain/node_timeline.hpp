@@ -75,6 +75,19 @@ class NodeTimeline {
   [[nodiscard]] Result set_measure_key_signature(std::size_t  measure_index,
                                                  KeySignature key_signature);
 
+  // Measure-structure entry points. These rebuild the complete timeline
+  // candidate (measure map, clef lanes, tempo lane, and unchanged exact
+  // pickdown duration) before publishing it. Absolute clef/tempo positions
+  // follow the edited musical time. A pickdown that is no longer shorter
+  // than the final measure rejects the edit. Deleting the first measure uses
+  // a later point shifted to zero as the new tempo origin; when none exists,
+  // the old mandatory origin is retained as the active-tempo fallback.
+  [[nodiscard]] Result insert_measure(std::size_t index, Measure measure);
+  [[nodiscard]] Result insert_measure(std::size_t index);
+  [[nodiscard]] Result remove_measure(std::size_t index);
+  [[nodiscard]] Result set_measure_time_signature(std::size_t   measure_index,
+                                                  TimeSignature time_signature);
+
   // Sets (or replaces) the optional pickdown region trailing the main
   // region. Fails if `duration` is not strictly greater than zero and
   // strictly less than the length of the boundary's active measure (the
@@ -151,6 +164,8 @@ class NodeTimeline {
     return tempo_ ? &*tempo_ : nullptr;
   }
 
+  [[nodiscard]] bool operator==(const NodeTimeline&) const = default;
+
  private:
   explicit NodeTimeline(MeasureMap measures);
 
@@ -160,6 +175,12 @@ class NodeTimeline {
   // Precondition: tempo_.has_value().
   [[nodiscard]] std::optional<TempoLane> rebuild_tempo_for_end(
       Rational new_end) const;
+
+  enum class MeasureEditKind { kInsert, kDelete };
+
+  [[nodiscard]] Result transform_absolute_lanes(MeasureEditKind kind,
+                                                Rational        start,
+                                                Rational        length);
 
   MeasureMap                            measures_;
   std::optional<Rational>               pickdown_duration_;

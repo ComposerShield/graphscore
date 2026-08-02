@@ -28,6 +28,7 @@
 #include <graphscore/domain/connector.hpp>
 #include <graphscore/domain/convert_event_to_rest_command.hpp>
 #include <graphscore/domain/cut_fragment_command.hpp>
+#include <graphscore/domain/delete_measure_command.hpp>
 #include <graphscore/domain/disconnect_command.hpp>
 #include <graphscore/domain/duplicate_nodes_command.hpp>
 #include <graphscore/domain/event_listener.hpp>
@@ -37,6 +38,7 @@
 #include <graphscore/domain/event_state_machine.hpp>
 #include <graphscore/domain/graph.hpp>
 #include <graphscore/domain/graph_position.hpp>
+#include <graphscore/domain/insert_measure_command.hpp>
 #include <graphscore/domain/measure_map.hpp>
 #include <graphscore/domain/midi_ownership.hpp>
 #include <graphscore/domain/move_clef_change_command.hpp>
@@ -76,6 +78,7 @@
 #include <graphscore/domain/set_input_connector_name_command.hpp>
 #include <graphscore/domain/set_listener_policy_command.hpp>
 #include <graphscore/domain/set_measure_key_signature_command.hpp>
+#include <graphscore/domain/set_measure_time_signature_command.hpp>
 #include <graphscore/domain/set_node_color_command.hpp>
 #include <graphscore/domain/set_node_name_command.hpp>
 #include <graphscore/domain/set_node_notes_command.hpp>

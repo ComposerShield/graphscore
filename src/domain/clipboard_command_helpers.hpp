@@ -442,7 +442,8 @@ struct RegeneratedEvents {
 // is dropped entirely; a hairpin or slur needs both endpoints to survive.
 [[nodiscard]] inline Result add_surviving_markings(
     VoiceContent& content, const VoiceContent& source,
-    const std::unordered_set<NotationEntityId>& surviving) {
+    const std::unordered_set<NotationEntityId>& surviving,
+    const bool                                  include_beam_overrides = true) {
   const auto survives = [&](NotationEntityId id) {
     return surviving.contains(id);
   };
@@ -468,19 +469,21 @@ struct RegeneratedEvents {
     if (!result.ok())
       return result;
   }
-  for (const BeamOverride& override_ : source.beam_overrides()) {
-    bool all_survive = true;
-    for (const NotationEntityId id : override_.events) {
-      if (!survives(id)) {
-        all_survive = false;
-        break;
+  if (include_beam_overrides) {
+    for (const BeamOverride& override_ : source.beam_overrides()) {
+      bool all_survive = true;
+      for (const NotationEntityId id : override_.events) {
+        if (!survives(id)) {
+          all_survive = false;
+          break;
+        }
       }
+      if (!all_survive)
+        continue;
+      const Result result = content.add_beam_override(override_);
+      if (!result.ok())
+        return result;
     }
-    if (!all_survive)
-      continue;
-    const Result result = content.add_beam_override(override_);
-    if (!result.ok())
-      return result;
   }
   for (const GraceGroup& group : source.grace_groups()) {
     if (!survives(group.principal_event))

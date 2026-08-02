@@ -119,12 +119,13 @@ TEST(TimeSignatureTest, NonPowerOfTwoDenominatorIsInvalid) {
   EXPECT_FALSE(TimeSignature::create(6, 6).has_value());
 }
 
-TEST(TimeSignatureTest, DenominatorOneAndOneTwentyEightAreValid) {
+TEST(TimeSignatureTest, DenominatorOneAndSixtyFourAreValid) {
   EXPECT_TRUE(TimeSignature::create(1, 1).has_value());
-  EXPECT_TRUE(TimeSignature::create(4, 128).has_value());
+  EXPECT_TRUE(TimeSignature::create(4, 64).has_value());
 }
 
-TEST(TimeSignatureTest, DenominatorAboveOneTwentyEightIsInvalid) {
+TEST(TimeSignatureTest, DenominatorOneTwentyEightAndAboveIsInvalid) {
+  EXPECT_FALSE(TimeSignature::create(4, 128).has_value());
   EXPECT_FALSE(TimeSignature::create(4, 256).has_value());
 }
 

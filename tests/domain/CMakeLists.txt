@@ -13,6 +13,7 @@ add_executable(graphscore_domain_test
   graph_test.cpp
   lane_alignment_test.cpp
   measure_map_test.cpp
+  measure_command_test.cpp
   midi_ownership_test.cpp
   node_timeline_test.cpp
   notation_event_test.cpp

@@ -106,6 +106,8 @@ class Node {
 
   void clear_timeline() noexcept { timeline_.reset(); }
 
+  [[nodiscard]] bool operator==(const Node&) const = default;
+
   // Adds a new, uniquely identified input/output connector to this node
   // and returns its stable id. There is no limit on how many of either a
   // node may hold (product decision: "any number of named stable input
