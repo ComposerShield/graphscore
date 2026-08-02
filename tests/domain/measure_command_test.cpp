@@ -69,23 +69,26 @@ VoiceContent tuplet_voice(const Rational prefix, const std::size_t event_count,
   if (prefix > Rational(0)) {
     const std::optional<std::vector<Rest>> rests = decompose_rest(prefix);
     assert(rests.has_value());
-    for (const Rest& rest : *rests)
-      assert(content.append(rest).ok());
+    for (const Rest& rest : *rests) {
+      [[maybe_unused]] const Result rest_result = content.append(rest);
+      assert(rest_result.ok());
+    }
   }
   for (std::size_t index = 0; index < event_count; ++index) {
     if (chords) {
-      assert(content
-                 .append(make_chord(
-                     triplet_quarter(),
-                     {{NotationEntityId{}, pitch(Letter::kC), false},
-                      {NotationEntityId{}, pitch(Letter::kE), false}}))
-                 .ok());
+      [[maybe_unused]] const Result chord_result = content.append(make_chord(
+          triplet_quarter(), {{NotationEntityId{}, pitch(Letter::kC), false},
+                              {NotationEntityId{}, pitch(Letter::kE), false}}));
+      assert(chord_result.ok());
     } else {
-      assert(
-          content.append(make_note(pitch(Letter::kC), triplet_quarter())).ok());
+      [[maybe_unused]] const Result note_result =
+          content.append(make_note(pitch(Letter::kC), triplet_quarter()));
+      assert(note_result.ok());
     }
   }
-  assert(content.normalize(total_length).ok());
+  [[maybe_unused]] const Result normalize_result =
+      content.normalize(total_length);
+  assert(normalize_result.ok());
   return content;
 }
 
@@ -118,21 +121,27 @@ struct CascadeProject {
                               {active_lower_stave, Clef::kBass},
                               {archived_stave, Clef::kBass}});
     assert(timeline.has_value());
-    assert(timeline->set_pickdown(rat(1, 4)).ok());
-    assert(timeline
-               ->set_tempo({point(Rational(0), 100), point(Rational(1), 110),
-                            point(Rational(2), 120), point(Rational(3), 130)})
-               .ok());
-    assert(
-        timeline->add_clef_change(active_stave, Rational(1), Clef::kAlto).ok());
-    assert(timeline->add_clef_change(active_stave, Rational(2), Clef::kTenor)
-               .ok());
+    [[maybe_unused]] const Result pickdown_result =
+        timeline->set_pickdown(rat(1, 4));
+    assert(pickdown_result.ok());
+    [[maybe_unused]] const Result tempo_result =
+        timeline->set_tempo({point(Rational(0), 100), point(Rational(1), 110),
+                             point(Rational(2), 120), point(Rational(3), 130)});
+    assert(tempo_result.ok());
+    [[maybe_unused]] const Result alto_result =
+        timeline->add_clef_change(active_stave, Rational(1), Clef::kAlto);
+    assert(alto_result.ok());
+    [[maybe_unused]] const Result tenor_result =
+        timeline->add_clef_change(active_stave, Rational(2), Clef::kTenor);
+    assert(tenor_result.ok());
     node->set_timeline(std::move(*timeline));
 
     fill_stave(node->lane(active_track), active_stave, rat(13, 4));
     fill_stave(node->lane(active_track), active_lower_stave, rat(13, 4));
     fill_stave(node->lane(archived_track), archived_stave, rat(13, 4));
-    assert(project.archive_track(archived_track).ok());
+    [[maybe_unused]] const Result archive_result =
+        project.archive_track(archived_track);
+    assert(archive_result.ok());
   }
 
   [[nodiscard]] Node* node() { return project.find_node(node_id); }

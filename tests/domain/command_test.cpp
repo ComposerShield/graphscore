@@ -12204,14 +12204,18 @@ TimelineCommandSetup make_timeline_command_setup() {
   };
   auto timeline = NodeTimeline::create(measures, staves);
   assert(timeline.has_value());
-  assert(timeline->set_pickdown(*Rational::create(1, 4)).ok());
-  assert(timeline
-             ->set_tempo(
-                 {tempo_point(Rational(0), 120), tempo_point(Rational(2), 90)})
-             .ok());
-  assert(timeline->add_clef_change(upper, *Rational::create(1, 2), Clef::kAlto)
-             .ok());
-  assert(timeline->add_clef_change(lower, Rational(1), Clef::kTenor).ok());
+  [[maybe_unused]] const Result pickdown_result =
+      timeline->set_pickdown(*Rational::create(1, 4));
+  assert(pickdown_result.ok());
+  [[maybe_unused]] const Result tempo_result = timeline->set_tempo(
+      {tempo_point(Rational(0), 120), tempo_point(Rational(2), 90)});
+  assert(tempo_result.ok());
+  [[maybe_unused]] const Result upper_clef_result =
+      timeline->add_clef_change(upper, *Rational::create(1, 2), Clef::kAlto);
+  assert(upper_clef_result.ok());
+  [[maybe_unused]] const Result lower_clef_result =
+      timeline->add_clef_change(lower, Rational(1), Clef::kTenor);
+  assert(lower_clef_result.ok());
   project.find_node(node_id)->set_timeline(std::move(*timeline));
   return {std::move(project), node_id, upper, lower};
 }
@@ -12256,9 +12260,14 @@ NodeTimeline make_different_length_timeline(
   };
   auto timeline = NodeTimeline::create(measures, staves);
   assert(timeline.has_value());
-  if (pickdown.has_value())
-    assert(timeline->set_pickdown(*pickdown).ok());
-  assert(timeline->set_tempo(tempo_points).ok());
+  if (pickdown.has_value()) {
+    [[maybe_unused]] const Result pickdown_result =
+        timeline->set_pickdown(*pickdown);
+    assert(pickdown_result.ok());
+  }
+  [[maybe_unused]] const Result tempo_result =
+      timeline->set_tempo(tempo_points);
+  assert(tempo_result.ok());
   return std::move(*timeline);
 }
 
