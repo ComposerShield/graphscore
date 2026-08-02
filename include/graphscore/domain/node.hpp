@@ -45,6 +45,26 @@ class Node {
  public:
   explicit Node(NodeId id, std::string name = {});
 
+  // The measure cascade commands commit an edit by move-assigning a
+  // fully-prepared Node over the live one, and snapshot the before/after
+  // states into std::optional<Node>. Both steps must not throw, or a failed
+  // commit would leave a half-updated node behind; the commands static_assert
+  // exactly that.
+  //
+  // libc++ and libstdc++ mark std::unordered_map's move constructor noexcept,
+  // so the implicit operations already satisfied it there. Microsoft's STL
+  // does not, which made is_nothrow_move_assignable_v<std::optional<Node>>
+  // false on Windows only -- std::optional's move assignment additionally
+  // requires nothrow move *construction*. Defaulting these with an explicit
+  // noexcept states the invariant the commands rely on and enforces it
+  // uniformly: moving a Node relinks buffers that are already allocated, so
+  // there is nothing left to fail.
+  Node(const Node&)                = default;
+  Node& operator=(const Node&)     = default;
+  Node(Node&&) noexcept            = default;
+  Node& operator=(Node&&) noexcept = default;
+  ~Node()                          = default;
+
   [[nodiscard]] NodeId id() const noexcept { return id_; }
 
   [[nodiscard]] const std::string& name() const noexcept { return name_; }

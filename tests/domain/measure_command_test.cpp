@@ -1126,7 +1126,7 @@ TEST(MeasureCommandScaleTest,
   std::vector<StaveDefinition> clefs;
   clefs.reserve(64);
   for (const StaveId stave_id : stave_ids)
-    clefs.emplace_back(stave_id, Clef::kTreble);
+    clefs.push_back(StaveDefinition{stave_id, Clef::kTreble});
   node->set_timeline(*NodeTimeline::create(std::move(measures), clefs));
   for (std::size_t index = 0; index < track_ids.size(); ++index)
     fill_stave(node->lane(track_ids[index]), stave_ids[index], Rational(64));
