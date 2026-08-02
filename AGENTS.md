@@ -217,37 +217,6 @@ writer target cannot be linked from it.
   Tools-only macOS machine with no Xcode.app. See ADR 0007's Build
   Integration Notes before touching VST3 SDK CMake wiring (Milestone 08).
 
-## Tiered verification policy
-
-Every agent (orchestrator, worker, reviewer) follows three tiers of
-verification that reduce redundant full-suite runs while preserving the final
-quality bar:
-
-- **Tier 1 — focused iteration:** configure only when needed; build the
-  affected target(s); run the focused test binary, GoogleTest filter, or CTest
-  regex for changed behavior; run formatting/lint appropriate to touched files.
-  Used during implementation and every fix round.
-- **Tier 2 — phase candidate:** once before initial review, the worker runs the
-  canonical debug build with zero warnings, full
-  `ctest --preset debug --output-on-failure`, and the full lint target. The
-  reviewer does not receive broken candidates.
-- **Tier 3 — final exact-tree verification:** once after code-review findings
-  are resolved and before commit, the reviewer independently verifies Tier 2
-  plus all seven architecture audits (`cmake --build --preset debug --target
-  audit_architecture`), clang-tidy 18 in `build/tidy`, and the applicable
-  sanitizer suite(s) required by the milestone. This is the full quality bar;
-  it is the final gate run once on the final candidate tree.
-
-**Fix rounds:** fix workers run focused regressions matching the finding and
-the affected target — not the full test suite. They report exactly what
-focused tests ran. The re-reviewer inspects the delta and equivalent defect
-family, runs relevant focused tests, and defers the full Tier 3 run until no
-findings remain.
-
-**Documentation-only changes** that do not alter build, hooks, or configuration
-behavior require diff/frontmatter/script validation, not a repeat C++ sanitizer
-cycle. The final exact tree still passes all required gates.
-
 ## Where to look next
 
 - [docs/plan/README.md](docs/plan/README.md) — product vision, locked

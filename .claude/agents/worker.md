@@ -20,7 +20,8 @@ completed, verified results.
 - The milestone plan files in `docs/plan/` and `AGENTS.md` are the spec. When your task spec
   says to, check off completed steps in the plan file and include that update in the commit.
 
-**Tiered verification (see AGENTS.md for full policy):**
+**Tiered verification (the orchestrator prompt declares the current tier; `AGENTS.md` provides
+canonical commands and engineering guidance):**
 - Use **Tier 1** (focused build/tests/lint) during implementation iteration and fix rounds.
   Build only the affected targets; run only the focused test binary, GoogleTest filter, or
   CTest regex matching the changed behavior; run clang-format on touched files.

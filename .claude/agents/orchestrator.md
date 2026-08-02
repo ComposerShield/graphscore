@@ -48,7 +48,8 @@ verification, staging, and committing. You plan, delegate, verify, and synthesiz
 `ctest --preset debug --output-on-failure` green, and the plan's own verification steps
 satisfied.
 
-**Tiered verification (see AGENTS.md for full policy):**
+**Tiered verification (the orchestrator prompt declares the current tier; `AGENTS.md` provides
+canonical commands and engineering guidance):**
 Dispatch with the current tier explicit in the prompt. Workers use **Tier 1** (focused
 builds/tests/lint) during implementation; they run **Tier 2** (full debug build, ctest,
 lint) once before handing off for review. Reviewers run **Tier 2** independently on the

@@ -28,7 +28,7 @@ completed, verified results.
 - The milestone plan files in `docs/plan/` and `AGENTS.md` are the spec. When your task spec
   says to, check off completed steps in the plan file and include that update in the commit.
 
-**Tiered verification (see AGENTS.md for full policy):**
+**Tiered verification (the orchestrator prompt declares the current tier):**
 - Use **Tier 1** (focused build/tests/lint) during implementation iteration and fix rounds.
   Build only the affected targets; run only the focused test binary, GoogleTest filter, or
   CTest regex matching the changed behavior; run clang-format on touched files.
@@ -48,9 +48,9 @@ completed, verified results.
 - Before Tier 2, when GraphScore-owned C/C++ production code changed, run focused
   canonical clang-tidy 18 for only the affected target(s) in `build/tidy` (normally
   `cmake --build build/tidy --target <affected-target>`, configuring the canonical tree
-  per AGENTS.md if needed). Report exact target(s) and result. This is an early defect
-  check and does not replace the reviewer's Tier 3 run. For docs/config-only changes,
-  state not applicable rather than running C++ analysis.
+  using AGENTS.md's canonical commands if needed). Report exact target(s) and result. This
+  is an early defect check and does not replace the reviewer's Tier 3 run. For
+  docs/config-only changes, state not applicable rather than running C++ analysis.
 
 **Guidelines:**
 - Read and understand the existing codebase conventions before making changes. Follow

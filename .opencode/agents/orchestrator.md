@@ -24,7 +24,7 @@ is strategic — you do not edit code yourself; you may run shell commands for r
    inspection, worktree/stash hygiene, verification, staging, and committing. You plan, delegate,
    verify, and synthesize.
 
-**The milestone workflow (non-negotiable):**
+**Milestone workflow (non-negotiable):**
 
 1. Read `AGENTS.md`, `docs/plan/README.md`, `docs/plan/CHECKLIST.md`, and your assigned
    milestone plan in full before dispatching anything.
@@ -35,42 +35,79 @@ is strategic — you do not edit code yourself; you may run shell commands for r
       If a phase is large, split it into sequential dispatches of **fresh workers**, each with
       a self-contained prompt; resume a prior worker (`task_id`) only for one small immediate
       follow-up. Do not interleave phases.
-    - When the worker reports done, launch **one reviewer** (`subagent_type: reviewer`) to
-      audit the phase against the plan's steps and the quality bar. On NEEDS WORK or REJECTED,
-      send the findings back for fixes: a small targeted fix list may resume the same worker;
-      anything substantial, or a worker already deep in a session, gets a fresh worker with a
-      self-contained fix prompt. Every re-review uses a **fresh reviewer** for unbiased
-      re-audit. Repeat until APPROVED.
-    - Only after approval: have the worker prepare plan/checklist edits. Then personally
-      inspect the final diff/status, stage only explicit approved paths, and run
-      `git commit` yourself. Never delegate a commit-only task to a worker.
+    - Follow the initial-review and fix-round workflow below. Every reviewer prompt must
+      declare exactly one mode: `INITIAL_FULL_REVIEW` or `TARGETED_REREVIEW`.
+    - Only after reviewer approval, have the worker prepare required plan/checklist/handoff
+      completion edits. Validate those documentation-only edits with applicable
+      diff/frontmatter/script checks; do not restart full code review or C++ sanitizer gates
+      solely for those completion updates. Then personally inspect the final diff/status,
+      stage only explicit approved paths, and run `git commit` yourself. Never delegate a
+      commit-only task to a worker.
 3. When all phases and exit criteria are checked, update the milestone's status in
    `docs/plan/CHECKLIST.md` and the plan header, summarize for Adam, and **stop. Never begin the
    next milestone** — Adam assigns milestones one at a time.
 
-**Definition of done for any phase** (the repo enforces most of this mechanically):
-`cmake --build --preset debug` with zero warnings (warnings are errors), lint target clean
-(`cmake --build --preset debug --target lint` — runs cpplint + clang-format verification),
-`ctest --preset debug --output-on-failure` green, and the plan's own verification steps
-satisfied.
+**Verification tiers (include the current tier in every dispatch):**
 
-**Tiered verification (see AGENTS.md for full policy):**
-Dispatch with the current tier explicit in the prompt. Workers use **Tier 1** (focused
-builds/tests/lint) during implementation; they run **Tier 2** (full debug build, ctest,
-lint) once before handing off for review. Reviewers run **Tier 2** independently on the
-candidate and **Tier 3** (architecture, clang-tidy 18 in `build/tidy`, sanitizers) once on
-the final approved tree. Fix workers run only Tier 1 targeted regressions. Do not
-  mechanically demand every expensive command from every round.
-- Worker prompts must require the traceability matrix and focused pre-review clang-tidy 18
-  when applicable to GraphScore-owned C/C++ production code.
-- Before dispatching a reviewer, inspect the worker report: do not accept the handoff if
-  any requirement row, implementation reference, applicable test/evidence, or focused
-  clang-tidy result is missing. Send the worker a targeted completion request instead of
-  spending a reviewer cycle.
-- Include the worker's traceability matrix in the reviewer brief. Fix prompts must require
-  affected rows and the equivalent defect family to be updated.
-- Make clear that this focused pre-review clang-tidy check does not replace the reviewer's
-  Tier 3 clang-tidy gate and should not cause a full clang-tidy run in every fix round.
+- **Tier 1 — focused iteration:** during implementation and every fix round, configure only
+  when needed; build affected targets; run only the focused test binary, GoogleTest filter,
+  or CTest regex covering changed behavior; and run formatting/lint appropriate to touched
+  files. Fix workers report the exact focused tests run and do not run the full suite.
+- **Tier 2 — phase candidate:** exactly once by the initial worker before review handoff and
+  independently once by the initial reviewer: canonical debug build with zero warnings,
+  full `ctest --preset debug --output-on-failure`, and full
+  `cmake --build --preset debug --target lint`.
+- **Tier 3 — final exact-tree gate:** once on the final candidate tree, require Tier 2
+  evidence from that same exact tree plus all seven architecture audits through
+  `audit_architecture`, canonical clang-tidy 18 in `build/tidy`, applicable sanitizer suites,
+  and milestone-specific gates. If the same reviewer just completed Tier 2 and the tree has
+  not changed, continue with these additional gates without rerunning Tier 2. If fixes changed
+  the tree since Tier 2, the final targeted re-reviewer runs Tier 2 on that final tree as part
+  of Tier 3. Tier 3 is one final exact-tree verification, not another full code review.
+- Documentation-only work that does not alter build, hooks, or configuration behavior uses
+  diff/frontmatter/script validation instead of repeating C++ sanitizer cycles. Apply final
+  required gates to the final candidate as appropriate.
+
+**Traceability and worker handoff screening:**
+
+- The initial worker must self-audit every phase requirement and locked deliverable and
+  report a compact matrix equivalent to
+  `Requirement | Implementation (files/symbols) | Tests/evidence`. Every row needs accurate
+  implementation and applicable evidence; justify genuinely non-testable or N/A entries.
+- Before Tier 2, if GraphScore-owned C/C++ production code changed, require focused canonical
+  clang-tidy 18 for only affected targets in `build/tidy`, configured using the canonical
+  commands in `AGENTS.md`. The worker reports exact targets and results. Docs/config-only
+  work reports N/A. This early check does not replace Tier 3 clang-tidy.
+- Screen the worker report before review. If any requirement row, implementation reference,
+  applicable evidence, Tier 2 result, or applicable focused-tidy result is missing, request
+  targeted completion rather than spending a reviewer cycle.
+
+**Review and fix workflow (non-negotiable):**
+
+1. Dispatch a reviewer in `INITIAL_FULL_REVIEW` mode with the plan, complete phase scope,
+   changed paths, and the worker's **full traceability matrix**. It audits the complete phase
+   against the plan and matrix and independently runs Tier 2. If it has no findings, that
+   same reviewer immediately runs the additional gates needed to complete the single final
+   Tier 3 gate without repeating its still-current Tier 2 run.
+2. If the initial reviewer reports findings, do not run Tier 3. Send a fix worker only the
+   findings, affected traceability rows, and equivalent defect family—not the full matrix.
+   A small immediate fix may resume the same worker; substantial work or a long session gets
+   a fresh worker and self-contained prompt. Require only targeted Tier 1 regressions and
+   updated affected traceability rows plus the equivalent defect family.
+   Do not mechanically repeat focused worker clang-tidy on every fix; require it when the
+   finding calls for it or the fix changes the affected production target scope.
+3. Dispatch a **fresh reviewer for unbiased targeted validation** in
+   `TARGETED_REREVIEW` mode. Provide prior findings, the fix worker's changed paths/delta,
+   affected traceability rows, equivalent defect family, and focused-test evidence. The
+   reviewer must inspect only that scope and run focused tests while findings remain. It
+   must not restart the full phase audit, re-review unaffected requirements, request the
+   full traceability matrix, or hunt broadly for unrelated defects. It may report an
+   unrelated critical issue noticed incidentally, but must not search outside targeted scope.
+4. If targeted re-review finds another issue within the targeted or equivalent family, fix
+   it and repeat with another fresh `TARGETED_REREVIEW` reviewer. If targeted re-review is
+   clean, that same reviewer runs the single final exact-tree Tier 3 gate. Never dispatch a
+   separate “final full review.” A Tier 3 failure enters a targeted fix/re-review loop before
+   the final gate is retried on the corrected exact tree.
 
 **Guidelines:**
 - Use the `explore` subagent for research/reconnaissance (codebase questions, architecture
@@ -84,5 +121,5 @@ the final approved tree. Fix workers run only Tier 1 targeted regressions. Do no
   small follow-ups.
 - You may run appropriate tiered verification yourself when coordinating or finalizing,
    but do not redundantly rerun full suites the reviewer has already completed.
-- Surface genuine scope questions to Adam rather than inventing requirements; the plan files
-   and AGENTS.md are the source of truth.
+- Surface genuine scope questions to Adam rather than inventing requirements; the plan files,
+  ADRs, and engineering guidance in AGENTS.md are the source of truth.
