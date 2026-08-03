@@ -197,6 +197,40 @@ Progress is tracked in the source-controlled [execution checklist](CHECKLIST.md)
 | [11](11-engine-release.md) | Unity/Unreal integrations and unsigned `0.1.0` release archives |
 | [12](12-midi-cc.md) | Post-`0.1.0` general MIDI CC authoring and runtime support |
 
+### Execution Order (Adam, 2026-08-03)
+
+**Milestone 05 runs before 03 and 04.** The table above lists milestones by
+identity, not by execution order. Milestone numbers are load-bearing
+cross-references throughout the ADRs, the plan documents, the handoff notes,
+and source comments, so they are never renumbered; only the order in which
+they are worked changes.
+
+Nothing in 03 or 04 gates 05. `cmake/architecture_contract.cmake` is the
+proof: `graphscore_notation`, `graphscore_rendering`, `graphscore_canvas`,
+and `graphscore_accessibility` have no permitted edge to
+`graphscore_persistence`, `graphscore_cooked_format`, `graphscore_loader`,
+`graphscore_scheduler`, or any runtime target. Milestone 02 already delivered
+the editing commands, selection, and clipboard that 05 calls, and 05's
+playback semantics are domain-level (`domain/notation_playback.hpp`), not
+runtime. Audition was already deferred to Milestone 08.
+
+Rationale: Milestone 03 serializes the domain model, and its migration
+fixtures are permanent once a schema ships. Exercising the model through a
+real editing UI first surfaces data-model changes while they are still free.
+
+Consequences to carry:
+
+- 05 cannot save; its first acceptance criterion includes "saved", which stays
+  unsatisfied until 03 lands. The editor is in-memory only until then.
+- Reaching a node is Milestone 06 work, so 05 needs a deliberately temporary
+  node-entry shim rather than a canvas.
+- 05 inherits the rendering-backend bring-up that Milestone 01 left stubbed:
+  the FreeType and HarfBuzz CMake adapters ADR 0002 lists as M1 gates, a
+  shipped SMuFL font (Bravura is cleared spike-only and is explicitly not a
+  default build dependency), the unresolved ThorVG-versus-owned-rasterizer
+  decision, and SDL3's renderer options, which `cmake/SDL3.cmake` currently
+  sets `OFF`. The first three require ADR amendments before any code.
+
 ## Cross-Milestone Definition Of Done
 
 This section applies to **production milestones 01 through 12**. Milestone 00

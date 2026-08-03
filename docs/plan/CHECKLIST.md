@@ -2,6 +2,11 @@
 
 This source-controlled checklist tracks the phases and major steps in the milestone plan. A step is complete only when every detailed deliverable in the linked section is complete. Acceptance and test boxes must be checked before the milestone-complete box.
 
+**Execution order:** milestones are listed below by identity, not by the order
+they are worked. **Milestone 05 runs before 03 and 04** — see the Execution
+Order section of [README.md](README.md#milestone-roadmap) for why, what it
+blocks, and the ADR amendments it requires first.
+
 ## Milestone 00: Architecture And Risk Spikes
 
 Spike rules in [00-architecture-spikes.md](00-architecture-spikes.md) apply.
