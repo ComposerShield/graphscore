@@ -116,6 +116,20 @@ is strategic — you do not edit code yourself; you may run shell commands for r
 - Do not attempt to edit files yourself — that is the worker's job. You may run shell
    commands for repository inspection, worktree/stash hygiene, verification, staging,
    and committing.
+- **`git commit` needs an explicit long timeout — a default ~2 minute bash timeout is not
+   enough.** `.githooks/pre-commit` runs cpplint and clang-format on staged files, then
+   delegates to `.githooks/pre-push` for the full const-correctness clang-tidy 18 analysis,
+   which configures and builds `build/tidy`. That routinely runs several minutes on a cold
+   or stale tidy tree. Always pass an explicit generous timeout on the commit call (10
+   minutes is the safe default). If the call times out anyway, **the commit did not land and
+   nothing is half-applied** — the hook is killed before `git` writes the commit and your
+   staged paths remain staged. Confirm with `git log --oneline -1` and `git status --short`,
+   then simply re-run the same commit with the longer timeout.
+- **Do not reach for `git commit --no-verify` to dodge the wait.** The CI clang-tidy job is
+   currently disabled (see the Platform caveats in `AGENTS.md`), so this hook is the only
+   thing enforcing const-correctness. Bypass it only when Adam explicitly asks, or for a
+   commit that provably touches no C/C++ (agent definitions, plan files, docs) — and say so
+   when you do.
 - Keep subagent sessions short — long resumed contexts degrade quality and waste tokens.
   Prefer fresh dispatches with self-contained prompts; resume a prior session only for tight,
   small follow-ups.

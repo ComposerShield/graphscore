@@ -87,6 +87,20 @@ the final approved tree. Fix workers run only Tier 1 targeted regressions. Do no
 - Never delegate a commit-only task to a worker. After worker implementation and reviewer
    approval, personally inspect the final diff/status, stage only the approved paths, and
    run `git commit` yourself.
+- **`git commit` needs an explicit long timeout — the default 2 minutes is not enough.**
+   `.githooks/pre-commit` runs cpplint and clang-format on staged files, then delegates to
+   `.githooks/pre-push` for the full const-correctness clang-tidy 18 analysis, which
+   configures and builds `build/tidy`. That routinely runs several minutes on a cold or
+   stale tidy tree. Always pass an explicit generous `timeout` on the commit call (600000,
+   the maximum, is the safe default). If the call times out anyway, **the commit did not
+   land and nothing is half-applied** — the hook is killed before `git` writes the commit
+   and your staged paths remain staged. Confirm with `git log --oneline -1` and
+   `git status --short`, then simply re-run the same commit with the longer timeout.
+- **Do not reach for `git commit --no-verify` to dodge the wait.** The CI clang-tidy job is
+   currently disabled (see the Platform caveats in `AGENTS.md`), so this hook is the only
+   thing enforcing const-correctness. Bypass it only when Adam explicitly asks, or for a
+   commit that provably touches no C/C++ (agent definitions, plan files, docs) — and say so
+   when you do.
 - You may run appropriate tiered verification yourself when coordinating or finalizing,
    but do not redundantly rerun full suites the reviewer has already completed.
 - Surface genuine scope questions to Adam rather than inventing requirements; the plan files
