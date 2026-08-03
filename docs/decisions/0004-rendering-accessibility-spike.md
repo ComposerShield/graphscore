@@ -32,6 +32,16 @@ The owned render-list/tessellation fallback (ADR 0002 §3b) is confirmed as the
 active Phase C path. ThorVG remains PROVISIONAL (excluded from default closure)
 pending Meson/Ninja pin resolution.
 
+> **Superseded for production, 2026-08-03**: ADR 0002 §A2 (2026-08-03
+> amendment) accepts ThorVG as the production rasterization backend for
+> Milestone 05, having retired the Meson/Ninja pin blocker referenced above
+> (ADR 0002 §A1). This spike's owned CPU rasterizer remains the true,
+> unaltered record of what Milestone 00 built and validated — including the
+> render-command abstraction proof below — but it is no longer "the active
+> Phase C path" for production; it is retained only as the documented
+> fallback if a future ThorVG pin regresses the build gate (ADR 0002 §3b,
+> ADR 0003 §8).
+
 ### 2. Native OS Accessibility Bridge Selected
 
 **AccessKit is EXCLUDED** from the default build (ADR 0002 §2, confirmed here).
@@ -351,6 +361,10 @@ through VoiceOver on Adam's Mac using the interactive mode (`./m0_spike`).
 
 - The owned render-list/raster fallback is the active Phase C rendering path.
   ThorVG is documented as PROVISIONAL. The ADR 0002 §3b fallback is confirmed.
+  **Superseded for production, 2026-08-03**: see the note under "1. Owned CPU
+  Render-List/Raster Fallback Adopted" above — ADR 0002 §A2 accepts ThorVG as
+  the production backend; the owned fallback is retained only as the
+  documented regression path.
 - Platform-native accessibility APIs are the production path. AccessKit remains
   EXCLUDED from the default build. The ADR 0003 §8 unresolved row is resolved
   by this ADR.

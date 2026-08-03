@@ -226,10 +226,14 @@ Consequences to carry:
   node-entry shim rather than a canvas.
 - 05 inherits the rendering-backend bring-up that Milestone 01 left stubbed:
   the FreeType and HarfBuzz CMake adapters ADR 0002 lists as M1 gates, a
-  shipped SMuFL font (Bravura is cleared spike-only and is explicitly not a
-  default build dependency), the unresolved ThorVG-versus-owned-rasterizer
-  decision, and SDL3's renderer options, which `cmake/SDL3.cmake` currently
-  sets `OFF`. The first three require ADR amendments before any code.
+  shipped SMuFL font, the ThorVG-versus-owned-rasterizer decision, and SDL3's
+  renderer options, which `cmake/SDL3.cmake` currently sets `OFF`. All four
+  are now resolved by ADR amendment (ADR 0002 §§A1-A5, ADR 0003 §8, both
+  2026-08-03): ThorVG is accepted as the production rasterization backend,
+  Bravura is promoted to a default build dependency (no longer spike-only),
+  and SDL3's renderer options are specified to flip `ON`. The CMake bring-up
+  implementing those amendments is still pending — the decisions are
+  resolved, the code is not.
 
 ## Cross-Milestone Definition Of Done
 

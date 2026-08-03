@@ -42,6 +42,7 @@ CMake configuration are documented as excluded.
 | **Required notices** | None mandatory. Acknowledgment in product documentation is appreciated but not required. The zlib license notice itself must be retained in source distributions. |
 | **Specified closure (UNEXECUTED — M1 adapter required)** | None vendored. All retained backends (Cocoa, Wayland, X11) are platform OS services / system SDKs. SDL_DIRECTX, SDL_KMSDRM, and all audio subsystems disabled (see ADR 0002 §1). HIDAPI disabled (BSD 3-clause inventoried but no consuming subsystem enabled). All unreviewed optional integrations explicitly OFF: PipeWire, ALSA, PulseAudio, JACK, sndio, OSS, Fribidi, libthai, D-Bus, IBus, liburing, libudev, Raspberry Pi video, Rockchip video, Vivante video, Wayland libdecor. X11 extensions audited and explicitly decided per ADR 0002 §1. SDL_OPENGLES, SDL_DUMMYVIDEO, SDL_OFFSCREEN, SDL_SYSTEM_ICONV, SDL_DLOPEN_NOTES, and SDL_XINPUT all explicitly OFF. SDL3 `src/hidapi/` directory at this SHA is tri-licensed (GPLv3 / BSD 3-clause / original HIDAPI); GraphScore selects BSD 3-clause when evaluating. `src/hidapi/LICENSE-bsd.txt`, `LICENSE-gpl3.txt`, and `LICENSE-orig.txt` are present in the SDL3 source tree at the pinned SHA. No `src/3rdparty/` directory exists at this SHA. Full option set and citation of default sources documented in ADR 0002 §1. Residual risk: `SDL_PIPEWIRE` is `set_option(${UNIX_SYS})` with no `SDL_AUDIO` dependency guard (line ~480 of CMakeLists.txt at pinned SHA) — defaults ON on Linux regardless of `SDL_AUDIO=OFF`; the specification forces it OFF but this must be confirmed via M1 configure-cache. |
 | **Distribution** | Redistributable in source and binary form provided the zlib license notice is retained (`docs/licenses/SDL3-LICENSE.txt`). |
+| **Presentation path (2026-08-03, corrected in fix round)** | GraphScore presents via GPU-backed SDL renderers: ThorVG's CPU-rasterized buffer is uploaded to a streaming `SDL_Texture` and presented through `SDL_CreateRenderer`, backed by Metal (macOS), D3D11 (Windows), and OpenGL (Linux). `SDL_RENDER` flips `ON` for M05 on every platform; `SDL_DIRECTX` (Windows) and `SDL_OPENGL` (Linux) also flip `ON` from the `OFF` values recorded in the closure above, superseding those two specific entries — the rest of the specified closure row above (PipeWire/ALSA/PulseAudio/JACK/etc., X11 extensions, HIDAPI) is unaffected. Per-platform graphics-API flags needed to obtain a renderer backend under `SDL_RENDER=ON`, and the ADR evidence for each, are recorded in ADR 0002 §A5. This does not change the PROVISIONAL status above; it is a Round 2 implementation item against that section. |
 
 ---
 
@@ -93,7 +94,7 @@ platform-native accessibility APIs.
 
 | Field | Detail |
 |-------|--------|
-| **Status** | PROVISIONAL — excluded from selected default closure |
+| **Status** | **ACCEPTED** — production rasterization backend for `graphscore_rendering` (ADR 0002 §A2, 2026-08-03 amendment). All three former acceptance blockers below are retired; the CMake adapter (`cmake/ThorVG.cmake`) and its empirical validation are implemented in a later M05 round against the blueprint in that amendment. |
 | **Repository** | https://github.com/thorvg/thorvg |
 | **Pinned SHA** | `6d5933c9d1aca94635c6ad8129f3530ae554d423` (2026-07-18) |
 | **License** | MIT |
@@ -101,10 +102,11 @@ platform-native accessibility APIs.
 | **SPDX** | MIT |
 | **Patent grant** | None (MIT license contains no patent clause) |
 | **Required notices** | Copyright (c) 2020-2026 ThorVG Project. MIT notice must appear in all copies. |
-| **Build system** | Meson only at the pinned SHA. No CMakeLists.txt provided. |
-| **Acceptance blockers** | (1) Meson and Ninja toolchain — their exact immutable revisions, licenses, and offline acquisition must be specified in an ADR before ThorVG can be accepted. (2) A reproducible `cmake/ThorVG.cmake` adapter must be designed and tested in the Phase C spike. (3) Enabled features, binary size, and platform compatibility must be empirically validated. |
-| **Distribution** | MIT terms. Obligations not currently active (excluded from default closure). |
-| **Fallback** | Owned toolkit-neutral vector render-list/tessellation layer (Phase C). |
+| **Build system** | Meson only at the pinned SHA. No CMakeLists.txt provided. Driven via a Meson-driven `ExternalProject_Add`, consumed as an `IMPORTED` static library — see ADR 0002 §A2.1 for the integration mechanism and the rejected GraphScore-authored-CMake alternative. |
+| **Enabled feature set** | `default_library=static` (the option that actually selects the produced artifact type — `libthorvg-1.a`, not `libthorvg-1.dylib`/`.so`/`.dll`), `libdir=lib`, `includedir=include`, `namingscheme=classic` (all three pin Meson's own build-system defaults explicitly, rather than relying on them, so the installed archive path/filename is host-independent — Round 1 review correction), `engines=cpu`, `loaders=`, `savers=`, `bindings=`, `tools=`, `tests=false`, `log=false`, `static=true` (kept only to record intent; read by zero live code once every loader is disabled — `default_library` above, not this option, controls whether the archive is static), `threads=true`, `simd=false`, `partial=true`, `file=true`, `extra=` (ADR 0002 §A2.2, corrected in the fix round and Round 1 review). No optional loader (FreeType/libpng/libjpeg-turbo/libwebp, or ThorVG's vendored `jerryscript` Lottie-expression engine) is enabled. |
+| **Former acceptance blockers (retired 2026-08-03)** | (1) Meson and Ninja toolchain — pinned and licensed in ADR 0002 §A1 (both Apache-2.0). (2) `cmake/ThorVG.cmake` adapter — blueprint specified in ADR 0002 §A2.1–§A2.3; implementation is a later M05 round. (3) Empirical validation of enabled features, binary size, and platform compatibility — remains a build-gate requirement for that same round. |
+| **Distribution** | MIT terms apply to the ThorVG library itself. |
+| **Fallback** | Owned toolkit-neutral vector render-list/tessellation layer, retained as the documented regression path if a future ThorVG pin regresses the build gate (ADR 0002 §3b, ADR 0003 §8). |
 
 ---
 
@@ -346,7 +348,7 @@ https://raw.githubusercontent.com/freetype/freetype/f01dec5e676847267834b881b25f
 
 | Field | Detail |
 |-------|--------|
-| **Status** | POLICY-CLEARED — spike-only font asset (OFL 1.1). Not a default build dependency; included for Phase C rendering spike demonstration. Production may use the same or an alternative SMuFL font. |
+| **Status** | **Default build dependency** (OFL 1.1), promoted from spike-only in ADR 0002 §A4 (2026-08-03 amendment). Bravura is the shipped SMuFL music font for Milestone 05 notation rendering. |
 | **Repository** | https://github.com/steinbergmedia/bravura |
 | **Pinned SHA** | `02e8ed29a29115df35007d1178cebaeee26c20e1` |
 | **License** | SIL Open Font License 1.1 |
@@ -354,8 +356,10 @@ https://raw.githubusercontent.com/freetype/freetype/f01dec5e676847267834b881b25f
 | **Committed license** | `docs/licenses/Bravura-OFL.txt` |
 | **SPDX** | OFL-1.1 |
 | **Patent grant** | None (OFL 1.1; copyright and trademark only) |
-| **Required notices** | Copyright © 2019, Steinberg Media Technologies GmbH, with Reserved Font Name "Bravura". The OFL 1.1 notice must be included. Condition 3 of the OFL restricts use of the Reserved Font Name "Bravura" in modified versions without written permission. |
+| **Required notices** | Copyright © 2019, Steinberg Media Technologies GmbH, with Reserved Font Name "Bravura". The OFL 1.1 notice must be included. Condition 3 of the OFL restricts use of the Reserved Font Name "Bravura" in modified versions without written permission; GraphScore does not modify the font. The OFL preamble's "not sold by themselves" condition permits bundling the unmodified font inside the GraphScore Writer distribution but forbids selling `Bravura.otf` standalone — see ADR 0002 §A4 for the full compliance statement. |
 | **Used file** | `redist/otf/Bravura.otf` at pinned SHA |
+| **Artifact SHA-256** | `dca2d90c88437a701b1c2e71fa54e76f9fa41d7deee935d74dc871ea66ecfdd2` |
+| **Build tool integration** | `file(DOWNLOAD ... EXPECTED_HASH SHA256=dca2d90c88437a701b1c2e71fa54e76f9fa41d7deee935d74dc871ea66ecfdd2)` from the pinned raw URL, following the ADR 0004 §6 Noto Sans acquisition pattern exactly (ADR 0002 §A4): a `BRAVURA_FONT_SRC` `FILEPATH` cache-variable override for offline builds, SHA-256 verified at configure time on every acquisition path with `FATAL_ERROR` on mismatch, and no system-font fallback. |
 | **Distribution** | Redistributable in source and binary form under OFL 1.1. Must retain the copyright notice and license text. |
 
 ---
@@ -394,6 +398,43 @@ https://raw.githubusercontent.com/freetype/freetype/f01dec5e676847267834b881b25f
 
 ---
 
+## 14. Meson — ThorVG Build Toolchain
+
+| Field | Detail |
+|-------|--------|
+| **Status** | POLICY-CLEARED as a build-tool dependency (ADR 0002 §A1.1, 2026-08-03 amendment). Never linked into, `#include`d by, or shipped inside any GraphScore or ThorVG binary artifact — it drives ThorVG's own build only. |
+| **Repository** | https://github.com/mesonbuild/meson |
+| **Pinned SHA** | `ff84a1ab2699385f67eea990260a20beb2b46c98` (release `1.11.2`) |
+| **License** | Apache License 2.0 |
+| **License file at SHA** | https://raw.githubusercontent.com/mesonbuild/meson/ff84a1ab2699385f67eea990260a20beb2b46c98/COPYING |
+| **Committed license** | `docs/licenses/Meson-COPYING.txt` |
+| **SPDX** | Apache-2.0 |
+| **Patent grant** | Yes — Apache-2.0 §3 |
+| **Required notices** | Standard Apache-2.0 NOTICE/attribution retention; no additional obligation. |
+| **Minimum Python** | `>= 3.7.0` at the pinned SHA. Satisfied by this repository's Python (3.9.6 at review time); not a blocker. |
+| **Build tool integration** | `FetchContent_MakeAvailable` (corrected, fix round — not the deprecated single-argument `FetchContent_Populate` form the original draft specified; Meson has no `CMakeLists.txt` anywhere in its tree, so `MakeAvailable` safely populates the source without ever attempting `add_subdirectory`, per CMake's own `FetchContent.cmake` logic); invoked directly as `${Python3_EXECUTABLE} ${meson_SOURCE_DIR}/meson.py`. No `pip install`, no PyPI access. `FETCHCONTENT_SOURCE_DIR_MESON` for offline builds; covered automatically by `graphscore_offline_dependencies`'s generic dependency discovery. See ADR 0002 §A1 for the full acquisition and timing design. |
+| **Distribution** | Apache-2.0 terms. Build-tool only; no distribution obligation attaches to any shipped GraphScore artifact. |
+
+---
+
+## 15. Ninja — ThorVG Build Toolchain
+
+| Field | Detail |
+|-------|--------|
+| **Status** | POLICY-CLEARED as a build-tool dependency, license/provenance record only (ADR 0002 §A1.2, corrected in the 2026-08-03 fix round). Not fetched or built from source: located via `find_program` with a version floor. Never linked into, `#include`d by, or shipped inside any GraphScore or ThorVG binary artifact — it drives ThorVG's own build only. |
+| **Repository** | https://github.com/ninja-build/ninja |
+| **Pinned SHA (license/provenance record, not built; not the source of the version floor)** | `3441b633c2fe2c494e958780ba0f4227b1327634` (release `v1.13.2`) |
+| **License** | Apache License 2.0 |
+| **License file at SHA** | https://raw.githubusercontent.com/ninja-build/ninja/3441b633c2fe2c494e958780ba0f4227b1327634/COPYING |
+| **Committed license** | `docs/licenses/Ninja-COPYING.txt` |
+| **SPDX** | Apache-2.0 |
+| **Patent grant** | Yes — Apache-2.0 §3 |
+| **Required notices** | Standard Apache-2.0 NOTICE/attribution retention; no additional obligation. |
+| **Build tool integration** | **Corrected, fix round; floor further corrected, Round 1 review**: `find_program(GRAPHSCORE_NINJA_EXECUTABLE NAMES ninja ninja-build REQUIRED)` plus a `1.8.2` version-floor check against `${GRAPHSCORE_NINJA_EXECUTABLE} --version` — `1.8.2` is Meson's own documented minimum (`ninja_required_version` in its generated build files), not the pinned SHA's tagged `1.13.2`, which is unsatisfiable by this repository's own Ubuntu 24.04 and Windows CI images. No `FetchContent`, no source build, no `ninja` CMake target. Every GraphScore CMake preset already requires a working `ninja` on the build host as its generator (`CMakePresets.json`), and CI already installs it independently for that reason, so building a second copy from pinned source added no value and reintroduced the class of hazard ADR 0002 §A7.2 documents generally: Ninja's own `CMakeLists.txt` gates `ninja_test` behind `include(CTest); if(BUILD_TESTING)`, and inside that block declares its own independent `FetchContent_Declare(googletest URL .../googletest-1.16.0.tar.gz ...)` under the same `googletest` FetchContent name this repository's own `cmake/dependencies.cmake` already declares (§13) — a name collision, not merely a redundant fetch. See ADR 0002 §A1.2 for the full withdrawal rationale. No `FETCHCONTENT_SOURCE_DIR_NINJA` exists and none is needed: `find_program` never touches the network. |
+| **Distribution** | Apache-2.0 terms. Build-tool only; no distribution obligation attaches to any shipped GraphScore artifact. |
+
+---
+
 ## Standard Library and Compiler Runtime
 
 GraphScore links against the platform C++ standard library (libc++ on
@@ -409,7 +450,7 @@ vendored.
 |---|------------|--------|-----|---------|
 | 1 | SDL3 | PROVISIONAL | `08b9c55393be5cb08fbec12ca431470faba3c8c9` | Zlib |
 | 2 | accesskit-c | EXCLUDED | `826d672661f9453c8b269ab3946dbcbae6300555` | MIT OR Apache-2.0 |
-| 3 | ThorVG | PROVISIONAL (excluded) | `6d5933c9d1aca94635c6ad8129f3530ae554d423` | MIT |
+| 3 | ThorVG | **ACCEPTED** (production) | `6d5933c9d1aca94635c6ad8129f3530ae554d423` | MIT |
 | 4 | HarfBuzz | PROVISIONAL | `af192b7e0f49a9965220ba3f18473e3f8e28b8b9` | Old MIT |
 | 5 | FreeType | POLICY-CLEARED | `f01dec5e676847267834b881b25f6e8c79581163` | FTL |
 | 6 | miniaudio | PROVISIONAL | `9634bedb5b5a2ca38c1ee7108a9358a4e233f14d` | Unlicense OR MIT-0 |
@@ -417,6 +458,8 @@ vendored.
 | 8 | RtMidi | PROVISIONAL | `a3233c22949342f6697681e2cf2403e27fcf0c9e` | MIT |
 | 9 | VST3 SDK | DEFERRED | To be pinned | MIT |
 | 10 | MIDI encoding | Owned code | N/A | Apache-2.0 |
-| 11 | Bravura | POLICY-CLEARED (spike) | `02e8ed29a29115df35007d1178cebaeee26c20e1` | OFL-1.1 |
+| 11 | Bravura | **POLICY-CLEARED (default build dependency)** | `02e8ed29a29115df35007d1178cebaeee26c20e1` | OFL-1.1 |
 | 12 | Noto Sans | POLICY-CLEARED (spike-only text font) | `ffebf8c1ee449e544955a7e813c54f9b73848eac` | OFL-1.1 |
 | 13 | GoogleTest | POLICY-CLEARED (production test framework) | `6910c9d9165801d8827d628cb72eb7ea9dd538c5` | BSD 3-Clause |
+| 14 | Meson | POLICY-CLEARED (build tool) | `ff84a1ab2699385f67eea990260a20beb2b46c98` | Apache-2.0 |
+| 15 | Ninja | POLICY-CLEARED (build tool) | `3441b633c2fe2c494e958780ba0f4227b1327634` | Apache-2.0 |
