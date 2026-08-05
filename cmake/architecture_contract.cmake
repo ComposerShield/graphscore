@@ -64,6 +64,12 @@ set(GRAPHSCORE_PRODUCTION_TARGETS
 # Test targets, admitted to the contract by the ADR 0003 §2.3 amendment that
 # M1 records. Each links exactly GTest::gtest_main plus the target under test
 # and that target's own permitted edges.
+#
+# graphscore_rendering_test is the first writer-side test target, named by
+# the 2026-08-04 amendment; it follows the identical pattern as every other
+# entry here (see that amendment for why it needs no external edge of its
+# own despite graphscore_rendering privately linking FreeType/HarfBuzz/
+# ThorVG).
 set(GRAPHSCORE_TEST_TARGETS
   graphscore_core_test
   graphscore_domain_test
@@ -73,6 +79,7 @@ set(GRAPHSCORE_TEST_TARGETS
   graphscore_scheduler_test
   graphscore_loader_test
   graphscore_runtime_test
+  graphscore_rendering_test
   gs_c_consumer
 )
 
@@ -214,6 +221,7 @@ set(GRAPHSCORE_PUBLIC_EDGES_graphscore_persistence_test
 set(GRAPHSCORE_PUBLIC_EDGES_graphscore_scheduler_test graphscore_scheduler)
 set(GRAPHSCORE_PUBLIC_EDGES_graphscore_loader_test graphscore_loader)
 set(GRAPHSCORE_PUBLIC_EDGES_graphscore_runtime_test graphscore_runtime)
+set(GRAPHSCORE_PUBLIC_EDGES_graphscore_rendering_test graphscore_rendering)
 set(GRAPHSCORE_PUBLIC_EDGES_gs_c_consumer graphscore_runtime)
 
 # GTest is permitted for test targets only. A production target linking

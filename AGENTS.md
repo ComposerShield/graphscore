@@ -214,6 +214,27 @@ writer target cannot be linked from it.
   to an organization account, const-correctness is enforced only by
   `.githooks/pre-commit`, so running `./scripts/bootstrap.sh` is no longer
   optional: without the hooks installed, nothing checks it.
+- Because `.githooks/pre-push`'s const-correctness analysis configures with
+  `-DGRAPHSCORE_BUILD_WRITER=OFF` (matching the disabled CI job's own scope,
+  for the same third-party-code-cost reason above), any code inside a
+  `#if defined(GRAPHSCORE_HAVE_RENDERING_BACKEND)` block (or any other
+  writer-only, `GRAPHSCORE_BUILD_WRITER`-gated branch) is never reached by
+  either the hook or CI's clang-tidy analysis — `src/rendering/rendering.cpp`
+  is the current example. A second, writer-ON local pass was considered and
+  rejected for the hook specifically: configuring with
+  `-DGRAPHSCORE_BUILD_WRITER=ON` unconditionally fetches and configures SDL3
+  and drives ThorVG's separate Meson/Ninja build (`cmake/ThorVG.cmake`) even
+  when the tidy target list is scoped to `graphscore_rendering` alone, since
+  all four M05 rendering dependencies are fetched together behind one
+  `if (GRAPHSCORE_BUILD_WRITER)` gate — the same cost profile that took the
+  CI clang-tidy job off the critical path in the first place, now forced
+  onto every local `git push` rather than only on changes that touch a
+  gated branch. Until this repository moves to an organization account and
+  restores the CI clang-tidy job (at which point it should run the writer-ON
+  configuration too, closing this gap centrally), a reviewer or worker
+  touching a `GRAPHSCORE_BUILD_WRITER`-gated branch must run the canonical
+  `build/tidy` command above with `-DGRAPHSCORE_BUILD_WRITER=ON` by hand and
+  report the result, as this milestone's rendering-dependency work did.
 - Linux needs X11, Wayland, and xkbcommon development packages for the SDL3
   build; see `.github/workflows/ci.yml` for the exact list.
 - SDL3 at the pinned SHA needs three macOS frameworks linked that it does not

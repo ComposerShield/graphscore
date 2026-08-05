@@ -852,3 +852,118 @@ resolution does not alter the forbidden-edge matrix.
   `graphscore_accessibility_platform`, and add rendering backend alternatives
   without modifying the forbidden-edge matrix. The boundaries are designed to
   accommodate these provisional decisions.
+
+---
+
+## Amendment (2026-08-04): Writer-Side Test Target Edge and Enforcement Gap
+
+This amendment is purely additive: no table, decision text, or audit
+description in §1-§7 above is edited, reordered, or removed. It resolves a
+Round 2a review finding on M05 Phase 1's ThorVG/FreeType/HarfBuzz CMake
+bring-up.
+
+### Context
+
+`tests/rendering/` defines `graphscore_rendering_test`, the first **writer-side**
+test target in the repository: every test target §2.3 names is clean-side
+(`graphscore_core_test` through `graphscore_runtime_test`, plus
+`gs_c_consumer`). §2.3's own text already states the general rule — "A test
+target links exactly one GraphScore target... plus the test framework. It
+inherits that target's own permitted edges transitively and may add none of
+its own" — but its *named* test-target table (§2.3 point 2) does not yet list
+this target, and §7.1's enforcement of "reject any test target not named
+above" turned out not to exist: `cmake/ArchitectureAudit.cmake`'s
+`graphscore_write_target_graph()` silently `continue()`s past any buildsystem
+target absent from `GRAPHSCORE_ALL_TARGETS` rather than rejecting it, so an
+unlisted target — writer-side or otherwise — was invisible to every audit
+in §7, not merely unchecked by the one meant to name it.
+
+### Resolution
+
+**1. `graphscore_rendering_test` is named**, exactly as §2.3 point 2 already
+specifies for every other test target:
+
+| Test target | Internal edge | External edge |
+|---|---|---|
+| `graphscore_rendering_test` | `graphscore_rendering` | `GTest::gtest_main` |
+
+Added to `GRAPHSCORE_TEST_TARGETS` and given
+`GRAPHSCORE_PUBLIC_EDGES_graphscore_rendering_test = graphscore_rendering` in
+`cmake/architecture_contract.cmake`, following the identical pattern every
+other row in §2.3's table already uses (the shared
+`GRAPHSCORE_TEST_FRAMEWORK_TARGETS` loop supplies the external edge).
+
+**2. No writer-side-specific rule is needed; §2.3's existing rule already
+generalizes.** The two sub-questions the review raised are both resolved by
+what the existing audits actually observe, not by inventing a new category:
+
+- **Does the test get its own external-edge entry for the third-party
+  libraries its tested target privately links (FreeType, HarfBuzz, ThorVG)?
+  No.** `graphscore_rendering` links all three `PRIVATE`
+  (`src/rendering/CMakeLists.txt`), which places them in
+  `graphscore_rendering`'s own `LINK_LIBRARIES` and never in its
+  `INTERFACE_LINK_LIBRARIES`. `audit_permitted_edges` (§7.1) reads only a
+  target's own direct `LINK_LIBRARIES`/`INTERFACE_LINK_LIBRARIES` — not the
+  transitive closure — so `graphscore_rendering_test`'s dumped direct edges
+  are exactly `{graphscore_rendering, GTest::gtest_main}`, confirmed against
+  the configure-time target-graph dump. This is the same shape every other
+  test target already has — e.g. `graphscore_runtime_test`'s direct edges
+  never include `graphscore_runtime_impl`, which `graphscore_runtime` links
+  `PRIVATE` — so §2.3's existing single-row-per-test-target pattern already
+  covers a tested target with private third-party edges without
+  modification.
+- **Must the contract entry be conditional on `GRAPHSCORE_BUILD_WRITER`?
+  No — unlike `graphscore_writer_shell`'s `SDL3` edge (linked only inside
+  `if (GRAPHSCORE_BUILD_WRITER)`, so the edge itself is absent from the
+  dump when the writer is off), `tests/rendering/CMakeLists.txt` links
+  `graphscore_rendering` and `GTest::gtest_main` unconditionally; only the
+  `GRAPHSCORE_BRAVURA_FONT_PATH` compile definition is gated. The target's
+  direct edges are therefore identical in both configurations, so the
+  contract entry is a plain, unconditional row like every other test
+  target's — the writer-shell precedent (an edge present in only one
+  configuration) simply does not apply here.
+
+This generalizes: any future writer-side test target follows the identical
+§2.3 procedure — named individually in the test-target table with the one
+internal edge (the target under test) and `GTest::gtest_main`, no
+third-party edges of its own regardless of what the tested target privately
+links, gated only if its own direct edges genuinely differ by configuration.
+No further ADR amendment is needed to state this rule again; a future test
+target still requires an ADR amendment to be *named*, exactly as every
+existing test target did, so that §7.1's enforcement (below) continues to
+reject anything not explicitly listed.
+
+**3. §7.1's stated enforcement now exists.**
+`cmake/ArchitectureAudit.cmake`'s `graphscore_write_target_graph()` now
+treats a buildsystem target matching the `graphscore_`/`gs_` naming
+convention and absent from `GRAPHSCORE_ALL_TARGETS` as a configure-time
+`FATAL_ERROR`, not a silent skip, so §2.3's claim that unlisted test targets
+are rejected is mechanically true rather than aspirational. This applies to
+any GraphScore- or `gs_`-prefixed target, not only test targets, since the
+same silent-skip gap applied equally to an unlisted production target. The
+out-of-tree consumer executables under `tests/cmake/consumer/` and
+`tests/cmake/writer_leak/` (`consumer_cxx`, `consumer_c`,
+`writer_leak_probe`) and the Milestone 00 spike executable
+(`spikes/m0/vst3-hosting`'s `m0_vst3_spike`) are unaffected: none matches the
+`graphscore_`/`gs_` naming pattern, and none is reached by
+`add_subdirectory` from the main build tree (§2.3's closing paragraph and
+§7.8 already record the first two as deliberately outside the target DAG,
+configured as separate CMake projects).
+
+**Recorded exception: `graphscore_warnings`.** Enabling the check above
+surfaced one pre-existing target this ADR's tables never named:
+`graphscore_warnings` (`cmake/Warnings.cmake`), the `INTERFACE` library
+carrying only compile-warning flags that `graphscore_apply_warnings()`
+applies to every owned target. It is not a production or test target in
+§1/§2's sense — it has no link libraries, include directories, or
+transitive targets of its own — and `cmake/audit_permitted_edges.cmake`
+already documented and treated it identically before this amendment: listed
+by name as permitted infrastructure on every target's edge list ("carries
+only compile options... infrastructure rather than an architectural edge"),
+rather than as an audited node. `graphscore_write_target_graph()`'s new
+check excludes it by exact name for the same reason. This is a narrow,
+low-risk continuation of an already-accepted design (the target predates
+this amendment and this fix round only made its existing treatment
+consistent between the two files that reference it), but it is recorded
+here as a fix-round decision for confirmation rather than folded silently
+into the pattern-matching rule.

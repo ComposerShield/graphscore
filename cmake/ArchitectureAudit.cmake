@@ -76,6 +76,55 @@ function(graphscore_write_target_graph)
     # are third-party and are audited by their appearance in a GraphScore
     # target's edges, not by their own internal wiring.
     if (NOT target IN_LIST GRAPHSCORE_ALL_TARGETS)
+      # ADR 0003 §2.3: "The machine audits... reject any test target not
+      # named above." A target following the graphscore_/gs_ naming
+      # convention but absent from GRAPHSCORE_ALL_TARGETS must fail
+      # configure rather than silently vanish from every §7 audit --
+      # otherwise it can acquire any edge (a writer-only third-party
+      # library, a forbidden internal target) with all seven audits
+      # reporting clean, since none of them ever see it.
+      #
+      # graphscore_warnings (cmake/Warnings.cmake) is the one deliberate,
+      # pre-existing exception: an INTERFACE library carrying only compile
+      # options -- no link libraries, no include directories, no transitive
+      # targets -- applied identically to every owned target.
+      # cmake/audit_permitted_edges.cmake already documents and treats it as
+      # "infrastructure rather than an architectural edge", permitted on
+      # every target's edge list rather than being an audited node itself.
+      # It is not a production or test target and does not belong in
+      # GRAPHSCORE_ALL_TARGETS.
+      #
+      # The exemption is *checked*, not assumed: it holds only while the
+      # target stays edge-free. The moment it gains link libraries or include
+      # directories it becomes an architectural participant, and a blanket
+      # name-based skip would keep it invisible to all seven audits exactly
+      # when it started to matter.
+      if (target STREQUAL "graphscore_warnings")
+        get_target_property(gs_warnings_links
+          graphscore_warnings INTERFACE_LINK_LIBRARIES)
+        get_target_property(gs_warnings_includes
+          graphscore_warnings INTERFACE_INCLUDE_DIRECTORIES)
+        if (gs_warnings_links OR gs_warnings_includes)
+          message(FATAL_ERROR
+            "graphscore_warnings is exempt from the architecture contract "
+            "only because it carries compile options alone "
+            "(cmake/audit_permitted_edges.cmake, ADR 0003 amendment "
+            "2026-08-04). It has gained INTERFACE_LINK_LIBRARIES "
+            "'${gs_warnings_links}' or INTERFACE_INCLUDE_DIRECTORIES "
+            "'${gs_warnings_includes}', so it is now an architectural "
+            "participant and must be named in GRAPHSCORE_ALL_TARGETS with "
+            "an ADR 0003 amendment, or stripped back to compile options.")
+        endif()
+      elseif (target MATCHES "^(graphscore_|gs_)")
+        message(FATAL_ERROR
+          "Target '${target}' matches the GraphScore/gs_ naming convention "
+          "but is not listed in GRAPHSCORE_ALL_TARGETS "
+          "(cmake/architecture_contract.cmake). Every such target must be "
+          "named in the architecture contract, backed by an ADR 0003 "
+          "amendment (see the 2026-08-04 amendment for the precedent), "
+          "before it can exist in this build -- otherwise it is invisible "
+          "to every audit in ADR 0003 §7.")
+      endif()
       continue()
     endif()
 

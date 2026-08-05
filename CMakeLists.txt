@@ -54,7 +54,17 @@ if (GRAPHSCORE_BUILD_TESTS)
 endif()
 
 if (GRAPHSCORE_BUILD_WRITER)
+  # HarfBuzz must precede FreeType: HarfBuzz's own CMakeLists.txt contains a
+  # non-overridable guard that forces a link to FreeType if a `freetype`
+  # target already exists at the point HarfBuzz is configured (ADR 0002 §4,
+  # §A3). Do not reorder these two include() calls.
+  include(HarfBuzz)
+  include(FreeType)
   include(SDL3)
+  # ThorVG and Bravura carry no ordering constraint relative to the three
+  # include() calls above or to each other (ADR 0002 §A7.1).
+  include(ThorVG)
+  include(Bravura)
 endif()
 
 add_subdirectory(src)
