@@ -232,8 +232,12 @@ Consequences to carry:
   2026-08-03): ThorVG is accepted as the production rasterization backend,
   Bravura is promoted to a default build dependency (no longer spike-only),
   and SDL3's renderer options are specified to flip `ON`. The CMake bring-up
-  implementing those amendments is still pending — the decisions are
-  resolved, the code is not.
+  implementing those amendments landed in Milestone 05's first phase: all
+  four adapters (`cmake/ThorVG.cmake`, `cmake/FreeType.cmake`,
+  `cmake/HarfBuzz.cmake`, `cmake/Bravura.cmake`) are wired, SDL3's renderer
+  options flip `ON` behind per-platform derived-probe assertions, and the
+  writer installs the shipped font and its third-party notice set. What
+  remains is the notation work itself, not the dependency bring-up.
 
 ## Cross-Milestone Definition Of Done
 

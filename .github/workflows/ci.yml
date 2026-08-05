@@ -174,7 +174,8 @@ jobs:
             clang ninja-build \
             libx11-dev libxext-dev libxcursor-dev libxi-dev \
             libxfixes-dev libxrandr-dev \
-            libwayland-dev wayland-protocols libxkbcommon-dev
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            libgl-dev mesa-common-dev
 
       - name: Install macOS toolchain
         if: runner.os == 'macOS'
@@ -194,7 +195,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/${{ matrix.preset }}/_deps
-          key: deps-${{ matrix.runner }}-${{ hashFiles('cmake/dependencies.cmake', 'cmake/SDL3.cmake') }}
+          key: deps-${{ matrix.runner }}-${{ hashFiles('cmake/dependencies.cmake', 'cmake/SDL3.cmake', 'cmake/ThorVG.cmake', 'cmake/FreeType.cmake', 'cmake/HarfBuzz.cmake', 'cmake/Bravura.cmake') }}
           restore-keys: deps-${{ matrix.runner }}-
 
       - name: Configure
@@ -257,7 +258,8 @@ jobs:
             clang ninja-build \
             libx11-dev libxext-dev libxcursor-dev libxi-dev \
             libxfixes-dev libxrandr-dev \
-            libwayland-dev wayland-protocols libxkbcommon-dev
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            libgl-dev mesa-common-dev
 
       - name: Install Windows toolchain
         if: runner.os == 'Windows'
@@ -346,8 +348,18 @@ jobs:
 
       - name: Assert no writer dependency was fetched
         run: |
-          if [ -d build/ci/_deps/sdl3-src ]; then
-            echo "A runtime-only build fetched SDL3." >&2
+          fail=0
+          for dir in sdl3-src meson-src thorvg-src freetype-src harfbuzz-src; do
+            if [ -d "build/ci/_deps/$dir" ]; then
+              echo "A runtime-only build fetched $dir." >&2
+              fail=1
+            fi
+          done
+          if [ -e build/ci/bravura_font/Bravura.otf ]; then
+            echo "A runtime-only build downloaded the Bravura font." >&2
+            fail=1
+          fi
+          if [ "$fail" -ne 0 ]; then
             exit 1
           fi
           echo "No writer dependency present."

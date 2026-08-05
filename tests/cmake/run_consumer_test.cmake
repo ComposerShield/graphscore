@@ -7,7 +7,9 @@
 #
 #   1. Install GraphScore Runtime into a scratch prefix.
 #   2. Assert the install tree contains only the runtime closure and the
-#      public C header — no writer library, no writer header.
+#      public C header — no writer library, no writer header; and (2b) that
+#      the writer-only resource install (Bravura font, third-party notices,
+#      ADR 0002 §A4/§5) is present or absent to match GRAPHSCORE_BUILD_WRITER.
 #   3. Configure, build, and run the out-of-tree consumer project against
 #      that prefix, from both C and C++.
 #   4. Assert the writer-leak probe fails to configure.
@@ -25,6 +27,13 @@ foreach (required
     message(FATAL_ERROR "${required} must be set")
   endif()
 endforeach()
+
+# GRAPHSCORE_BUILD_WRITER itself is a legitimate OFF/FALSE value, so it is
+# not part of the truthiness check above; it must simply have been passed at
+# all.
+if (NOT DEFINED GRAPHSCORE_BUILD_WRITER)
+  message(FATAL_ERROR "GRAPHSCORE_BUILD_WRITER must be set")
+endif()
 
 # Under a sanitizer preset, the installed runtime is instrumented and leaves
 # its sanitizer-runtime references for the consuming link to resolve. A
@@ -120,6 +129,91 @@ foreach (library IN LISTS installed_libraries)
       "runtime closure.")
   endif()
 endforeach()
+
+# --- 2b. writer-only resource install tree (ADR 0002 §A4, §5) ------------
+#
+# apps/CMakeLists.txt installs the Bravura font and the writer's full
+# third-party notice set only when GRAPHSCORE_BUILD_WRITER=ON. This is
+# install-tree hygiene the mechanical architecture audit cannot see (an
+# install(FILES) of a text/font asset creates no target edge), so a test is
+# the only enforcement available (ADR 0002 §A4). Both the positive
+# (writer-ON) and negative (writer-OFF) shapes are asserted, whichever this
+# build tree was configured with.
+
+set(writer_license_dir "${prefix}/share/licenses/GraphScoreWriter")
+set(writer_font_dir "${prefix}/share/graphscore/fonts")
+set(runtime_license_dir "${prefix}/share/licenses/GraphScore")
+
+if (GRAPHSCORE_BUILD_WRITER)
+  set(expected_writer_license_files
+    Bravura-OFL.txt
+    FreeType-FTL.TXT
+    FreeType-zlib-license.txt
+    HarfBuzz-COPYING.txt
+    ThorVG-LICENSE.txt
+    SDL3-LICENSE.txt
+    NOTICE
+  )
+
+  foreach (expected_file IN LISTS expected_writer_license_files)
+    if (NOT EXISTS "${writer_license_dir}/${expected_file}")
+      message(FATAL_ERROR
+        "The writer install tree is missing "
+        "'${writer_license_dir}/${expected_file}' (ADR 0002 §5, §A4).")
+    endif()
+  endforeach()
+
+  file(GLOB writer_license_files RELATIVE "${writer_license_dir}"
+    "${writer_license_dir}/*")
+  list(SORT writer_license_files)
+  set(expected_writer_license_files_sorted "${expected_writer_license_files}")
+  list(SORT expected_writer_license_files_sorted)
+  if (NOT writer_license_files STREQUAL expected_writer_license_files_sorted)
+    message(FATAL_ERROR
+      "'${writer_license_dir}' contains {${writer_license_files}}, expected "
+      "exactly {${expected_writer_license_files_sorted}}.")
+  endif()
+
+  if (NOT EXISTS "${writer_font_dir}/Bravura.otf")
+    message(FATAL_ERROR
+      "The writer install tree is missing "
+      "'${writer_font_dir}/Bravura.otf' under its fixed, versioned name "
+      "(ADR 0002 §A4). A font installed under any other name (e.g. an "
+      "offline BRAVURA_FONT_SRC override's own basename) breaks the "
+      "executable-relative runtime lookup.")
+  endif()
+
+  message(STATUS
+    "CMake consumer test: writer resource install tree ok "
+    "(GRAPHSCORE_BUILD_WRITER=ON)")
+else()
+  if (EXISTS "${writer_license_dir}")
+    message(FATAL_ERROR
+      "A runtime-only install tree (GRAPHSCORE_BUILD_WRITER=OFF) shipped "
+      "'${writer_license_dir}'. No writer dependency's license may install "
+      "when the writer itself is not built (ADR 0002 §A4).")
+  endif()
+
+  if (EXISTS "${writer_font_dir}")
+    message(FATAL_ERROR
+      "A runtime-only install tree (GRAPHSCORE_BUILD_WRITER=OFF) shipped "
+      "'${writer_font_dir}'. Bravura is never downloaded in this "
+      "configuration (ADR 0002 §A4, §A7.1).")
+  endif()
+
+  message(STATUS
+    "CMake consumer test: no writer resources installed "
+    "(GRAPHSCORE_BUILD_WRITER=OFF)")
+endif()
+
+file(GLOB runtime_license_files RELATIVE "${runtime_license_dir}"
+  "${runtime_license_dir}/*")
+list(SORT runtime_license_files)
+if (NOT runtime_license_files STREQUAL "LICENSE;NOTICE")
+  message(FATAL_ERROR
+    "'${runtime_license_dir}' contains {${runtime_license_files}}, expected "
+    "exactly {LICENSE;NOTICE}.")
+endif()
 
 # --- 3. the out-of-tree consumer -----------------------------------------
 

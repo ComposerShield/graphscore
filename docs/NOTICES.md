@@ -8,9 +8,41 @@ and is the authoritative license inventory.  All pins are immutable
 SHA-pinned to the exact source tree.
 
 Full license texts are committed under `docs/licenses/` named by
-dependency, fetched from each recorded SHA.  Build artifacts and binary
-distributions must include this file and the referenced `docs/licenses/`
-files.
+dependency, fetched from each recorded SHA.  This file is the
+source-repository license inventory, kept for every dependency this
+repository has evaluated — including ones that are excluded, deferred, or
+not linked into any shipped artifact.  A binary distribution satisfies the
+same review's obligations by shipping the narrower, per-artifact notice set
+below, not this file itself: reproducing the full inventory inside every
+shipped artifact would carry entries (e.g. miniaudio, PortAudio, RtMidi,
+Corrosion, GoogleTest) that artifact never links.
+
+## Shipped artifact layout
+
+`cmake --install` installs two independent, artifact-scoped notice sets,
+neither of which is this file:
+
+- `share/licenses/GraphScore/` — GraphScore's own top-level `LICENSE` and
+  `NOTICE` (Apache-2.0). Installed by every build regardless of
+  `GRAPHSCORE_BUILD_WRITER` (`cmake/RuntimePackage.cmake`); this is what a
+  runtime-only consumer of the exported `GraphScoreRuntime` CMake package
+  receives.
+- `share/licenses/GraphScoreWriter/` — the license text of every
+  third-party dependency `graphscore_writer_app` actually links (ThorVG,
+  HarfBuzz, SDL3, and FreeType's own two license files) plus Bravura's OFL
+  text, and `NOTICE` — GraphScore's own aggregated attribution statement
+  (`docs/NOTICE-writer.txt`, installed under that name), which discharges
+  FreeType FTL §2's binary-distribution disclaimer obligation (see §5
+  below). Installed only when `GRAPHSCORE_BUILD_WRITER=ON`
+  (`apps/CMakeLists.txt`); a runtime-only install ships none of it, matching
+  that none of these dependencies are fetched in that configuration
+  (ADR 0002 §A7.1).
+- `share/graphscore/fonts/` — the Bravura SMuFL font, installed as
+  `Bravura.otf` under that fixed name regardless of its acquisition path,
+  and its own `Bravura-OFL.txt`. Also writer-only.
+
+`tests/cmake/run_consumer_test.cmake` asserts the exact file set at each
+destination, under both `GRAPHSCORE_BUILD_WRITER` values.
 
 ## Status Definitions
 
@@ -266,7 +298,7 @@ https://raw.githubusercontent.com/freetype/freetype/f01dec5e676847267834b881b25f
 | Distribution | Redistributable in source form with the notice retained. |
 
 | **Transitive closure** | Core library + bundled zlib 1.3.1 (zlib license, version confirmed at pinned SHA). All optional system deps disabled. HarfBuzz integration disabled (`FT_DISABLE_HARFBUZZ=ON`). HarfBuzz is configured in isolation first (see HarfBuzz §4 transitive closure); both directions of the circular dependency are severed. No external deps active. |
-| **Distribution** | Must include `docs/licenses/FreeType-FTL.TXT`, `docs/licenses/FreeType-zlib-license.txt`, and the binary-distribution disclaimer above. |
+| **Distribution** | Must include `docs/licenses/FreeType-FTL.TXT`, `docs/licenses/FreeType-zlib-license.txt`, and the binary-distribution disclaimer above. FTL §2 draws two distinct obligations: the source-distribution bullet is discharged by retaining `FreeType-FTL.TXT` unaltered (above); the *binary*-distribution bullet requires an affirmative disclaimer statement authored by the redistributor — retaining the license file alone does not satisfy it. In the shipped writer artifact, `docs/NOTICE-writer.txt` is that statement: it is installed as `NOTICE` under `share/licenses/GraphScoreWriter/` (`apps/CMakeLists.txt`), carrying the exact disclaimer and preferred-credit text above with `<year>` resolved to `2026` (the pinned SHA's FreeType 2.14.3 headers carry `Copyright (C) 1996-2026`). |
 
 ---
 

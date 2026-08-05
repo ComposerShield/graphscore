@@ -104,7 +104,18 @@ a dependency at a local checkout instead of fetching over the network, for
 offline/air-gapped builds. See `cmake/` for the exact `<NAME>` per dependency.
 Combine with `-DFETCHCONTENT_FULLY_DISCONNECTED=ON` to forbid network access
 outright; the `graphscore_offline_dependencies` test exercises exactly this
-across every fetched dependency.
+across every `FetchContent`-fetched dependency.
+
+Bravura (the shipped SMuFL font, ADR 0002 §A4) is acquired by
+`file(DOWNLOAD)`, not `FetchContent`, so it needs its own override:
+`BRAVURA_FONT_SRC` is a `FILEPATH` cache variable pointing at a
+pre-acquired, SHA-256-verified `Bravura.otf`. Unlike every `FetchContent`
+dependency, Bravura has **no disconnected-network escape hatch of its own**
+— a default `GRAPHSCORE_BUILD_WRITER=ON` configure on a genuinely
+air-gapped host fails outright unless `BRAVURA_FONT_SRC` is already set.
+`graphscore_offline_dependencies` also exercises this override (threaded
+through independently of the `FetchContent` overrides above) whenever the
+main build tree was configured with the writer on.
 
 ## C++23 and const-correctness
 
@@ -187,17 +198,38 @@ add an AI-generated attribution trailer (e.g. `Co-Authored-By: <assistant>`).
 
 `graphscore_runtime` installs and exports as the `GraphScoreRuntime` CMake
 package. Only the ADR 0003 §3.1 runtime closure and the public C ABI header
-are installed — no writer library, no writer header, and no C++ header of the
-closure's internal targets. A consumer needs:
+are installed as *that exported package* — no writer library, no writer
+header, and no C++ header of the closure's internal targets. A consumer
+needs:
 
 ```cmake
 find_package(GraphScoreRuntime REQUIRED)
 target_link_libraries(my_app PRIVATE graphscore::runtime)
 ```
 
+This is scoped to the exported CMake package, not to every file a
+`cmake --install` writes: a default, writer-ON install tree additionally
+carries the writer's own resources (below) alongside the runtime closure —
+`GraphScoreRuntimeConfig.cmake` still resolves only `graphscore::runtime`
+and its dependencies, so a consumer that only calls `find_package` sees
+nothing writer-related regardless of what else is on disk.
+
 The `graphscore_cmake_consumer` test installs the package to a scratch
 prefix, builds C and C++ consumers against it out of tree, and asserts that a
-writer target cannot be linked from it.
+writer target cannot be linked from it. It also asserts the writer-only
+resource install below, under both `GRAPHSCORE_BUILD_WRITER` values.
+
+Writer-only resource install (ADR 0002 §A4, §5), active only when
+`GRAPHSCORE_BUILD_WRITER=ON` (`apps/CMakeLists.txt`):
+
+| Destination | Contents |
+|---|---|
+| `share/licenses/GraphScore/` | GraphScore's own `LICENSE`/`NOTICE`. Installed regardless of `GRAPHSCORE_BUILD_WRITER` (`cmake/RuntimePackage.cmake`). |
+| `share/licenses/GraphScoreWriter/` | License text for every third-party dependency the writer links (ThorVG, HarfBuzz, SDL3, FreeType's two license files, Bravura's OFL text), plus `NOTICE` (`docs/NOTICE-writer.txt`) — GraphScore's own attribution statement, required to discharge FreeType FTL §2's binary-distribution disclaimer obligation. |
+| `share/graphscore/fonts/` | `Bravura.otf` (the SMuFL font, installed under this fixed name regardless of its acquisition path) and its own `Bravura-OFL.txt`. |
+
+See `docs/NOTICES.md`'s "Shipped artifact layout" section for the full
+rationale.
 
 ## Platform caveats
 
@@ -235,8 +267,28 @@ writer target cannot be linked from it.
   touching a `GRAPHSCORE_BUILD_WRITER`-gated branch must run the canonical
   `build/tidy` command above with `-DGRAPHSCORE_BUILD_WRITER=ON` by hand and
   report the result, as this milestone's rendering-dependency work did.
-- Linux needs X11, Wayland, and xkbcommon development packages for the SDL3
-  build; see `.github/workflows/ci.yml` for the exact list.
+- Linux needs X11, Wayland, xkbcommon, and OpenGL (`libgl-dev`,
+  `mesa-common-dev`) development packages for the SDL3 build; see
+  `.github/workflows/ci.yml` for the exact list. The OpenGL headers back
+  `SDL_OPENGL=ON`, which `cmake/SDL3.cmake` enables on Linux so ThorVG's
+  rasterized output can present through a GPU-backed `SDL_Renderer`
+  (ADR 0002 §A5); without them, SDL's own `CheckOpenGL` compiled probe fails
+  and `cmake/SDL3.cmake`'s derived-result assertion (`HAVE_OPENGL`) fails
+  configure rather than silently shipping a renderer-less build.
+- Building the writer (`GRAPHSCORE_BUILD_WRITER=ON`, the default) needs a
+  Python 3.7+ interpreter on the build host: `cmake/ThorVG.cmake` drives
+  ThorVG's own Meson build, and Meson enforces that floor itself. Unlike
+  every other dependency adapter in `cmake/`, ThorVG's own compilation is
+  not a native CMake subproject configured in the same pass as GraphScore
+  itself — it has no `CMakeLists.txt` at its pinned SHA. `cmake/ThorVG.cmake`
+  instead fetches Meson's own source and locates a host `ninja` (>= 1.8.2,
+  Meson's own documented floor) at CMake *configure* time, then drives
+  `meson setup`/`ninja`/`ninja install` as an `ExternalProject_Add` step that
+  runs during `cmake --build`, not during configure. A from-scratch
+  `cmake --build --preset debug` therefore includes a second, separate
+  build-tool invocation before `graphscore_rendering` can link the resulting
+  static archive, and takes noticeably longer than a build touching only
+  native CMake subprojects.
 - SDL3 at the pinned SHA needs three macOS frameworks linked that it does not
   link itself; `cmake/SDL3.cmake` documents why. Revisit when the pin moves.
 - The VST3 SDK requires an explicit build type at configure time (its

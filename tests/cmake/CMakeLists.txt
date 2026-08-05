@@ -17,6 +17,9 @@ add_test(NAME graphscore_cmake_consumer
     -D "GRAPHSCORE_CONFIG=$<IF:$<CONFIG:>,Debug,$<CONFIG>>"
     -D "GRAPHSCORE_C_COMPILER=${CMAKE_C_COMPILER}"
     -D "GRAPHSCORE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+    # Determines which writer-only resources (ADR 0002 §A4, §5) the install
+    # tree must, or must not, contain.
+    -D "GRAPHSCORE_BUILD_WRITER=${GRAPHSCORE_BUILD_WRITER}"
     # A sanitizer-instrumented runtime leaves its sanitizer-runtime symbols
     # for the consuming link to resolve, so the out-of-tree consumers must be
     # built with the same flags. See cmake/Sanitizers.cmake.

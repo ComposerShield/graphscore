@@ -1,0 +1,25 @@
+GraphScore Writer
+Copyright 2025 Adam Shield
+
+This software is based in part of the work of the FreeType Team.
+
+Portions of this software are copyright (C) 2026 The FreeType
+Project (https://freetype.org).  All rights reserved.
+
+This distribution includes the following third-party components. Each
+component's full license text is installed alongside this file, in this
+same directory:
+
+  - FreeType, FreeType License (FTL) — FreeType-FTL.TXT
+  - FreeType's bundled zlib 1.3.1, Zlib License —
+    FreeType-zlib-license.txt
+  - ThorVG, MIT License — ThorVG-LICENSE.txt
+  - HarfBuzz, Old MIT License — HarfBuzz-COPYING.txt
+  - SDL3, Zlib License — SDL3-LICENSE.txt
+  - Bravura (SIL Open Font License 1.1), the shipped SMuFL music font —
+    Bravura-OFL.txt, in this directory and also beside Bravura.otf in
+    share/graphscore/fonts/
+
+See docs/NOTICES.md in the GraphScore source repository for the complete
+license review and transitive-dependency analysis of every component
+listed above.

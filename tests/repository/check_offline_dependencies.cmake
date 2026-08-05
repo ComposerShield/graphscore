@@ -14,6 +14,15 @@
 # dependency were declared in a way that ignores the override — configuring
 # with FETCHCONTENT_FULLY_DISCONNECTED=ON would fail.
 #
+# Bravura (ADR 0002 §A4) is acquired by file(DOWNLOAD), not FetchContent, so
+# it is invisible to the _deps/*-src glob below and to
+# FETCHCONTENT_FULLY_DISCONNECTED. Its own offline override is
+# BRAVURA_FONT_SRC; when GRAPHSCORE_BRAVURA_FONT_SRC is passed (the main
+# build tree's own already-verified Bravura.otf, only present when that tree
+# built with GRAPHSCORE_BUILD_WRITER=ON), it is threaded through to the
+# scratch configure the same way as every FetchContent override below, and
+# the scratch tree is asserted not to have performed its own download.
+#
 # It is a configure-only test: building the dependencies again would add
 # minutes without testing anything the main build does not already cover.
 
@@ -26,6 +35,21 @@ foreach (required
     message(FATAL_ERROR "${required} must be set")
   endif()
 endforeach()
+
+# GRAPHSCORE_BRAVURA_FONT_SRC arrives empty either because the main build
+# tree configured with GRAPHSCORE_BUILD_WRITER=OFF (correct: Bravura was
+# never fetched, nothing to override) or because a future change stopped
+# propagating GRAPHSCORE_BRAVURA_FONT_PATH from tests/repository/CMakeLists.txt.
+# The block below cannot tell those two apart on its own — it is guarded by
+# `if (GRAPHSCORE_BRAVURA_FONT_SRC)` the same way the rest of this test is
+# guarded by dependency discovery — so an empty value in the one case that
+# must never be empty is asserted here, loudly, before that block would
+# otherwise silently skip itself and report a false-green pass (ADR 0002 §A4).
+if (GRAPHSCORE_BUILD_WRITER AND NOT GRAPHSCORE_BRAVURA_FONT_SRC)
+  message(FATAL_ERROR
+    "GRAPHSCORE_BUILD_WRITER=ON but GRAPHSCORE_BRAVURA_FONT_SRC is empty; "
+    "the Bravura offline override would be silently untested (ADR 0002 §A4).")
+endif()
 
 # Discover every dependency the main build tree has already fetched, rather
 # than naming them here. A milestone that adds a dependency then gets offline
@@ -64,6 +88,22 @@ endif()
 list(JOIN dependency_names ", " dependency_list)
 message(STATUS "Offline configure: overriding ${dependency_list}")
 
+# Bravura's own offline override (ADR 0002 §A4), threaded through
+# independently of the FetchContent overrides above.
+set(bravura_override "")
+if (GRAPHSCORE_BRAVURA_FONT_SRC)
+  if (NOT EXISTS "${GRAPHSCORE_BRAVURA_FONT_SRC}")
+    message(FATAL_ERROR
+      "GRAPHSCORE_BRAVURA_FONT_SRC='${GRAPHSCORE_BRAVURA_FONT_SRC}' does not "
+      "exist. The main build tree must have already acquired Bravura.otf "
+      "before this test runs.")
+  endif()
+  set(bravura_override "-DBRAVURA_FONT_SRC=${GRAPHSCORE_BRAVURA_FONT_SRC}")
+  message(STATUS
+    "Offline configure: overriding Bravura via BRAVURA_FONT_SRC="
+    "${GRAPHSCORE_BRAVURA_FONT_SRC}")
+endif()
+
 file(REMOVE_RECURSE "${GRAPHSCORE_SCRATCH_DIR}")
 file(MAKE_DIRECTORY "${GRAPHSCORE_SCRATCH_DIR}")
 
@@ -78,6 +118,7 @@ execute_process(
     "-DGRAPHSCORE_BUILD_WRITER=${GRAPHSCORE_BUILD_WRITER}"
     # The overrides under test, one per fetched dependency.
     ${overrides}
+    ${bravura_override}
     # Any network access at all is a failure, not a slow success.
     "-DFETCHCONTENT_FULLY_DISCONNECTED=ON"
   RESULT_VARIABLE configure_result
@@ -122,6 +163,34 @@ foreach (dependency IN LISTS dependency_names)
       "FETCHCONTENT_SOURCE_DIR_${dependency_upper} pointing elsewhere.")
   endif()
 endforeach()
+
+# Bravura's override must have been honoured the same way (ADR 0002 §A4):
+# the BRAVURA_FONT_SRC cache entry resolved to what was requested, and no
+# fresh file(DOWNLOAD) copy was written under the scratch tree's own
+# bravura_font/ directory.
+if (GRAPHSCORE_BRAVURA_FONT_SRC)
+  if (NOT cache_contents MATCHES "BRAVURA_FONT_SRC:[A-Z_]+=([^\n]*)")
+    message(FATAL_ERROR
+      "BRAVURA_FONT_SRC is absent from the scratch build tree's cache. The "
+      "override was not applied.")
+  endif()
+
+  if (NOT CMAKE_MATCH_1 STREQUAL GRAPHSCORE_BRAVURA_FONT_SRC)
+    message(FATAL_ERROR
+      "BRAVURA_FONT_SRC resolved to '${CMAKE_MATCH_1}', not the requested "
+      "'${GRAPHSCORE_BRAVURA_FONT_SRC}'.")
+  endif()
+
+  if (EXISTS "${GRAPHSCORE_SCRATCH_DIR}/bravura_font/Bravura.otf")
+    message(FATAL_ERROR
+      "The offline build tree downloaded its own Bravura.otf copy at "
+      "bravura_font/Bravura.otf despite BRAVURA_FONT_SRC pointing "
+      "elsewhere.")
+  endif()
+
+  message(STATUS
+    "Offline configure: Bravura override honoured, no fresh download")
+endif()
 
 message(STATUS
   "Offline configure: succeeded with FETCHCONTENT_FULLY_DISCONNECTED=ON and "

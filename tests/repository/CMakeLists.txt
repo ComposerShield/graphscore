@@ -20,6 +20,12 @@ add_test(NAME graphscore_offline_dependencies
     # The scratch tree must be configured the same way as this one, or it
     # would need dependencies this build never fetched.
     -D "GRAPHSCORE_BUILD_WRITER=${GRAPHSCORE_BUILD_WRITER}"
+    # Bravura is a file(DOWNLOAD) asset, not a FetchContent dependency, so it
+    # is not discovered by the _deps/*-src glob below. GRAPHSCORE_BRAVURA_FONT_PATH
+    # is only set when GRAPHSCORE_BUILD_WRITER=ON pulled in cmake/Bravura.cmake
+    # (ADR 0002 §A4); empty otherwise, which the script below treats as
+    # "nothing to override".
+    -D "GRAPHSCORE_BRAVURA_FONT_SRC=${GRAPHSCORE_BRAVURA_FONT_PATH}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/check_offline_dependencies.cmake"
 )
 

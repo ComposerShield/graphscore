@@ -16,6 +16,20 @@
 # runs below, after MakeAvailable, and fails configure on any mismatch — so
 # the gate is enforced on every configure rather than by a snapshot taken
 # once.
+#
+# ADR 0002 §A5 extends the reviewed option set: GraphScore presents ThorVG's
+# CPU-rasterized output through SDL_CreateRenderer plus a streaming
+# SDL_Texture, backed by a GPU renderer per platform (Metal on macOS, D3D11
+# on Windows, OpenGL on Linux). SDL_RENDER=ON is common to all three
+# platforms; SDL_DIRECTX (Windows) and SDL_OPENGL (Linux) are decided per
+# platform below. Everything §A5 leaves OFF stays OFF.
+#
+# §A5/§A7.3 additionally require asserting the *derived* result of each
+# newly enabled graphics API, not only the option value GraphScore declares:
+# SDL_OPENGL/SDL_DIRECTX/SDL_RENDER each resolve to a working renderer only
+# through a compiled probe (HAVE_OPENGL, HAVE_D3D11_H, HAVE_FRAMEWORK_METAL)
+# that can fail independently of the option. That assertion runs in a
+# separate block below, after the option-readback gate.
 
 include(FetchContent)
 
@@ -37,11 +51,15 @@ set(GRAPHSCORE_SDL3_OPTIONS
   SDL_INSTALL=OFF
 
   # Core subsystems. Only video is required for the writer shell; audio is
-  # miniaudio's job (ADR 0002 §6a) and the GPU/render paths are Phase C.
+  # miniaudio's job (ADR 0002 §6a). SDL_GPU (the unified next-gen GPU API)
+  # stays deferred (ADR 0002 §A5: "a simple CPU-buffer-to-texture blit, not a
+  # programmable GPU pipeline"); SDL_RENDER=ON is common to every platform
+  # (ADR 0002 §A5) — the specific renderer backend is decided per platform
+  # below.
   SDL_VIDEO=ON
   SDL_AUDIO=OFF
   SDL_GPU=OFF
-  SDL_RENDER=OFF
+  SDL_RENDER=ON
   SDL_CAMERA=OFF
   SDL_JOYSTICK=OFF
   SDL_HAPTIC=OFF
@@ -57,9 +75,11 @@ set(GRAPHSCORE_SDL3_OPTIONS
   SDL_HIDAPI=OFF
   SDL_HIDAPI_LIBUSB=OFF
 
-  # Graphics APIs: deferred to Phase C.
+  # Graphics APIs still deferred everywhere (ADR 0002 §A5: SDL_VULKAN and
+  # SDL_OPENGLES are unaffected by the presentation-path decision; SDL_METAL
+  # stays OFF even on macOS because SDL_RENDER_METAL is auto-enabled by
+  # SDL_RENDER=ON alone, not by the separate SDL_METAL windowing flag).
   SDL_VULKAN=OFF
-  SDL_OPENGL=OFF
   SDL_OPENGLES=OFF
   SDL_METAL=OFF
   SDL_OPENVR=OFF
@@ -72,15 +92,44 @@ set(GRAPHSCORE_SDL3_OPTIONS
   SDL_SYSTEM_ICONV=OFF
   SDL_DLOPEN_NOTES=OFF
   SDL_XINPUT=OFF
-  SDL_DIRECTX=OFF
 )
 
 if (APPLE)
-  list(APPEND GRAPHSCORE_SDL3_OPTIONS SDL_COCOA=ON)
+  list(APPEND GRAPHSCORE_SDL3_OPTIONS
+    SDL_COCOA=ON
+    # ADR 0002 §A5: SDL_RENDER=ON (above) auto-enables SDL_RENDER_METAL via
+    # the existing "SDL_RENDER;APPLE" dep_option guard; no other graphics
+    # API flag is needed or wanted on macOS.
+    SDL_OPENGL=OFF
+    SDL_DIRECTX=OFF
+  )
+endif()
+
+if (WIN32)
+  list(APPEND GRAPHSCORE_SDL3_OPTIONS
+    # ADR 0002 §A5: SDL_DIRECTX=ON is required for the D3D11 render driver.
+    # SDL_RENDER_D3D11 is declared explicitly (its own dep_option already
+    # defaults ON once SDL_RENDER;SDL_DIRECTX are satisfied, but this
+    # project decides every reviewed option explicitly rather than relying
+    # on an upstream default that could flip); SDL_RENDER_D3D (legacy D3D9)
+    # and SDL_RENDER_D3D12 are explicitly forced OFF so only
+    # SDL_RENDER_D3D11 is active.
+    SDL_OPENGL=OFF
+    SDL_DIRECTX=ON
+    SDL_RENDER_D3D=OFF
+    SDL_RENDER_D3D11=ON
+    SDL_RENDER_D3D12=OFF
+  )
 endif()
 
 if (UNIX AND NOT APPLE)
   list(APPEND GRAPHSCORE_SDL3_OPTIONS
+    # ADR 0002 §A5: SDL_OPENGL=ON is the only path to a working SDL_Renderer
+    # on Linux; verified below via the derived HAVE_OPENGL probe, not merely
+    # this option's own value.
+    SDL_OPENGL=ON
+    SDL_DIRECTX=OFF
+
     # Windowing backends.
     SDL_X11=ON
     SDL_WAYLAND=ON
@@ -218,6 +267,76 @@ if (gs_sdl_mismatches)
 endif()
 
 # ---------------------------------------------------------------------------
+# Derived-result assertions (ADR 0002 §A5, §A7.3)
+# ---------------------------------------------------------------------------
+#
+# The readback above proves the *option* GraphScore declared resolved to the
+# value GraphScore requested. For SDL_OPENGL (Linux), SDL_DIRECTX (Windows),
+# and SDL_RENDER (macOS, via the auto-enabled SDL_RENDER_METAL) that is not
+# evidence a working renderer actually resulted: each is gated behind a
+# compiled probe in SDL's own CMakeLists.txt / cmake/sdlchecks.cmake that can
+# fail independently of the option value —
+# HAVE_OPENGL (cmake/sdlchecks.cmake's CheckOpenGL macro, a
+# check_c_source_compiles against <GL/gl.h>/<GL/glext.h>), HAVE_D3D11_H
+# (CMakeLists.txt ~2299-2310, consumed at ~2446-2449), and
+# HAVE_FRAMEWORK_METAL (CMakeLists.txt 2844-2877, a check_objc_source_compiles
+# that also rejects an unsupported architecture).
+#
+# These three — not SDL_VIDEO_RENDER_OGL/_D3D11/_METAL — are the readable
+# signal: SDL_VIDEO_RENDER_OGL and its siblings are plain directory-scope
+# set() calls with neither CACHE nor PARENT_SCOPE, invisible here after
+# FetchContent_MakeAvailable, so asserting them would pass vacuously on every
+# platform (ADR 0002 §A7.3). HAVE_OPENGL/HAVE_D3D11_H/HAVE_FRAMEWORK_METAL
+# are written as CACHE entries by check_c_source_compiles/
+# check_objc_source_compiles and so survive into this scope.
+set(gs_sdl_derived_mismatches "")
+set(gs_sdl_derived_evidence
+"\nDerived-result assertions (ADR 0002 §A5, §A7.3)\n")
+
+if (UNIX AND NOT APPLE)
+  string(APPEND gs_sdl_derived_evidence "HAVE_OPENGL: ${HAVE_OPENGL}\n")
+  if (NOT HAVE_OPENGL)
+    list(APPEND gs_sdl_derived_mismatches
+      "HAVE_OPENGL is not set: SDL's CheckOpenGL compiled probe against "
+      "<GL/gl.h>/<GL/glext.h> failed, so SDL_OPENGL=ON did not produce a "
+      "working OpenGL render driver")
+  endif()
+endif()
+
+if (WIN32)
+  string(APPEND gs_sdl_derived_evidence "HAVE_D3D11_H: ${HAVE_D3D11_H}\n")
+  if (NOT HAVE_D3D11_H)
+    list(APPEND gs_sdl_derived_mismatches
+      "HAVE_D3D11_H is not set: the Windows SDK D3D11 header probe failed, "
+      "so SDL_DIRECTX=ON did not produce a working D3D11 render driver")
+  endif()
+endif()
+
+if (APPLE)
+  string(APPEND gs_sdl_derived_evidence
+    "HAVE_FRAMEWORK_METAL: ${HAVE_FRAMEWORK_METAL}\n")
+  if (NOT HAVE_FRAMEWORK_METAL)
+    list(APPEND gs_sdl_derived_mismatches
+      "HAVE_FRAMEWORK_METAL is not set: the Metal framework compiled probe "
+      "failed, so SDL_RENDER=ON did not auto-enable a working Metal render "
+      "driver on this host")
+  endif()
+endif()
+
+file(APPEND "${CMAKE_BINARY_DIR}/sdl3_option_evidence.txt"
+  "${gs_sdl_derived_evidence}")
+
+if (gs_sdl_derived_mismatches)
+  list(JOIN gs_sdl_derived_mismatches "\n  - " gs_sdl_derived_mismatch_text)
+  message(FATAL_ERROR
+    "SDL3 derived-result verification failed (ADR 0002 §A5, §A7.3):\n\n"
+    "  - ${gs_sdl_derived_mismatch_text}\n\n"
+    "The declared option resolved to the requested value, but the compiled "
+    "probe that determines whether a working renderer actually resulted did "
+    "not succeed. Full evidence: ${CMAKE_BINARY_DIR}/sdl3_option_evidence.txt")
+endif()
+
+# ---------------------------------------------------------------------------
 # Upstream defect workaround, macOS, pinned SHA only
 # ---------------------------------------------------------------------------
 #
@@ -249,5 +368,6 @@ if (APPLE)
 endif()
 
 message(STATUS
-  "SDL3: ${GRAPHSCORE_SDL3_GIT_TAG}, all reviewed options verified "
-  "(evidence: ${CMAKE_BINARY_DIR}/sdl3_option_evidence.txt)")
+  "SDL3: ${GRAPHSCORE_SDL3_GIT_TAG}, all reviewed options and derived "
+  "renderer probes verified (evidence: "
+  "${CMAKE_BINARY_DIR}/sdl3_option_evidence.txt)")

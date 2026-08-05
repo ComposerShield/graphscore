@@ -7,8 +7,8 @@ Provide a polished, directly editable focused notation system inside a node, wit
 ## Dependencies
 
 - [ ] Milestone 02 domain and command model.
-- [ ] Rendering/engraving/accessibility decisions from Milestone 00.
-- [ ] Milestone 01 writer shell.
+- [x] Rendering/engraving/accessibility decisions from Milestone 00.
+- [x] Milestone 01 writer shell.
 
 ## Deliverables
 
