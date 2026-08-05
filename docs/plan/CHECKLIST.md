@@ -46,6 +46,15 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 
 ## Milestone 02: Domain And Command Model
 
+The parenthetical text under each Phase 8 box is a **historical log written
+when that phase landed**, not a statement of current status. A note saying
+"selection, clipboard, and measure ops still unchecked" describes what was
+outstanding *at that phase's own completion*, and later boxes discharge it.
+Read the checkbox, not the note. Everything through Phase 8h-iv and the
+validation service is delivered; the three genuinely open items are the two
+unchecked deliverable boxes below and the sign-off sections in
+[02-domain-model.md](02-domain-model.md).
+
 - [ ] [Milestone 02 complete](02-domain-model.md)
 - [x] Dependencies completed
 - [x] Identity and value types completed
@@ -100,7 +109,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 ## Milestone 05: Notation Engraving And Editing
 
 - [ ] [Milestone 05 complete](05-notation-editor.md)
-- [ ] Dependencies completed
+- [x] Dependencies completed<br>&nbsp;&nbsp;&nbsp;&nbsp;(rendering-dependency bring-up: `cmake/ThorVG.cmake`, `cmake/FreeType.cmake`, `cmake/HarfBuzz.cmake`,<br>&nbsp;&nbsp;&nbsp;&nbsp;`cmake/Bravura.cmake` wired behind ADR 0002 §§A1–A7; SDL3 renderer options flipped `ON` with<br>&nbsp;&nbsp;&nbsp;&nbsp;per-platform derived-probe assertions; writer install rule shipping Bravura under a fixed name<br>&nbsp;&nbsp;&nbsp;&nbsp;plus an FTL §2-compliant notice set; ADR 0003 §2.3 test-target enforcement gap closed. M02's own<br>&nbsp;&nbsp;&nbsp;&nbsp;completion box remains open only for `route-segment` selection (deferred to M06) and drag-gesture<br>&nbsp;&nbsp;&nbsp;&nbsp;transaction grouping, which lands here — neither gates 05.)
 - [ ] Incremental engraving completed
 - [ ] Note palette and pointer entry completed
 - [ ] Selection and keyboard behavior completed

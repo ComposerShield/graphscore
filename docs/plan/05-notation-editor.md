@@ -6,7 +6,14 @@ Provide a polished, directly editable focused notation system inside a node, wit
 
 ## Dependencies
 
-- [ ] Milestone 02 domain and command model.
+- [x] Milestone 02 domain and command model. **(Every domain primitive this
+      milestone calls is delivered and tested: the `Selection` variant,
+      `NotationFragment` with clipping rules R1–R12, `CutFragmentCommand`/
+      `PasteFragmentCommand`, `DuplicateNodesCommand`, the measure/timeline
+      cascade commands, and the validation service. Milestone 02's own
+      completion box stays open for reasons that do not gate 05:
+      `route-segment` selection is deferred to M06, and drag-gesture
+      transaction grouping is a writer concern that lands here in 05/06.)**
 - [x] Rendering/engraving/accessibility decisions from Milestone 00.
 - [x] Milestone 01 writer shell.
 
