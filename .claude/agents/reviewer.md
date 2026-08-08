@@ -2,7 +2,7 @@
 name: reviewer
 description: Use for reviewing code changes for correctness, style, security, edge cases, and regressions. This agent audits work but does not modify code.
 tools: Read, Bash
-model: opus
+model: claude-opus-4-6
 color: red
 permissionMode: default
 effort: high
