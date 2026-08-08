@@ -4,6 +4,8 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -40,6 +42,12 @@ class StaveVoices {
   std::array<VoiceContent, Voice::kMax> voices_;
 };
 
+// A stave-qualified pedal span operation for incremental refresh.
+struct PedalDeltaOp {
+  StaveId          stave_id;
+  RefOp<PedalSpan> op;
+};
+
 // A track's notation content within one node: up to four voices for each
 // stave in the track's fixed StaffLayout, keyed by StaveId. Node keys a
 // TrackLane collection by TrackId so a lane's identity survives track
@@ -49,6 +57,13 @@ class StaveVoices {
 class TrackLane {
  public:
   TrackLane() = default;
+
+  // Copy/move assignment reset mutation tracking on the destination. Moving
+  // also resets tracking on the source so its pre-move tokens become stale.
+  TrackLane(const TrackLane& other);
+  TrackLane& operator=(const TrackLane& other);
+  TrackLane(TrackLane&& other) noexcept;
+  TrackLane& operator=(TrackLane&& other) noexcept;
 
   [[nodiscard]] bool has_stave(StaveId stave_id) const {
     return staves_.contains(stave_id);
@@ -81,8 +96,7 @@ class TrackLane {
   [[nodiscard]] std::vector<StaveId> stave_ids() const;
 
   // Sustain-pedal spans for `stave_id`, or nullptr if none have been added.
-  // Pedal is scoped per stave, not per voice: it applies to everything
-  // sounding on that staff (see PedalSpan in notation_markings.hpp).
+  // Pedal is scoped per stave, not per voice.
   [[nodiscard]] const std::vector<PedalSpan>* pedal_spans(
       StaveId stave_id) const;
 
@@ -90,11 +104,31 @@ class TrackLane {
 
   [[nodiscard]] Result remove_pedal_span(StaveId stave_id, NotationEntityId id);
 
-  [[nodiscard]] bool operator==(const TrackLane&) const = default;
+  // Mutation revision tracking for pedal spans. Works like VoiceContent's
+  // revision mechanism and returns stave-qualified operation records.
+  [[nodiscard]] VoiceRevision capture_revision() const noexcept;
+  [[nodiscard]] std::optional<std::vector<PedalDeltaOp>> pedal_delta_since(
+      VoiceRevision since) const;
+
+  // Semantic equality excludes mutation-tracking state.
+  [[nodiscard]] bool operator==(const TrackLane& other) const;
 
  private:
+  // Commits prepared deltas to the fixed-capacity ring. The slot count is
+  // fixed; vector payload allocation occurs while preparing each mutation.
+  void advance_revision(std::vector<PedalDeltaOp> deltas) noexcept;
+  void reset_revision_tracking() noexcept;
+
+  static constexpr std::size_t kMaxTrackedRevisions = 16;
+
   std::unordered_map<StaveId, StaveVoices>            staves_;
   std::unordered_map<StaveId, std::vector<PedalSpan>> pedal_spans_;
+
+  // Mutation tracking for pedal spans — excluded from semantic equality.
+  VoiceRevision                                               pedal_revision_;
+  std::array<std::vector<PedalDeltaOp>, kMaxTrackedRevisions> pedal_deltas_{};
+  std::uint32_t pedal_ring_head_{0};
+  std::uint32_t pedal_ring_count_{0};
 };
 
 // One of up to 64 globally active track definitions: a stable identity, a
@@ -115,8 +149,6 @@ class Track {
 
   [[nodiscard]] TrackIndex index() const noexcept { return index_; }
 
-  // Project-order position only; regenerated freely as tracks are added,
-  // archived, or restored, and never used as identity.
   void set_index(TrackIndex index) noexcept { index_ = index; }
 
   [[nodiscard]] const std::string& name() const noexcept { return name_; }

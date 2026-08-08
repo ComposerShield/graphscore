@@ -2,7 +2,10 @@
 
 #pragma once
 
+#include <array>
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -12,6 +15,91 @@
 #include <graphscore/domain/notation_markings.hpp>
 
 namespace graphscore {
+
+// Monotonic revision token for incremental consumers.
+// A VoiceRevision advances on every successful mutation to a VoiceContent
+// (or TrackLane). Consumers may snapshot the current value with
+// capture_revision() and later call delta_since() to learn exactly what
+// changed. The ring buffer holds kMaxTrackedRevisions (16) entries; a
+// token more than 16 revisions behind is stale and delta_since() returns
+// std::nullopt, requiring a full rebuild.
+//
+// Lineage (epoch) component: every VoiceRevision carries a unique lineage
+// token generated at construction. When a VoiceContent (or TrackLane) is
+// copy-assigned or move-assigned, the destination's revision tracking is
+// reset to a fresh lineage, invalidating all prior tokens. Moving also resets
+// the source to a fresh lineage, so tokens captured before its content was
+// moved away require a full refresh. Comparison checks both fields so a
+// pre-assignment token at {0} cannot accidentally compare equal to a newly
+// assigned object also at {0}. Semantic equality
+// (VoiceContent/TrackLane::operator==) intentionally excludes mutation-tracking
+// state.
+class VoiceRevision {
+ public:
+  VoiceRevision() : value_(0), lineage_(generate_lineage()) {}
+
+  // Two VoiceRevisions compare equal only when both value and lineage
+  // match. This ensures tokens from different lineages (e.g. before/after
+  // copy assignment) are never confused.
+  [[nodiscard]] bool operator==(const VoiceRevision& other) const {
+    return value_ == other.value_ && lineage_ == other.lineage_;
+  }
+
+  [[nodiscard]] bool operator!=(const VoiceRevision& other) const {
+    return !(*this == other);
+  }
+
+ private:
+  friend class VoiceContent;
+  friend class TrackLane;
+
+  explicit VoiceRevision(std::uint32_t value, std::uint32_t lineage) noexcept
+      : value_(value), lineage_(lineage) {}
+
+  // Generates a globally unique lineage token (monotonic process-wide).
+  [[nodiscard]] static std::uint32_t generate_lineage() noexcept {
+    static std::atomic<std::uint32_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+  }
+
+  std::uint32_t value_{0};
+  std::uint32_t lineage_{0};
+};
+
+// One operation on a reference family.  Carries the full record data so
+// consumers never need to scan source collections to discover what
+// changed.  kRemove carries only the id (record is empty); kAdd and
+// kUpdate carry the full record.
+enum class RefOpKind : std::uint8_t {
+  kAdd = 0,
+  kRemove,
+  kUpdate,
+};
+
+template <typename Record>
+struct RefOp {
+  RefOpKind        kind = RefOpKind::kAdd;
+  NotationEntityId id;
+  Record           record;  // valid for kAdd/kUpdate; default for kRemove
+};
+
+// Aggregated mutation record since a given revision.  If `full_reset` is
+// true, the consumer must perform a complete rebuild (stale cursor, lineage
+// change, copy/assignment, move-from).  Otherwise each per-family operation
+// vector carries exactly the add/remove/update records in mutation order.
+// `event_reorder` is true when the event vector's size or order changed
+// (requiring index-per-measure rebuilds), false when only in-place event
+// content or references changed.
+struct VoiceDelta {
+  std::vector<NotationEntityId>      changed_event_ids;
+  std::vector<RefOp<DynamicMarking>> dynamic_ops;
+  std::vector<RefOp<Hairpin>>        hairpin_ops;
+  std::vector<RefOp<Slur>>           slur_ops;
+  std::vector<RefOp<BeamOverride>>   beam_override_ops;
+  std::vector<RefOp<GraceGroup>>     grace_group_ops;
+  bool                               event_reorder = false;
+  bool                               full_reset    = false;
+};
 
 // One voice's ordered, contiguous-time content: a sequence of notes,
 // chords, and rests, plus the dynamics/hairpins/slurs/beam overrides/grace
@@ -25,6 +113,15 @@ namespace graphscore {
 class VoiceContent {
  public:
   VoiceContent() = default;
+
+  // Copy/move assignment reset mutation tracking on the destination so that
+  // any pre-existing tokens are invalidated (lineage change). Move construction
+  // and move assignment also reset tracking on the moved-from source, making
+  // tokens captured before its content was moved stale for that source.
+  VoiceContent(const VoiceContent& other);
+  VoiceContent& operator=(const VoiceContent& other);
+  VoiceContent(VoiceContent&& other) noexcept;
+  VoiceContent& operator=(VoiceContent&& other) noexcept;
 
   [[nodiscard]] const std::vector<VoiceEvent>& events() const noexcept {
     return events_;
@@ -99,15 +196,19 @@ class VoiceContent {
   // remainder if needed.  The original Rest ID is preserved on surviving
   // remainders when possible.
   //
-  // Fails, leaving the voice unchanged, if no event starts at `position`,
-  // if `event` holds a Chord with fewer than two notes, if its
-  // NotationEntityId duplicates an id held by another event (reusing the
-  // target event's own id is permitted), if the new total length would
-  // exceed `target_length`, or if normalization fails.
+  // IDs owned exclusively by the replaced event, including embedded IDs,
+  // may be reused in either top-level or embedded roles. Fails, leaving the
+  // voice unchanged, if no event starts at `position`, if `event` holds a
+  // Chord with fewer than two notes, if IDs are duplicated within `event`,
+  // if an ID is owned by another event or a reference, marking, or grace
+  // record, if the new total length would exceed `target_length`, or if
+  // normalization fails.
   [[nodiscard]] Result replace_event(Rational position, VoiceEvent event,
                                      Rational target_length);
 
-  void clear() noexcept { events_.clear(); }
+  // Clears events and every reference collection, then advances the
+  // revision so that any prior token becomes stale (not current).
+  void clear();
 
   [[nodiscard]] const std::vector<DynamicMarking>& dynamics() const noexcept {
     return dynamics_;
@@ -174,25 +275,41 @@ class VoiceContent {
   // notation_event.hpp.
   [[nodiscard]] Result validate() const;
 
-  [[nodiscard]] bool operator==(const VoiceContent&) const = default;
+  // Mutation revision tracking. On every successful mutation the internal
+  // monotonic counter advances. Consumers snapshot with capture_revision()
+  // and later call delta_since() to learn exactly what changed.
+  // delta_since() merges the ring buffer of deltas since the captured
+  // token; returns std::nullopt when the token is stale (fell off the ring
+  // buffer, the object was copy/move-assigned, or the object was moved from —
+  // an explicit full-refresh signal).
+  [[nodiscard]] VoiceRevision             capture_revision() const noexcept;
+  [[nodiscard]] std::optional<VoiceDelta> delta_since(
+      VoiceRevision since) const;
+
+  // Semantic equality excludes mutation-tracking state, preserving
+  // existing operator== semantics.
+  [[nodiscard]] bool operator==(const VoiceContent& other) const;
 
  private:
   // True if `id` appears as an event id, an embedded ChordNote or
   // GraceNote id, or in any marking collection.
   [[nodiscard]] bool marking_id_exists(NotationEntityId id) const;
 
-  // True if `id` appears in any marking collection (dynamics, hairpins,
-  // slurs, beam overrides, grace groups) or as an embedded ChordNote/
-  // GraceNote id, ignoring event top-level ids.  Used by replace_event
-  // so that self-id replacement is still rejected when the target
-  // event's id collides with a marking.
-  [[nodiscard]] bool marking_only_id_exists(NotationEntityId id) const;
-
-  // True if `id` appears in any marking, any embedded note id, or any
-  // event id outside the event at `event_index`.  Used by replace_event
-  // to reject collisions with everything except the event being replaced.
+  // True if `id` belongs to a reference, marking, or grace record, or is
+  // owned by an event outside `event_index`. Used by replace_event to allow
+  // IDs owned exclusively by the replaced event to be reused across roles.
   [[nodiscard]] bool id_collision_if_not_target(NotationEntityId id,
                                                 std::size_t event_index) const;
+
+  // Commits a fully-prepared delta to the fixed-capacity ring and advances
+  // revision_. The slot count is fixed; each delta's vector payload is still
+  // dynamically allocated while the mutation is prepared.
+  void advance_revision(VoiceDelta delta) noexcept;
+
+  // Called from copy/move assignment to invalidate prior tokens.
+  void reset_revision_tracking() noexcept;
+
+  static constexpr std::size_t kMaxTrackedRevisions = 16;
 
   std::vector<VoiceEvent>     events_;
   std::vector<DynamicMarking> dynamics_;
@@ -200,6 +317,12 @@ class VoiceContent {
   std::vector<Slur>           slurs_;
   std::vector<BeamOverride>   beam_overrides_;
   std::vector<GraceGroup>     grace_groups_;
+
+  // Mutation tracking — excluded from semantic equality.
+  VoiceRevision                                revision_;
+  std::array<VoiceDelta, kMaxTrackedRevisions> deltas_{};
+  std::uint32_t                                ring_head_{0};
+  std::uint32_t                                ring_count_{0};
 };
 
 // Decomposes a strictly positive whole-note `length` into the fewest plain

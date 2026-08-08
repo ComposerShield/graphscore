@@ -3,33 +3,49 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <ranges>
 #include <variant>
 #include <vector>
 
 #include <graphscore/domain/graphscore_domain.hpp>
 
+using graphscore::BeamOverride;
 using graphscore::Chord;
 using graphscore::ChordNote;
 using graphscore::decompose_rest;
 using graphscore::Duration;
+using graphscore::Dynamic;
+using graphscore::DynamicMarking;
 using graphscore::event_id;
 using graphscore::GraceGroup;
 using graphscore::GraceNote;
 using graphscore::GraceNoteType;
+using graphscore::Hairpin;
+using graphscore::HairpinDirection;
 using graphscore::Letter;
+using graphscore::make_beam_override;
 using graphscore::make_chord;
+using graphscore::make_dynamic_marking;
 using graphscore::make_grace_group;
+using graphscore::make_hairpin;
 using graphscore::make_note;
 using graphscore::make_rest;
+using graphscore::make_slur;
 using graphscore::NotationEntityId;
 using graphscore::Note;
 using graphscore::NoteValue;
 using graphscore::Rational;
+using graphscore::RefOpKind;
 using graphscore::Rest;
+using graphscore::Slur;
 using graphscore::SpelledPitch;
 using graphscore::StemDirection;
+using graphscore::validate_voice_references;
 using graphscore::VoiceContent;
+using graphscore::VoiceDelta;
 using graphscore::VoiceEvent;
+using graphscore::VoiceRevision;
+using graphscore::VoiceValidationState;
 
 namespace {
 
@@ -294,23 +310,47 @@ TEST(NoteheadIdUniquenessTest,
   EXPECT_EQ(voice.grace_groups().size(), 0u);
 }
 
-TEST(NoteheadIdUniquenessTest, MarkingOnlyIdExistsIncludesChordNoteIds) {
+TEST(NoteheadIdUniquenessTest,
+     ReplaceEventAllowsTargetEmbeddedIdAsReplacementTopLevelId) {
   VoiceContent voice;
-  const auto   chord = make_chord(duration(NoteValue::kQuarter),
+  const Chord  chord = make_chord(duration(NoteValue::kQuarter),
                                   {ChordNote{.pitch = pitch(Letter::kC)},
                                    ChordNote{.pitch = pitch(Letter::kE)}});
   ASSERT_TRUE(voice.append(VoiceEvent(chord)).ok());
-  // A replacement Note whose id collides with an embedded ChordNote id
-  // (not the Chord's own top-level id) must be rejected.
-  const Note bad_note{std::get<Chord>(voice.events()[0]).notes[0].id,
-                      pitch(Letter::kG),
-                      duration(NoteValue::kQuarter),
-                      false,
-                      {},
-                      StemDirection::kAuto};
-  EXPECT_FALSE(
-      voice.replace_event(Rational(0), VoiceEvent(bad_note), Rational(1)).ok());
-  EXPECT_TRUE(std::holds_alternative<Chord>(voice.events()[0]));
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+  const Note replacement{chord.notes[0].id,
+                         pitch(Letter::kG),
+                         duration(NoteValue::kQuarter),
+                         false,
+                         {},
+                         StemDirection::kAuto};
+
+  ASSERT_TRUE(voice.replace_event(Rational(0), replacement, Rational(1)).ok());
+  const auto* result = std::get_if<Note>(&voice.events()[0]);
+  ASSERT_NE(result, nullptr);
+  EXPECT_EQ(result->id, chord.notes[0].id);
+}
+
+TEST(NoteheadIdUniquenessTest,
+     ReplaceEventAllowsTargetTopLevelIdAsReplacementEmbeddedId) {
+  VoiceContent voice;
+  const Chord  original = make_chord(duration(NoteValue::kQuarter),
+                                     {ChordNote{.pitch = pitch(Letter::kC)},
+                                      ChordNote{.pitch = pitch(Letter::kE)}});
+  ASSERT_TRUE(voice.append(VoiceEvent(original)).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+  const Chord replacement =
+      Chord{original.notes[0].id,
+            duration(NoteValue::kQuarter),
+            {ChordNote{original.id, pitch(Letter::kF), false},
+             ChordNote{original.notes[1].id, pitch(Letter::kA), false}},
+            {},
+            {}};
+
+  ASSERT_TRUE(voice.replace_event(Rational(0), replacement, Rational(1)).ok());
+  const auto* result = std::get_if<Chord>(&voice.events()[0]);
+  ASSERT_NE(result, nullptr);
+  EXPECT_EQ(result->notes[0].id, original.id);
 }
 
 TEST(NoteheadIdUniquenessTest, ReplaceEventAllowsEmbeddedIdReuseFromTarget) {
@@ -320,9 +360,9 @@ TEST(NoteheadIdUniquenessTest, ReplaceEventAllowsEmbeddedIdReuseFromTarget) {
                                       ChordNote{.pitch = pitch(Letter::kE)}});
   ASSERT_TRUE(voice.append(VoiceEvent(original)).ok());
   ASSERT_TRUE(voice.normalize(Rational(1)).ok());
-  // Build a replacement chord with the same ChordNote ids.
+  // Build a replacement chord with the same top-level and ChordNote ids.
   Chord replacement =
-      Chord{NotationEntityId::generate(),
+      Chord{original.id,
             duration(NoteValue::kHalf),
             {ChordNote{original.notes[0].id, pitch(Letter::kC), true},
              ChordNote{original.notes[1].id, pitch(Letter::kE), false}},
@@ -333,6 +373,7 @@ TEST(NoteheadIdUniquenessTest, ReplaceEventAllowsEmbeddedIdReuseFromTarget) {
           .ok());
   const auto* result = std::get_if<Chord>(&voice.events()[0]);
   ASSERT_NE(result, nullptr);
+  EXPECT_EQ(result->id, original.id);
   EXPECT_EQ(result->notes[0].id, original.notes[0].id);
   EXPECT_EQ(result->notes[1].id, original.notes[1].id);
 }
@@ -353,7 +394,13 @@ TEST(NoteheadIdUniquenessTest,
   // Replace chord1 with a chord whose first notehead id equals
   // chord2's first notehead id.  This must be rejected.
   const NotationEntityId other_id = chord2.notes[0].id;
-  const Chord            bad_chord =
+  const Note             bad_parent{
+      other_id, pitch(Letter::kF),   duration(NoteValue::kQuarter), false,
+                  {},       StemDirection::kAuto};
+  EXPECT_FALSE(
+      voice.replace_event(Rational(0), VoiceEvent(bad_parent), Rational(1))
+          .ok());
+  const Chord bad_chord =
       Chord{NotationEntityId::generate(),
             duration(NoteValue::kQuarter),
             {ChordNote{other_id, pitch(Letter::kF), false},
@@ -365,6 +412,82 @@ TEST(NoteheadIdUniquenessTest,
           .ok());
   EXPECT_EQ(std::get<Chord>(voice.events()[0]).notes[0].id,
             chord1.notes[0].id);  // unchanged
+}
+
+TEST(NoteheadIdUniquenessTest,
+     ReplaceEventRejectsReferenceAndGraceIdentityCollisions) {
+  VoiceContent voice;
+  const Chord  original = make_chord(duration(NoteValue::kQuarter),
+                                     {ChordNote{.pitch = pitch(Letter::kC)},
+                                      ChordNote{.pitch = pitch(Letter::kE)}});
+  const auto   successor =
+      make_note(pitch(Letter::kG), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(VoiceEvent(original)).ok());
+  ASSERT_TRUE(voice.append(successor).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(original.id, Dynamic::kF)).ok());
+  ASSERT_TRUE(voice
+                  .add_hairpin(make_hairpin(original.id, event_id(successor),
+                                            HairpinDirection::kCrescendo))
+                  .ok());
+  ASSERT_TRUE(voice.add_slur(make_slur(original.id, event_id(successor))).ok());
+  ASSERT_TRUE(
+      voice
+          .add_beam_override(make_beam_override(
+              BeamOverride::Kind::kBreak, {original.id, event_id(successor)}))
+          .ok());
+  ASSERT_TRUE(
+      voice
+          .add_grace_group(make_grace_group(
+              original.id, {GraceNote{.pitch    = pitch(Letter::kB),
+                                      .duration = duration(NoteValue::kEighth),
+                                      .type = GraceNoteType::kAppoggiatura}}))
+          .ok());
+
+  const std::vector<NotationEntityId> colliding_ids = {
+      voice.dynamics()[0].id,     voice.hairpins()[0].id,
+      voice.slurs()[0].id,        voice.beam_overrides()[0].id,
+      voice.grace_groups()[0].id, voice.grace_groups()[0].notes[0].id,
+  };
+  for (const NotationEntityId id : colliding_ids) {
+    const Note bad_parent{
+        id, pitch(Letter::kF),   duration(NoteValue::kQuarter), false,
+        {}, StemDirection::kAuto};
+    EXPECT_FALSE(
+        voice.replace_event(Rational(0), bad_parent, Rational(1)).ok());
+
+    const Chord bad_embedded =
+        Chord{original.id,
+              duration(NoteValue::kQuarter),
+              {ChordNote{id, pitch(Letter::kC), false},
+               ChordNote{original.notes[1].id, pitch(Letter::kE), false}},
+              {},
+              {}};
+    EXPECT_FALSE(
+        voice.replace_event(Rational(0), bad_embedded, Rational(1)).ok());
+  }
+  EXPECT_EQ(voice.events()[0], VoiceEvent(original));
+}
+
+TEST(NoteheadIdUniquenessTest,
+     ReplaceEventRejectsDuplicateIdsWithinReplacementChord) {
+  VoiceContent voice;
+  const Chord  original = make_chord(duration(NoteValue::kQuarter),
+                                     {ChordNote{.pitch = pitch(Letter::kC)},
+                                      ChordNote{.pitch = pitch(Letter::kE)}});
+  ASSERT_TRUE(voice.append(VoiceEvent(original)).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId duplicate_id = original.notes[0].id;
+
+  Chord bad = make_chord(duration(NoteValue::kQuarter),
+                         {ChordNote{duplicate_id, pitch(Letter::kF), false},
+                          ChordNote{duplicate_id, pitch(Letter::kA), false}});
+  bad.id    = original.id;
+  EXPECT_FALSE(voice.replace_event(Rational(0), bad, Rational(1)).ok());
+  EXPECT_EQ(voice.events()[0], VoiceEvent(original));
 }
 
 // -- Phase 8f-i review follow-up: malformed-input rejection --

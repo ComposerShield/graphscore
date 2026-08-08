@@ -3,12 +3,107 @@
 #include <graphscore/domain/track.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace graphscore {
+
+// --- TrackLane mutation tracking (pedal spans) -------------------------------
+// Fixed-capacity ring: pedal_deltas_ is std::array<Vec, kMaxTrackedRevisions>,
+// with pedal_ring_head_ (next write position) and pedal_ring_count_ (valid).
+
+static_assert(std::is_nothrow_move_assignable_v<std::vector<PedalDeltaOp>>);
+static_assert(std::is_nothrow_move_assignable_v<PedalSpan>);
+
+VoiceRevision TrackLane::capture_revision() const noexcept {
+  return pedal_revision_;
+}
+
+std::optional<std::vector<PedalDeltaOp>> TrackLane::pedal_delta_since(
+    VoiceRevision since) const {
+  // Different lineages → stale token (copy/move-assignment reset).
+  if (since.lineage_ != pedal_revision_.lineage_)
+    return std::nullopt;
+
+  if (pedal_revision_.value_ == since.value_)
+    return std::vector<PedalDeltaOp>{};
+
+  const std::uint32_t oldest =
+      pedal_ring_count_ >= kMaxTrackedRevisions
+          ? pedal_revision_.value_ -
+                static_cast<std::uint32_t>(kMaxTrackedRevisions)
+          : 0;
+  if (since.value_ < oldest || since.value_ > pedal_revision_.value_)
+    return std::nullopt;
+
+  std::vector<PedalDeltaOp> merged;
+  for (std::uint32_t j = 0; j < pedal_ring_count_; ++j) {
+    const std::uint32_t first =
+        (pedal_ring_head_ + kMaxTrackedRevisions - pedal_ring_count_) %
+        static_cast<std::uint32_t>(kMaxTrackedRevisions);
+    const std::uint32_t idx =
+        (first + j) % static_cast<std::uint32_t>(kMaxTrackedRevisions);
+    const std::uint32_t delta_rev = oldest + j + 1;
+    if (delta_rev <= since.value_)
+      continue;
+    const std::vector<PedalDeltaOp>& d = pedal_deltas_[idx];
+    merged.insert(merged.end(), d.begin(), d.end());
+  }
+  return merged;
+}
+
+void TrackLane::advance_revision(std::vector<PedalDeltaOp> deltas) noexcept {
+  pedal_deltas_[pedal_ring_head_] = std::move(deltas);
+  pedal_ring_head_ =
+      (pedal_ring_head_ + 1) % static_cast<std::uint32_t>(kMaxTrackedRevisions);
+  if (pedal_ring_count_ < kMaxTrackedRevisions)
+    ++pedal_ring_count_;
+  pedal_revision_ =
+      VoiceRevision{pedal_revision_.value_ + 1, pedal_revision_.lineage_};
+}
+
+void TrackLane::reset_revision_tracking() noexcept {
+  pedal_revision_   = VoiceRevision{};  // generates new lineage
+  pedal_ring_head_  = 0;
+  pedal_ring_count_ = 0;
+}
+
+bool TrackLane::operator==(const TrackLane& other) const {
+  return staves_ == other.staves_ && pedal_spans_ == other.pedal_spans_;
+}
+
+TrackLane::TrackLane(const TrackLane& other)
+    : staves_(other.staves_), pedal_spans_(other.pedal_spans_) {}
+
+TrackLane& TrackLane::operator=(const TrackLane& other) {
+  if (this == &other)
+    return *this;
+  TrackLane prepared(other);
+  staves_.swap(prepared.staves_);
+  pedal_spans_.swap(prepared.pedal_spans_);
+  reset_revision_tracking();
+  return *this;
+}
+
+TrackLane::TrackLane(TrackLane&& other) noexcept
+    : staves_(std::move(other.staves_)),
+      pedal_spans_(std::move(other.pedal_spans_)) {
+  other.reset_revision_tracking();
+}
+
+TrackLane& TrackLane::operator=(TrackLane&& other) noexcept {
+  if (this == &other)
+    return *this;
+  staves_      = std::move(other.staves_);
+  pedal_spans_ = std::move(other.pedal_spans_);
+  reset_revision_tracking();
+  other.reset_revision_tracking();
+  return *this;
+}
 
 StaveVoices* TrackLane::stave(StaveId stave_id) {
   const auto it = staves_.find(stave_id);
@@ -55,49 +150,46 @@ const std::vector<PedalSpan>* TrackLane::pedal_spans(StaveId stave_id) const {
 }
 
 Result TrackLane::add_pedal_span(StaveId stave_id, PedalSpan span) {
-  // Reject pedal spans for a nonexistent stave: a stave must be present
-  // in staves_ (created via ensure_stave) before any pedal span can be
-  // added to it.  This prevents orphan pedal map keys that validation
-  // (which enumerates only real stave_ids) would never see.
   if (!staves_.contains(stave_id))
     return Result(ResultCode::kInvalidArgument);
 
-  // Reject nil identifier — every PedalSpan must carry a non-nil identity
-  // before any collision scan.
   if (span.id == NotationEntityId{})
     return Result(ResultCode::kInvalidArgument);
 
-  // Reject duplicate pedal ID across all staves.
   for (const auto& entry : pedal_spans_) {
-    for (const PedalSpan& existing : entry.second) {
-      if (existing.id == span.id)
-        return Result(ResultCode::kInvalidArgument);
+    if (std::ranges::any_of(entry.second, [span](const PedalSpan& existing) {
+          return existing.id == span.id;
+        })) {
+      return Result(ResultCode::kInvalidArgument);
     }
   }
 
-  const auto it = pedal_spans_.find(stave_id);
+  // Prepare the journal payload before semantic mutation.
+  RefOp<PedalSpan> op;
+  op.kind   = RefOpKind::kAdd;
+  op.id     = span.id;
+  op.record = span;
+  std::vector<PedalDeltaOp> deltas;
+  deltas.reserve(1);
+  deltas.push_back(PedalDeltaOp{stave_id, op});
+
+  const auto existing = pedal_spans_.find(stave_id);
   try {
-    if (it == pedal_spans_.end()) {
-      // Absent key: build the populated vector first, then emplace.
-      // If construction fails the map is never touched.
-      std::vector<PedalSpan> prepared;
-      prepared.reserve(1);
-      prepared.push_back(span);
+    if (existing == pedal_spans_.end()) {
+      std::vector<PedalSpan> prepared{span};
       pedal_spans_.emplace(stave_id, std::move(prepared));
     } else {
-      // Existing key: copy, append under guard, then nonthrowing swap.
-      std::vector<PedalSpan> prepared = it->second;
-      prepared.reserve(prepared.size() + 1);
+      std::vector<PedalSpan> prepared = existing->second;
       prepared.push_back(span);
-      // swap is noexcept; no further allocation after commit begins.
-      using std::swap;
-      swap(it->second, prepared);
+      existing->second.swap(prepared);
     }
   } catch (const std::bad_alloc&) {
     return Result(ResultCode::kOutOfMemory);
   } catch (const std::length_error&) {
     return Result(ResultCode::kOutOfMemory);
   }
+
+  advance_revision(std::move(deltas));  // noexcept commit
   return Result();
 }
 
@@ -106,6 +198,14 @@ Result TrackLane::remove_pedal_span(StaveId stave_id, NotationEntityId id) {
   if (it == pedal_spans_.end())
     return Result(ResultCode::kInvalidArgument);
 
+  // Prepare delta BEFORE mutation.
+  RefOp<PedalSpan> op;
+  op.kind = RefOpKind::kRemove;
+  op.id   = id;
+  std::vector<PedalDeltaOp> deltas;
+  deltas.reserve(1);
+  deltas.push_back(PedalDeltaOp{stave_id, op});
+
   const auto span_it =
       std::find_if(it->second.begin(), it->second.end(),
                    [id](const PedalSpan& s) { return s.id == id; });
@@ -113,10 +213,16 @@ Result TrackLane::remove_pedal_span(StaveId stave_id, NotationEntityId id) {
     return Result(ResultCode::kInvalidArgument);
 
   try {
-    it->second.erase(span_it);
+    std::vector<PedalSpan> prepared = it->second;
+    prepared.erase(prepared.begin() + (span_it - it->second.begin()));
+    it->second.swap(prepared);
   } catch (const std::bad_alloc&) {
     return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
   }
+
+  advance_revision(std::move(deltas));  // noexcept commit
   return Result();
 }
 

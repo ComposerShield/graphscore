@@ -33,6 +33,7 @@ add_executable(graphscore_domain_test
   validation_service_test.cpp
   voice_content_test.cpp
   voice_normalization_test.cpp
+  voice_revision_delta_test.cpp
   weighted_selection_test.cpp
   writer_audition_test.cpp
 )

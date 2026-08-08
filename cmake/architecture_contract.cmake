@@ -79,6 +79,7 @@ set(GRAPHSCORE_TEST_TARGETS
   graphscore_scheduler_test
   graphscore_loader_test
   graphscore_runtime_test
+  graphscore_notation_test
   graphscore_rendering_test
   gs_c_consumer
 )
@@ -221,6 +222,7 @@ set(GRAPHSCORE_PUBLIC_EDGES_graphscore_persistence_test
 set(GRAPHSCORE_PUBLIC_EDGES_graphscore_scheduler_test graphscore_scheduler)
 set(GRAPHSCORE_PUBLIC_EDGES_graphscore_loader_test graphscore_loader)
 set(GRAPHSCORE_PUBLIC_EDGES_graphscore_runtime_test graphscore_runtime)
+set(GRAPHSCORE_PUBLIC_EDGES_graphscore_notation_test graphscore_notation)
 set(GRAPHSCORE_PUBLIC_EDGES_graphscore_rendering_test graphscore_rendering)
 set(GRAPHSCORE_PUBLIC_EDGES_gs_c_consumer graphscore_runtime)
 

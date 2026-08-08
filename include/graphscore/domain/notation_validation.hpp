@@ -50,33 +50,6 @@ struct NotationDiagnostic {
 // hairpins, slurs, beam overrides, and grace groups. Does not check
 // rhythmic completeness (see VoiceContent::check_complete) and does not
 // check pedal spans (they are stave-scoped; see validate_pedal_spans).
-//
-// Checks performed:
-//   - Ties: every tied Note/ChordNote is immediately followed by an event
-//     sounding the same pitch (see validate_ties in notation_event.hpp;
-//     this reports one diagnostic per offending tie instead of a single
-//     Result).
-//   - Articulation conflicts: at most one of staccato/staccatissimo/tenuto
-//     per event (see is_duration_articulation).
-//   - Slurs/hairpins: both endpoints must resolve to events in this voice,
-//     and the start event must strictly precede the end event.
-//   - Tuplets: for every maximal run of adjacent events sharing the exact
-//     same TupletRatio, the run's summed resolved (already tuplet-scaled)
-//     length must be an exact whole-number multiple of the plain,
-//     un-tupleted, undotted length of the run's first event's base note
-//     value. This is exactly the tuplet's own "N in the time of M"
-//     contract: e.g. three tuplet eighths (ratio 3:2) resolve to 1/4,
-//     which is exactly 2 plain eighths (1/8 each) — a whole multiple. Two
-//     tuplet eighths alone resolve to 1/6, which is not a whole multiple
-//     of a plain eighth, so the run is flagged as an incomplete/truncated
-//     tuplet group.
-//   - Beam overrides: every referenced event must exist in this voice, be
-//     beamable (event_is_beamable), and the full set of referenced events
-//     must occupy a contiguous, adjacent run in voice order.
-//   - Dynamics: every DynamicMarking's at_event must resolve to a
-//     VoiceEvent in this voice.
-//   - Grace groups: every GraceGroup's principal_event must resolve to a
-//     Note or Chord in this voice, not a Rest.
 [[nodiscard]] std::vector<NotationDiagnostic> validate_voice_references(
     const VoiceContent& voice);
 
@@ -87,12 +60,43 @@ struct NotationDiagnostic {
     const std::vector<PedalSpan>& spans, Rational node_end);
 
 // Runs validate_voice_references over every voice of every stave in
-// `lane`, and validate_pedal_spans over every stave's pedal spans (bounded
-// by `node_end`), concatenating every diagnostic produced. Voice rhythmic
-// completeness is intentionally out of scope (see
-// VoiceContent::check_complete), as is anything not enumerated on
-// validate_voice_references/validate_pedal_spans above.
+// `lane`, and validate_pedal_spans over every stave's pedal spans.
 [[nodiscard]] std::vector<NotationDiagnostic> validate_lane_references(
     const TrackLane& lane, Rational node_end);
+
+// Domain-owned validation state for consumers of VoiceDelta. Validation and
+// diagnostic ordering remain exactly equivalent to validate_voice_references;
+// validation bookkeeping is not part of the engraving-rebuild locality
+// guarantee and may scan retained voice content.
+class VoiceValidationState {
+ public:
+  VoiceValidationState() = default;
+
+  // Full rebuild from a voice's complete state.  Scans all events and
+  // references.  The returned diagnostics are equivalent to
+  // validate_voice_references(voice).
+  [[nodiscard]] std::vector<NotationDiagnostic> rebuild(
+      const VoiceContent& voice);
+
+  // Incremental apply.  `voice` is the current VoiceContent (after
+  // mutations).  `delta` is the delta since the last rebuild or apply.
+  // Returns current diagnostics and IDs of semantic event/reference records
+  // directly revalidated. visited_ids is not a complete CPU-work counter.
+  struct ApplyResult {
+    std::vector<NotationDiagnostic> diagnostics;
+    std::vector<NotationEntityId>   visited_ids;
+  };
+
+  [[nodiscard]] ApplyResult apply(const VoiceContent& voice,
+                                  const VoiceDelta&   delta);
+
+  // The complete diagnostics retained from the last rebuild or apply.
+  [[nodiscard]] const std::vector<NotationDiagnostic>& diagnostics() const {
+    return diagnostics_;
+  }
+
+ private:
+  std::vector<NotationDiagnostic> diagnostics_;
+};
 
 }  // namespace graphscore

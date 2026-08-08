@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -35,9 +36,15 @@ std::vector<SpelledPitch> tied_pitches(const VoiceEvent& event) {
   return pitches;
 }
 
-void append_tie_diagnostics(const std::vector<VoiceEvent>&   events,
-                            std::vector<NotationDiagnostic>& diagnostics) {
-  for (std::size_t i = 0; i < events.size(); ++i) {
+void append_tie_diagnostics_for_events(
+    const std::vector<VoiceEvent>&   events,
+    const std::vector<std::size_t>&  positions,
+    std::vector<NotationDiagnostic>& diagnostics,
+    std::vector<NotationEntityId>&   visited) {
+  for (const std::size_t i : positions) {
+    if (i >= events.size())
+      continue;
+    visited.push_back(event_id(events[i]));
     const std::vector<SpelledPitch> ties = tied_pitches(events[i]);
     if (ties.empty())
       continue;
@@ -60,11 +67,27 @@ void append_tie_diagnostics(const std::vector<VoiceEvent>&   events,
   }
 }
 
-void append_articulation_diagnostics(
+void append_tie_diagnostics(const std::vector<VoiceEvent>&   events,
+                            std::vector<NotationDiagnostic>& diagnostics) {
+  std::vector<NotationEntityId> unused;
+  std::vector<std::size_t>      all;
+  all.reserve(events.size());
+  for (std::size_t i = 0; i < events.size(); ++i)
+    all.push_back(i);
+  append_tie_diagnostics_for_events(events, all, diagnostics, unused);
+}
+
+void append_articulation_diagnostics_for_events(
     const std::vector<VoiceEvent>&   events,
-    std::vector<NotationDiagnostic>& diagnostics) {
-  for (const VoiceEvent& event : events) {
-    const std::vector<Articulation>* articulations = event_articulations(event);
+    const std::vector<std::size_t>&  positions,
+    std::vector<NotationDiagnostic>& diagnostics,
+    std::vector<NotationEntityId>&   visited) {
+  for (const std::size_t i : positions) {
+    if (i >= events.size())
+      continue;
+    visited.push_back(event_id(events[i]));
+    const std::vector<Articulation>* articulations =
+        event_articulations(events[i]);
     if (articulations == nullptr)
       continue;
 
@@ -75,12 +98,23 @@ void append_articulation_diagnostics(
     }
     if (duration_articulation_count > 1) {
       diagnostics.push_back(
-          {event_id(event),
+          {event_id(events[i]),
            NotationDiagnosticCode::kConflictingDurationArticulation,
            "staccato/staccatissimo/tenuto are mutually exclusive on one "
            "event"});
     }
   }
+}
+
+void append_articulation_diagnostics(
+    const std::vector<VoiceEvent>&   events,
+    std::vector<NotationDiagnostic>& diagnostics) {
+  std::vector<NotationEntityId> unused;
+  std::vector<std::size_t>      all;
+  all.reserve(events.size());
+  for (std::size_t i = 0; i < events.size(); ++i)
+    all.push_back(i);
+  append_articulation_diagnostics_for_events(events, all, diagnostics, unused);
 }
 
 std::unordered_map<NotationEntityId, std::size_t> index_events_by_id(
@@ -133,16 +167,15 @@ void append_slur_diagnostics(
         NotationDiagnosticCode::kSlurDanglingEndpoint,
         NotationDiagnosticCode::kSlurNotOrdered, diagnostics);
 
-    // Both endpoints must be sounding events (Note or Chord), not Rests.
     for (const NotationEntityId endpoint : {slur.start_event, slur.end_event}) {
       const auto it = positions.find(endpoint);
       if (it == positions.end())
-        continue;  // already diagnosed as dangling
+        continue;
       if (std::holds_alternative<Rest>(events[it->second])) {
         diagnostics.push_back(
             {slur.id, NotationDiagnosticCode::kSlurAttachedToRest,
              "slur endpoint must be a Note or Chord, not a Rest"});
-        break;  // one diagnostic per slur
+        break;
       }
     }
   }
@@ -192,35 +225,53 @@ void append_beam_override_diagnostics(
   }
 }
 
-void append_tuplet_diagnostics(const std::vector<VoiceEvent>&   events,
-                               std::vector<NotationDiagnostic>& diagnostics) {
-  std::size_t i = 0;
-  while (i < events.size()) {
-    const std::optional<TupletRatio>& ratio =
-        event_duration(events[i]).tuplet();
+void append_tuplet_diagnostics_for_positions(
+    const std::vector<VoiceEvent>&   events,
+    const std::vector<std::size_t>&  positions,
+    std::vector<NotationDiagnostic>& diagnostics,
+    std::vector<NotationEntityId>&   visited) {
+  const std::size_t total = events.size();
+  std::vector<bool> done(total, false);
+  for (const std::size_t pos : positions) {
+    if (pos >= total || done[pos])
+      continue;
+
+    const std::optional<TupletRatio> ratio =
+        event_duration(events[pos]).tuplet();
     if (!ratio.has_value()) {
-      ++i;
+      done[pos] = true;
       continue;
     }
 
-    const std::size_t run_start = i;
-    Rational          resolved_sum(0);
-    while (i < events.size()) {
-      const std::optional<TupletRatio>& next_ratio =
-          event_duration(events[i]).tuplet();
-      if (!next_ratio.has_value() || !(*next_ratio == *ratio))
+    std::size_t run_start = pos;
+    while (run_start > 0) {
+      const auto prev = event_duration(events[run_start - 1]).tuplet();
+      if (prev.has_value() && *prev == *ratio)
+        --run_start;
+      else
         break;
-      resolved_sum = resolved_sum + event_duration(events[i]).resolved();
-      ++i;
+    }
+    std::size_t run_end = pos;
+    while (run_end + 1 < total) {
+      const auto next = event_duration(events[run_end + 1]).tuplet();
+      if (next.has_value() && *next == *ratio)
+        ++run_end;
+      else
+        break;
+    }
+    for (std::size_t j = run_start; j <= run_end; ++j) {
+      done[j] = true;
+      visited.push_back(event_id(events[j]));
     }
 
-    // dots == 0 always satisfies Duration::create's only validation.
-    const std::optional<Duration> base_unit =
+    Rational sum(0);
+    for (std::size_t j = run_start; j <= run_end; ++j)
+      sum = sum + event_duration(events[j]).resolved();
+    const std::optional<Duration> base =
         Duration::create(event_duration(events[run_start]).base(), 0);
-    assert(base_unit.has_value());
-    const Duration base_unit_duration = *base_unit;
-    const Rational multiple = resolved_sum / base_unit_duration.resolved();
-    if (multiple.denominator() != 1 || multiple.numerator() <= 0) {
+    assert(base.has_value());
+    const Rational mult = sum / base->resolved();
+    if (mult.denominator() != 1 || mult.numerator() <= 0) {
       diagnostics.push_back(
           {event_id(events[run_start]),
            NotationDiagnosticCode::kIncompleteTupletGroup,
@@ -228,6 +279,16 @@ void append_tuplet_diagnostics(const std::vector<VoiceEvent>&   events,
            "un-tupleted base unit"});
     }
   }
+}
+
+void append_tuplet_diagnostics(const std::vector<VoiceEvent>&   events,
+                               std::vector<NotationDiagnostic>& diagnostics) {
+  std::vector<NotationEntityId> unused;
+  std::vector<std::size_t>      all;
+  all.reserve(events.size());
+  for (std::size_t i = 0; i < events.size(); ++i)
+    all.push_back(i);
+  append_tuplet_diagnostics_for_positions(events, all, diagnostics, unused);
 }
 
 void append_dynamic_diagnostics(
@@ -318,7 +379,6 @@ std::vector<NotationDiagnostic> validate_lane_references(const TrackLane& lane,
       continue;
 
     for (std::uint8_t v = Voice::kMin; v <= Voice::kMax; ++v) {
-      // The loop bounds keep v inside [Voice::kMin, Voice::kMax].
       const std::optional<Voice> voice = Voice::create(v);
       assert(voice.has_value());
       const std::vector<NotationDiagnostic> voice_diagnostics =
@@ -336,6 +396,37 @@ std::vector<NotationDiagnostic> validate_lane_references(const TrackLane& lane,
   }
 
   return diagnostics;
+}
+
+std::vector<NotationDiagnostic> VoiceValidationState::rebuild(
+    const VoiceContent& voice) {
+  diagnostics_ = validate_voice_references(voice);
+  return diagnostics_;
+}
+
+VoiceValidationState::ApplyResult VoiceValidationState::apply(
+    const VoiceContent& voice, const VoiceDelta& delta) {
+  (void)delta;
+  ApplyResult result;
+  diagnostics_       = validate_voice_references(voice);
+  result.diagnostics = diagnostics_;
+  result.visited_ids.reserve(voice.events().size() + voice.dynamics().size() +
+                             voice.hairpins().size() + voice.slurs().size() +
+                             voice.beam_overrides().size() +
+                             voice.grace_groups().size());
+  for (const VoiceEvent& event : voice.events())
+    result.visited_ids.push_back(event_id(event));
+  for (const DynamicMarking& marking : voice.dynamics())
+    result.visited_ids.push_back(marking.id);
+  for (const Hairpin& hairpin : voice.hairpins())
+    result.visited_ids.push_back(hairpin.id);
+  for (const Slur& slur : voice.slurs())
+    result.visited_ids.push_back(slur.id);
+  for (const BeamOverride& override : voice.beam_overrides())
+    result.visited_ids.push_back(override.id);
+  for (const GraceGroup& group : voice.grace_groups())
+    result.visited_ids.push_back(group.id);
+  return result;
 }
 
 }  // namespace graphscore

@@ -967,3 +967,24 @@ this amendment and this fix round only made its existing treatment
 consistent between the two files that reference it), but it is recorded
 here as a fix-round decision for confirmation rather than folded silently
 into the pattern-matching rule.
+
+---
+
+## Amendment (2026-08-08): Notation Test Target
+
+This amendment is purely additive. It names the Layer 6 notation unit-test
+target required by Milestone 05's incremental-engraving implementation. It
+does not add or change any production dependency edge.
+
+| Test target | Internal edge | External edge |
+|---|---|---|
+| `graphscore_notation_test` | `graphscore_notation` | `GTest::gtest_main` |
+
+`graphscore_notation_test` follows §2.3's existing rule: it links exactly the
+one production target under test plus the test framework, inherits
+`graphscore_notation`'s permitted `graphscore_domain` and `graphscore_core`
+edges only transitively, and adds no third-party or writer-backend edge. The
+matching machine-readable additions are one
+`GRAPHSCORE_TEST_TARGETS` entry and
+`GRAPHSCORE_PUBLIC_EDGES_graphscore_notation_test = graphscore_notation`;
+the shared test-framework loop supplies `GTest::gtest_main`.

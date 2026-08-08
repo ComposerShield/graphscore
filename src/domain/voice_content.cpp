@@ -10,11 +10,153 @@
 #include <new>
 #include <optional>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
 namespace graphscore {
+
+// --- VoiceContent mutation tracking
+// -------------------------------------------
+// Fixed-capacity ring: deltas_ is std::array<VoiceDelta, kMaxTrackedRevisions>,
+// with ring_head_ (next write position) and ring_count_ (valid entries).
+// Delta payload allocation happens before semantic mutation. Moving a prepared
+// payload into a ring slot is required to be non-throwing.
+
+static_assert(std::is_nothrow_move_assignable_v<VoiceDelta>);
+static_assert(std::is_nothrow_move_constructible_v<VoiceEvent>);
+static_assert(std::is_nothrow_move_assignable_v<DynamicMarking>);
+static_assert(std::is_nothrow_move_assignable_v<Hairpin>);
+static_assert(std::is_nothrow_move_assignable_v<Slur>);
+static_assert(std::is_nothrow_move_assignable_v<BeamOverride>);
+static_assert(std::is_nothrow_move_assignable_v<GraceGroup>);
+
+VoiceRevision VoiceContent::capture_revision() const noexcept {
+  return revision_;
+}
+
+std::optional<VoiceDelta> VoiceContent::delta_since(VoiceRevision since) const {
+  // Different lineages → stale token (copy/move-assignment reset).
+  if (since.lineage_ != revision_.lineage_)
+    return std::nullopt;
+
+  if (revision_.value_ == since.value_)
+    return VoiceDelta{};
+
+  const std::uint32_t oldest =
+      ring_count_ >= kMaxTrackedRevisions
+          ? revision_.value_ - static_cast<std::uint32_t>(kMaxTrackedRevisions)
+          : 0;
+  if (since.value_ < oldest || since.value_ > revision_.value_)
+    return std::nullopt;
+
+  VoiceDelta merged;
+  for (std::uint32_t j = 0; j < ring_count_; ++j) {
+    // Walk ring from oldest to newest.
+    const std::uint32_t first =
+        (ring_head_ + kMaxTrackedRevisions - ring_count_) %
+        static_cast<std::uint32_t>(kMaxTrackedRevisions);
+    const std::uint32_t idx =
+        (first + j) % static_cast<std::uint32_t>(kMaxTrackedRevisions);
+    const VoiceDelta&   d         = deltas_[idx];
+    const std::uint32_t delta_rev = oldest + j + 1;
+    if (delta_rev <= since.value_)
+      continue;
+    if (d.full_reset) {
+      merged.full_reset = true;
+      break;
+    }
+    if (d.event_reorder)
+      merged.event_reorder = true;
+    merged.changed_event_ids.insert(merged.changed_event_ids.end(),
+                                    d.changed_event_ids.begin(),
+                                    d.changed_event_ids.end());
+    merged.dynamic_ops.insert(merged.dynamic_ops.end(), d.dynamic_ops.begin(),
+                              d.dynamic_ops.end());
+    merged.hairpin_ops.insert(merged.hairpin_ops.end(), d.hairpin_ops.begin(),
+                              d.hairpin_ops.end());
+    merged.slur_ops.insert(merged.slur_ops.end(), d.slur_ops.begin(),
+                           d.slur_ops.end());
+    merged.beam_override_ops.insert(merged.beam_override_ops.end(),
+                                    d.beam_override_ops.begin(),
+                                    d.beam_override_ops.end());
+    merged.grace_group_ops.insert(merged.grace_group_ops.end(),
+                                  d.grace_group_ops.begin(),
+                                  d.grace_group_ops.end());
+  }
+  return merged;
+}
+
+void VoiceContent::advance_revision(VoiceDelta delta) noexcept {
+  deltas_[ring_head_] = std::move(delta);
+  ring_head_ =
+      (ring_head_ + 1) % static_cast<std::uint32_t>(kMaxTrackedRevisions);
+  if (ring_count_ < kMaxTrackedRevisions)
+    ++ring_count_;
+  revision_ = VoiceRevision{revision_.value_ + 1, revision_.lineage_};
+}
+
+void VoiceContent::reset_revision_tracking() noexcept {
+  revision_   = VoiceRevision{};  // generates new lineage
+  ring_head_  = 0;
+  ring_count_ = 0;
+}
+
+bool VoiceContent::operator==(const VoiceContent& other) const {
+  return events_ == other.events_ && dynamics_ == other.dynamics_ &&
+         hairpins_ == other.hairpins_ && slurs_ == other.slurs_ &&
+         beam_overrides_ == other.beam_overrides_ &&
+         grace_groups_ == other.grace_groups_;
+}
+
+VoiceContent::VoiceContent(const VoiceContent& other)
+    : events_(other.events_),
+      dynamics_(other.dynamics_),
+      hairpins_(other.hairpins_),
+      slurs_(other.slurs_),
+      beam_overrides_(other.beam_overrides_),
+      grace_groups_(other.grace_groups_) {}
+
+VoiceContent& VoiceContent::operator=(const VoiceContent& other) {
+  if (this == &other)
+    return *this;
+  VoiceContent prepared(other);
+  events_.swap(prepared.events_);
+  dynamics_.swap(prepared.dynamics_);
+  hairpins_.swap(prepared.hairpins_);
+  slurs_.swap(prepared.slurs_);
+  beam_overrides_.swap(prepared.beam_overrides_);
+  grace_groups_.swap(prepared.grace_groups_);
+  reset_revision_tracking();
+  return *this;
+}
+
+VoiceContent::VoiceContent(VoiceContent&& other) noexcept
+    : events_(std::move(other.events_)),
+      dynamics_(std::move(other.dynamics_)),
+      hairpins_(std::move(other.hairpins_)),
+      slurs_(std::move(other.slurs_)),
+      beam_overrides_(std::move(other.beam_overrides_)),
+      grace_groups_(std::move(other.grace_groups_)) {
+  other.reset_revision_tracking();
+}
+
+VoiceContent& VoiceContent::operator=(VoiceContent&& other) noexcept {
+  if (this == &other)
+    return *this;
+  events_         = std::move(other.events_);
+  dynamics_       = std::move(other.dynamics_);
+  hairpins_       = std::move(other.hairpins_);
+  slurs_          = std::move(other.slurs_);
+  beam_overrides_ = std::move(other.beam_overrides_);
+  grace_groups_   = std::move(other.grace_groups_);
+  reset_revision_tracking();
+  other.reset_revision_tracking();
+  return *this;
+}
+
+// --- Internal helpers --------------------------------------------------------
 
 namespace {
 
@@ -24,8 +166,8 @@ namespace {
     if (event_id(event) == id)
       return true;
     if (const auto* chord = std::get_if<Chord>(&event)) {
-      for (const ChordNote& cn : chord->notes) {
-        if (cn.id == id)
+      for (const ChordNote& note : chord->notes) {
+        if (note.id == id)
           return true;
       }
     }
@@ -123,16 +265,32 @@ struct DecomposeVoiceResult {
 
 }  // namespace
 
+// Helper to build an operation-complete VoiceDelta for event mutations.
+namespace {
+VoiceDelta make_event_delta(std::vector<NotationEntityId> ids, bool reorder) {
+  VoiceDelta d;
+  d.changed_event_ids = std::move(ids);
+  d.event_reorder     = reorder;
+  return d;
+}
+
+template <typename Record>
+RefOp<Record> make_add_op(Record record) {
+  return RefOp<Record>{RefOpKind::kAdd, record.id, std::move(record)};
+}
+
+template <typename Record>
+RefOp<Record> make_remove_op(NotationEntityId id) {
+  return RefOp<Record>{RefOpKind::kRemove, id, Record{}};
+}
+}  // namespace
+
 Result VoiceContent::append(VoiceEvent event) {
   if (const auto* chord = std::get_if<Chord>(&event)) {
     if (chord->notes.size() < 2)
       return Result(ResultCode::kInvalidArgument);
   }
 
-  // Validate the incoming aggregate's complete identity set:
-  // the parent id must be non-nil, every embedded id must be non-nil
-  // and distinct from both the parent id and every sibling, and every
-  // id (parent + embedded) must be absent from the existing voice.
   const NotationEntityId new_id = event_id(event);
   if (new_id == NotationEntityId{})
     return Result(ResultCode::kInvalidArgument);
@@ -155,6 +313,9 @@ Result VoiceContent::append(VoiceEvent event) {
     }
   }
 
+  // Prepare the journal payload before semantic mutation.
+  VoiceDelta d = make_event_delta({new_id}, true);
+
   try {
     events_.push_back(std::move(event));
   } catch (const std::bad_alloc&) {
@@ -162,6 +323,8 @@ Result VoiceContent::append(VoiceEvent event) {
   } catch (const std::length_error&) {
     return Result(ResultCode::kOutOfMemory);
   }
+
+  advance_revision(std::move(d));  // noexcept commit
   return Result();
 }
 
@@ -175,19 +338,10 @@ std::optional<std::size_t> VoiceContent::find_event_index_at(
 
 std::optional<Rational> VoiceContent::position_of_event(
     NotationEntityId id) const {
-  // Resolve through grace-group indirection with cycle detection.
-  // A well-formed principal_event points to a top-level event or
-  // ChordNote and resolves in one hop.  Malformed data can chain
-  // GraceNote → GraceNote principals; this loop follows the chain
-  // until it reaches a top-level event / ChordNote, hits a dangling
-  // reference, or detects a repeated principal (cycle).  There is
-  // no fixed depth cap: any finite acyclic chain, however long, is
-  // resolved.
   NotationEntityId              resolved = id;
   std::vector<NotationEntityId> visited;
 
   while (true) {
-    // Scan top-level events and embedded ChordNotes.
     Rational cumulative(0);
     for (std::size_t i = 0; i < events_.size(); ++i) {
       const VoiceEvent& event = events_[i];
@@ -204,13 +358,10 @@ std::optional<Rational> VoiceContent::position_of_event(
       cumulative = cumulative + event_duration(event).resolved();
     }
 
-    // Not found directly — try grace groups.
     bool advanced = false;
     for (const GraceGroup& g : grace_groups_) {
       for (const GraceNote& gn : g.notes) {
         if (gn.id == resolved) {
-          // Cycle detection: if we have already followed this
-          // principal_event, the grace chain is malformed.
           if (std::find(visited.begin(), visited.end(), g.principal_event) !=
               visited.end())
             return std::nullopt;
@@ -241,8 +392,6 @@ Result VoiceContent::insert_event(Rational position, VoiceEvent event,
   if (!index.has_value())
     return Result(ResultCode::kInvalidArgument);
 
-  // Validate the incoming aggregate's complete identity set
-  // (same rules as append).
   const NotationEntityId new_id = event_id(event);
   if (new_id == NotationEntityId{})
     return Result(ResultCode::kInvalidArgument);
@@ -285,16 +434,15 @@ Result VoiceContent::insert_event(Rational position, VoiceEvent event,
     if (!norm_result.ok())
       return norm_result;
 
+    VoiceDelta d = make_event_delta({new_id}, true);  // prepare BEFORE swap
     events_.swap(temp);
+    advance_revision(std::move(d));  // noexcept commit
     return Result();
   }
 
-  // Insertion at the start of an existing event: must consume contiguous
-  // Rest coverage beginning at `position`.
   if (!std::holds_alternative<Rest>(events_[*index]))
     return Result(ResultCode::kInvalidArgument);
 
-  // Scan forward consuming rests until we have covered new_dur.
   Rational          consumed(0);
   const std::size_t consume_start   = *index;
   std::size_t       consume_end     = *index;
@@ -311,12 +459,11 @@ Result VoiceContent::insert_event(Rational position, VoiceEvent event,
       consumed = consumed + rest_dur;
       ++consume_end;
     } else {
-      // Split the final Rest: consume part, leave remainder.
       split_remainder_amount = (consumed + rest_dur) - new_dur;
       split_remainder        = true;
       split_rest_id          = event_id(events_[i]);
       consumed               = new_dur;
-      ++consume_end;  // this rest is fully consumed, remainder will be spliced
+      ++consume_end;
       break;
     }
   }
@@ -324,20 +471,15 @@ Result VoiceContent::insert_event(Rational position, VoiceEvent event,
   if (consumed < new_dur)
     return Result(ResultCode::kInvalidArgument);
 
-  // Build the new events vector:
-  //   [0..consume_start) + [new event] + [remainder rests] + [consume_end..)
   std::vector<VoiceEvent> temp;
   try {
     temp.reserve(events_.size() + 4);
 
-    // Before insertion boundary.
     temp.insert(temp.end(), events_.begin(),
                 events_.begin() + static_cast<std::ptrdiff_t>(consume_start));
 
-    // The new event.
     temp.push_back(event);
 
-    // Remaining portion of the split rest, if any, preserving its original id.
     if (split_remainder && split_remainder_amount > Rational(0)) {
       DecomposeVoiceResult remainder =
           decompose_rest_with_id(split_remainder_amount, split_rest_id);
@@ -346,7 +488,6 @@ Result VoiceContent::insert_event(Rational position, VoiceEvent event,
       temp.insert(temp.end(), remainder.events.begin(), remainder.events.end());
     }
 
-    // Everything after the consumed region.
     temp.insert(temp.end(),
                 events_.begin() + static_cast<std::ptrdiff_t>(consume_end),
                 events_.end());
@@ -360,7 +501,9 @@ Result VoiceContent::insert_event(Rational position, VoiceEvent event,
   if (!norm_result.ok())
     return norm_result;
 
+  VoiceDelta d = make_event_delta({new_id}, true);  // prepare BEFORE swap
   events_.swap(temp);
+  advance_revision(std::move(d));  // noexcept commit
   return Result();
 }
 
@@ -371,10 +514,9 @@ Result VoiceContent::remove_event(Rational position, Rational target_length) {
   if (*index >= events_.size())
     return Result(ResultCode::kInvalidArgument);
 
-  const Rational old_dur = event_duration(events_[*index]).resolved();
+  const Rational         old_dur = event_duration(events_[*index]).resolved();
+  const NotationEntityId removed_id = event_id(events_[*index]);
 
-  // Replace the removed event with normalized rests of the same duration
-  // at the same position, preserving every later event's onset.
   std::optional<std::vector<Rest>> gap_rests;
   try {
     gap_rests = decompose_rest(old_dur);
@@ -409,7 +551,9 @@ Result VoiceContent::remove_event(Rational position, Rational target_length) {
   if (!norm_result.ok())
     return norm_result;
 
+  VoiceDelta d = make_event_delta({removed_id}, true);  // prepare BEFORE swap
   events_.swap(temp);
+  advance_revision(std::move(d));  // noexcept commit
   return Result();
 }
 
@@ -426,17 +570,11 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
   if (*index >= events_.size())
     return Result(ResultCode::kInvalidArgument);
 
-  // Validate the incoming aggregate's complete identity set.
-  // The parent id may equal the target event's id (self-replacement);
-  // embedded ids may equal the target event's embedded ids (they are
-  // going away).  Every other collision is rejected.
   const NotationEntityId new_id    = event_id(event);
   const NotationEntityId target_id = event_id(events_[*index]);
   if (new_id == NotationEntityId{})
     return Result(ResultCode::kInvalidArgument);
-  if (marking_only_id_exists(new_id))
-    return Result(ResultCode::kInvalidArgument);
-  if (new_id != target_id && event_id_exists(events_, new_id))
+  if (id_collision_if_not_target(new_id, *index))
     return Result(ResultCode::kInvalidArgument);
   if (const auto* repl_chord = std::get_if<Chord>(&event)) {
     const NotationEntityId parent_id = repl_chord->id;
@@ -467,8 +605,6 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
     return Result(ResultCode::kOutOfMemory);
   }
 
-  // Duration contraction: insert normalized rests for the gap immediately
-  // after the replacement so every later event's onset is preserved.
   if (new_dur < old_dur) {
     const Rational                   gap = old_dur - new_dur;
     std::optional<std::vector<Rest>> gap_rests;
@@ -496,12 +632,12 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
     if (!norm_result.ok())
       return norm_result;
 
+    VoiceDelta d = make_event_delta({target_id, new_id}, true);
     events_.swap(temp);
+    advance_revision(std::move(d));
     return Result();
   }
 
-  // Same-length replacement: direct substitution, no positional adjustment
-  // needed.  Later events' onsets are unchanged.
   if (new_dur == old_dur) {
     try {
       temp[*index] = std::move(event);
@@ -513,7 +649,9 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
     if (!norm_result.ok())
       return norm_result;
 
+    VoiceDelta d = make_event_delta({target_id, new_id}, false);
     events_.swap(temp);
+    advance_revision(std::move(d));
     return Result();
   }
 
@@ -532,8 +670,6 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
       consumed = consumed + rest_dur;
       ++erase_end;
     } else {
-      // Shorten the final consumed rest.  Preserve the original Rest
-      // NotationEntityId on the surviving remainder.
       const Rational remainder = (consumed + rest_dur) - needed;
       consumed                 = needed;
       if (remainder <= Rational(0)) {
@@ -570,8 +706,6 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
         } catch (const std::length_error&) {
           return Result(ResultCode::kOutOfMemory);
         }
-        // The split code has already removed the consumed rest and
-        // spliced in the remainder; don't erase those remainder rests.
         erase_end = erase_start;
         break;
       }
@@ -581,7 +715,6 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
   if (consumed < needed)
     return Result(ResultCode::kInvalidArgument);
 
-  // Erase consumed rests, insert the replacement, normalize.
   if (erase_end > erase_start) {
     try {
       temp.erase(temp.begin() + static_cast<std::ptrdiff_t>(erase_start),
@@ -603,7 +736,9 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
   if (!norm_result.ok())
     return norm_result;
 
+  VoiceDelta d = make_event_delta({target_id, new_id}, true);
   events_.swap(temp);
+  advance_revision(std::move(d));
   return Result();
 }
 
@@ -634,10 +769,12 @@ Result VoiceContent::normalize(Rational target_length) {
   if (!rests.has_value())
     return Result(ResultCode::kInvalidArgument);
 
-  // Build a complete temp vector; swap only on success so failure leaves
-  // events_ unchanged.
-  std::vector<VoiceEvent> temp;
+  std::vector<NotationEntityId> new_rest_ids;
+  std::vector<VoiceEvent>       temp;
   try {
+    new_rest_ids.reserve(rests->size());
+    for (const Rest& rest : *rests)
+      new_rest_ids.push_back(rest.id);
     temp.reserve(events_.size() + rests->size());
     temp = events_;
     for (const Rest& rest : *rests)
@@ -648,7 +785,9 @@ Result VoiceContent::normalize(Rational target_length) {
     return Result(ResultCode::kOutOfMemory);
   }
 
-  events_.swap(temp);  // nonthrowing
+  VoiceDelta d = make_event_delta(std::move(new_rest_ids), true);
+  events_.swap(temp);              // nonthrowing
+  advance_revision(std::move(d));  // noexcept commit
   return Result();
 }
 
@@ -656,74 +795,45 @@ Result VoiceContent::validate() const {
   return validate_ties(events_);
 }
 
-bool VoiceContent::marking_id_exists(NotationEntityId id) const {
-  for (const VoiceEvent& event : events_) {
-    if (event_id(event) == id)
-      return true;
-    if (const auto* chord = std::get_if<Chord>(&event)) {
-      for (const ChordNote& cn : chord->notes) {
-        if (cn.id == id)
-          return true;
-      }
-    }
-  }
-  for (const DynamicMarking& m : dynamics_) {
-    if (m.id == id)
-      return true;
-  }
-  for (const Hairpin& m : hairpins_) {
-    if (m.id == id)
-      return true;
-  }
-  for (const Slur& m : slurs_) {
-    if (m.id == id)
-      return true;
-  }
-  for (const BeamOverride& m : beam_overrides_) {
-    if (m.id == id)
-      return true;
-  }
-  for (const GraceGroup& m : grace_groups_) {
-    if (m.id == id)
-      return true;
-    for (const GraceNote& gn : m.notes) {
-      if (gn.id == id)
-        return true;
-    }
-  }
-  return false;
+void VoiceContent::clear() {
+  // Prepare the journal payload before clearing content.
+  VoiceDelta full_reset_delta;
+  full_reset_delta.full_reset = true;
+
+  events_.clear();
+  dynamics_.clear();
+  hairpins_.clear();
+  slurs_.clear();
+  beam_overrides_.clear();
+  grace_groups_.clear();
+  // Commit — noexcept.
+  advance_revision(std::move(full_reset_delta));
 }
 
-bool VoiceContent::marking_only_id_exists(NotationEntityId id) const {
-  for (const VoiceEvent& event : events_) {
-    if (const auto* chord = std::get_if<Chord>(&event)) {
-      for (const ChordNote& cn : chord->notes) {
-        if (cn.id == id)
-          return true;
-      }
-    }
-  }
-  for (const DynamicMarking& m : dynamics_) {
-    if (m.id == id)
+bool VoiceContent::marking_id_exists(NotationEntityId id) const {
+  if (event_id_exists(events_, id))
+    return true;
+  for (const DynamicMarking& marking : dynamics_) {
+    if (marking.id == id)
       return true;
   }
-  for (const Hairpin& m : hairpins_) {
-    if (m.id == id)
+  for (const Hairpin& hairpin : hairpins_) {
+    if (hairpin.id == id)
       return true;
   }
-  for (const Slur& m : slurs_) {
-    if (m.id == id)
+  for (const Slur& slur : slurs_) {
+    if (slur.id == id)
       return true;
   }
-  for (const BeamOverride& m : beam_overrides_) {
-    if (m.id == id)
+  for (const BeamOverride& override : beam_overrides_) {
+    if (override.id == id)
       return true;
   }
-  for (const GraceGroup& m : grace_groups_) {
-    if (m.id == id)
+  for (const GraceGroup& group : grace_groups_) {
+    if (group.id == id)
       return true;
-    for (const GraceNote& gn : m.notes) {
-      if (gn.id == id)
+    for (const GraceNote& note : group.notes) {
+      if (note.id == id)
         return true;
     }
   }
@@ -732,43 +842,38 @@ bool VoiceContent::marking_only_id_exists(NotationEntityId id) const {
 
 bool VoiceContent::id_collision_if_not_target(NotationEntityId id,
                                               std::size_t event_index) const {
-  // Check all marking ids.
-  for (const DynamicMarking& m : dynamics_) {
-    if (m.id == id)
+  for (const DynamicMarking& marking : dynamics_) {
+    if (marking.id == id)
       return true;
   }
-  for (const Hairpin& m : hairpins_) {
-    if (m.id == id)
+  for (const Hairpin& hairpin : hairpins_) {
+    if (hairpin.id == id)
       return true;
   }
-  for (const Slur& m : slurs_) {
-    if (m.id == id)
+  for (const Slur& slur : slurs_) {
+    if (slur.id == id)
       return true;
   }
-  for (const BeamOverride& m : beam_overrides_) {
-    if (m.id == id)
+  for (const BeamOverride& override : beam_overrides_) {
+    if (override.id == id)
       return true;
   }
-  // Check GraceGroup and GraceNote ids.
-  for (const GraceGroup& m : grace_groups_) {
-    if (m.id == id)
+  for (const GraceGroup& group : grace_groups_) {
+    if (group.id == id)
       return true;
-    for (const GraceNote& gn : m.notes) {
-      if (gn.id == id)
+    for (const GraceNote& note : group.notes) {
+      if (note.id == id)
         return true;
     }
   }
-  // Check event top-level ids and embedded ChordNote ids, excluding
-  // the event at event_index (which is being replaced and whose ids
-  // are going away).
-  for (std::size_t i = 0; i < events_.size(); ++i) {
-    if (i == event_index)
+  for (std::size_t index = 0; index < events_.size(); ++index) {
+    if (index == event_index)
       continue;
-    if (event_id(events_[i]) == id)
+    if (event_id(events_[index]) == id)
       return true;
-    if (const auto* chord = std::get_if<Chord>(&events_[i])) {
-      for (const ChordNote& cn : chord->notes) {
-        if (cn.id == id)
+    if (const auto* chord = std::get_if<Chord>(&events_[index])) {
+      for (const ChordNote& note : chord->notes) {
+        if (note.id == id)
           return true;
       }
     }
@@ -781,6 +886,11 @@ Result VoiceContent::add_dynamic(DynamicMarking marking) {
     return Result(ResultCode::kInvalidArgument);
   if (marking_id_exists(marking.id))
     return Result(ResultCode::kInvalidArgument);
+
+  // Prepare the journal payload before semantic mutation.
+  VoiceDelta d;
+  d.dynamic_ops.push_back(make_add_op(marking));
+
   try {
     dynamics_.push_back(marking);
   } catch (const std::bad_alloc&) {
@@ -788,6 +898,8 @@ Result VoiceContent::add_dynamic(DynamicMarking marking) {
   } catch (const std::length_error&) {
     return Result(ResultCode::kOutOfMemory);
   }
+
+  advance_revision(std::move(d));  // noexcept commit
   return Result();
 }
 
@@ -796,6 +908,10 @@ Result VoiceContent::add_hairpin(Hairpin hairpin) {
     return Result(ResultCode::kInvalidArgument);
   if (marking_id_exists(hairpin.id))
     return Result(ResultCode::kInvalidArgument);
+
+  VoiceDelta d;
+  d.hairpin_ops.push_back(make_add_op(hairpin));
+
   try {
     hairpins_.push_back(hairpin);
   } catch (const std::bad_alloc&) {
@@ -803,6 +919,8 @@ Result VoiceContent::add_hairpin(Hairpin hairpin) {
   } catch (const std::length_error&) {
     return Result(ResultCode::kOutOfMemory);
   }
+
+  advance_revision(std::move(d));  // noexcept commit
   return Result();
 }
 
@@ -811,6 +929,10 @@ Result VoiceContent::add_slur(Slur slur) {
     return Result(ResultCode::kInvalidArgument);
   if (marking_id_exists(slur.id))
     return Result(ResultCode::kInvalidArgument);
+
+  VoiceDelta d;
+  d.slur_ops.push_back(make_add_op(slur));
+
   try {
     slurs_.push_back(slur);
   } catch (const std::bad_alloc&) {
@@ -818,6 +940,8 @@ Result VoiceContent::add_slur(Slur slur) {
   } catch (const std::length_error&) {
     return Result(ResultCode::kOutOfMemory);
   }
+
+  advance_revision(std::move(d));  // noexcept commit
   return Result();
 }
 
@@ -826,6 +950,10 @@ Result VoiceContent::add_beam_override(BeamOverride override) {
     return Result(ResultCode::kInvalidArgument);
   if (marking_id_exists(override.id))
     return Result(ResultCode::kInvalidArgument);
+
+  VoiceDelta d;
+  d.beam_override_ops.push_back(make_add_op(override));
+
   try {
     beam_overrides_.push_back(std::move(override));
   } catch (const std::bad_alloc&) {
@@ -833,13 +961,14 @@ Result VoiceContent::add_beam_override(BeamOverride override) {
   } catch (const std::length_error&) {
     return Result(ResultCode::kOutOfMemory);
   }
+
+  advance_revision(std::move(d));  // noexcept commit
   return Result();
 }
 
 Result VoiceContent::add_grace_group(GraceGroup group) {
   if (group.id == NotationEntityId{})
     return Result(ResultCode::kInvalidArgument);
-  // The group's own id must not double as a principal_event reference.
   if (group.id == group.principal_event)
     return Result(ResultCode::kInvalidArgument);
   if (marking_id_exists(group.id))
@@ -851,8 +980,6 @@ Result VoiceContent::add_grace_group(GraceGroup group) {
       return Result(ResultCode::kInvalidArgument);
     if (gn_id == parent_id)
       return Result(ResultCode::kInvalidArgument);
-    // A GraceNote id must not double as the principal_event reference
-    // either — that would create an ambiguous identity.
     if (gn_id == group.principal_event)
       return Result(ResultCode::kInvalidArgument);
     for (std::size_t j = 0; j < i; ++j) {
@@ -862,6 +989,10 @@ Result VoiceContent::add_grace_group(GraceGroup group) {
     if (marking_id_exists(gn_id))
       return Result(ResultCode::kInvalidArgument);
   }
+
+  VoiceDelta d;
+  d.grace_group_ops.push_back(make_add_op(group));
+
   try {
     grace_groups_.push_back(std::move(group));
   } catch (const std::bad_alloc&) {
@@ -869,6 +1000,8 @@ Result VoiceContent::add_grace_group(GraceGroup group) {
   } catch (const std::length_error&) {
     return Result(ResultCode::kOutOfMemory);
   }
+
+  advance_revision(std::move(d));  // noexcept commit
   return Result();
 }
 
@@ -878,11 +1011,17 @@ Result VoiceContent::remove_dynamic(NotationEntityId id) {
                    [id](const DynamicMarking& m) { return m.id == id; });
   if (it == dynamics_.end())
     return Result(ResultCode::kInvalidArgument);
+
+  VoiceDelta d;
+  d.dynamic_ops.push_back(make_remove_op<DynamicMarking>(id));
+
   try {
     dynamics_.erase(it);
   } catch (const std::bad_alloc&) {
     return Result(ResultCode::kOutOfMemory);
   }
+
+  advance_revision(std::move(d));  // noexcept commit
   return Result();
 }
 
@@ -891,11 +1030,17 @@ Result VoiceContent::remove_hairpin(NotationEntityId id) {
                                [id](const Hairpin& m) { return m.id == id; });
   if (it == hairpins_.end())
     return Result(ResultCode::kInvalidArgument);
+
+  VoiceDelta d;
+  d.hairpin_ops.push_back(make_remove_op<Hairpin>(id));
+
   try {
     hairpins_.erase(it);
   } catch (const std::bad_alloc&) {
     return Result(ResultCode::kOutOfMemory);
   }
+
+  advance_revision(std::move(d));  // noexcept commit
   return Result();
 }
 
@@ -904,11 +1049,17 @@ Result VoiceContent::remove_slur(NotationEntityId id) {
                                [id](const Slur& m) { return m.id == id; });
   if (it == slurs_.end())
     return Result(ResultCode::kInvalidArgument);
+
+  VoiceDelta d;
+  d.slur_ops.push_back(make_remove_op<Slur>(id));
+
   try {
     slurs_.erase(it);
   } catch (const std::bad_alloc&) {
     return Result(ResultCode::kOutOfMemory);
   }
+
+  advance_revision(std::move(d));  // noexcept commit
   return Result();
 }
 
@@ -918,11 +1069,17 @@ Result VoiceContent::remove_beam_override(NotationEntityId id) {
                    [id](const BeamOverride& m) { return m.id == id; });
   if (it == beam_overrides_.end())
     return Result(ResultCode::kInvalidArgument);
+
+  VoiceDelta d;
+  d.beam_override_ops.push_back(make_remove_op<BeamOverride>(id));
+
   try {
     beam_overrides_.erase(it);
   } catch (const std::bad_alloc&) {
     return Result(ResultCode::kOutOfMemory);
   }
+
+  advance_revision(std::move(d));  // noexcept commit
   return Result();
 }
 
@@ -932,11 +1089,17 @@ Result VoiceContent::remove_grace_group(NotationEntityId id) {
                    [id](const GraceGroup& m) { return m.id == id; });
   if (it == grace_groups_.end())
     return Result(ResultCode::kInvalidArgument);
+
+  VoiceDelta d;
+  d.grace_group_ops.push_back(make_remove_op<GraceGroup>(id));
+
   try {
     grace_groups_.erase(it);
   } catch (const std::bad_alloc&) {
     return Result(ResultCode::kOutOfMemory);
   }
+
+  advance_revision(std::move(d));  // noexcept commit
   return Result();
 }
 

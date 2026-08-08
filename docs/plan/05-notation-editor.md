@@ -21,12 +21,12 @@ Provide a polished, directly editable focused notation system inside a node, wit
 
 ### Incremental engraving
 
-- [ ] Lay out all active tracks and their one-or-more staves against the node's common measure timeline.
-- [ ] Render staff systems, barlines, standard clefs, key/time signatures, notes, chords, rests, dots, accidentals through double, stems, flags, beams, ledger lines, ties, tuplets, and grace notes.
-- [ ] Render dynamics, hairpins, slurs, accent, marcato, staccato, staccatissimo, tenuto, and pedal markings.
-- [ ] Support up to four voices with conventional collision, stem, rest, and accidental placement.
-- [ ] Re-layout only affected measures/systems after local edits while retaining stable hit-test identities.
-- [ ] Keep layout and render commands toolkit-neutral and testable without a window.
+- [x] Lay out all active tracks and their one-or-more staves against the node's common measure timeline.
+- [x] Render staff systems, barlines, standard clefs, key/time signatures, notes, chords, rests, dots, accidentals through double, stems, flags, beams, ledger lines, ties, tuplets, and grace notes.
+- [x] Render dynamics, hairpins, slurs, accent, marcato, staccato, staccatissimo, tenuto, and pedal markings.
+- [x] Support up to four voices with conventional collision, stem, rest, and accidental placement.
+- [x] Re-layout only affected measures/systems after local edits while retaining stable hit-test identities.
+- [x] Keep layout and render commands toolkit-neutral and testable without a window.
 
 ### Note palette and pointer entry
 
