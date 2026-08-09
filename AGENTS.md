@@ -248,6 +248,19 @@ rationale.
 - Windows arm64 and Linux arm64 are build-only in CI; native test execution
   is not required there. macOS arm64/x86-64 and Windows/Linux x86-64 build
   and run tests natively.
+- The oldest C++ toolchain in the matrix is the `macos-14` runner's Apple
+  Clang 15 (Xcode 15.4), used by the `macOS arm64 (Debug)` and
+  `macOS arm64 (Release)` jobs. It is the effective language floor: a local
+  build, and the `macos-latest` job, both run a much newer Apple Clang and
+  will happily accept C++20/23 constructs that Apple Clang 15 rejects. The
+  one that has actually bitten this repository is P1091R3 — **a structured
+  binding cannot be captured by a lambda**, so write
+  `const auto& pair = ...; const auto& id = pair.first;` rather than
+  `const auto& [id, other] = ...` whenever a lambda in the same scope
+  references the bound name. `src/notation/notation.cpp` carries the current
+  examples and a comment at each site. Nothing checks this locally, so a
+  change that compiles and tests clean on a dev machine can still fail those
+  two jobs.
 - The sanitizer and clang-tidy CI jobs configure with
   `-DGRAPHSCORE_BUILD_WRITER=OFF`. Instrumenting or analysing SDL3 costs most
   of those jobs' time on third-party code GraphScore does not own.
