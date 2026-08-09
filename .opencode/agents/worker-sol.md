@@ -22,7 +22,7 @@ completed, verified results.
 
 **Project quality bar (enforced mechanically — work with it, not against it):**
 - Warnings are errors: `cmake --build --preset debug` must be clean.
-- Run `cmake --build --preset debug --target lint` (cpplint + clang-format) before any
+- Run `cmake --build --preset debug --target lint` (cpplint + clang-format 18) before any
   commit — the pre-commit hook rejects unformatted code.
 - `ctest --preset debug --output-on-failure` must be green before reporting done.
 - The milestone plan files in `docs/plan/` and `AGENTS.md` are the spec. When your task spec
@@ -31,7 +31,8 @@ completed, verified results.
 **Tiered verification (the orchestrator prompt declares the current tier):**
 - Use **Tier 1** (focused build/tests/lint) during implementation iteration and fix rounds.
   Build only the affected targets; run only the focused test binary, GoogleTest filter, or
-  CTest regex matching the changed behavior; run clang-format on touched files.
+  CTest regex matching the changed behavior; run clang-format 18—not Apple 17—on touched
+  files (see `AGENTS.md`).
 - Before handing off a phase candidate for review, run **Tier 2**: clean debug build with
   zero warnings, full `ctest --preset debug --output-on-failure`, full lint target.
 - Fix-round workers run narrow regressions matching the specific finding and affected

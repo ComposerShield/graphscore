@@ -37,7 +37,8 @@ canonical commands and engineering guidance):**
 
 **Verification gate (run independently; do not trust the worker's report):**
 - Debug build: `cmake --build --preset debug` (zero warnings; warnings are errors).
-- Full lint: `cmake --build --preset debug --target lint` (cpplint + clang-format).
+- Full lint: `cmake --build --preset debug --target lint` (cpplint + clang-format 18,
+  never Apple 17; see `AGENTS.md`).
 - Full test: `ctest --preset debug --output-on-failure`.
 - Architecture: `cmake --build --preset debug --target audit_architecture`.
 - clang-tidy 18: `cmake --preset debug -B build/tidy -DGRAPHSCORE_BUILD_WRITER=OFF -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON -DGRAPHSCORE_CLANG_TIDY_EXECUTABLE=/opt/homebrew/opt/llvm@18/bin/clang-tidy` (+ isysroot on macOS), then `cmake --build build/tidy -- -k 0`.

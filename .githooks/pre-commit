@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
 #
-# GraphScore pre-commit hook. Runs cpplint and a clang-format verification
+# GraphScore pre-commit hook. Runs cpplint and a clang-format 18 verification
 # pass over staged GraphScore-owned sources, then runs the const-correctness
 # clang-tidy analysis. All checks use the same configuration as CI.
 #
@@ -42,15 +42,25 @@ else
   echo "pre-commit: cpplint not found, skipping (install: pip install cpplint)." >&2
 fi
 
-# --- clang-format ---------------------------------------------------------
+# --- clang-format 18 ------------------------------------------------------
 
 clang_format=""
-if command -v clang-format >/dev/null 2>&1; then
-  clang_format=clang-format
-elif [ -x /Library/Developer/CommandLineTools/usr/bin/clang-format ]; then
-  # Apple Command Line Tools ship clang-format but do not put it on PATH.
-  clang_format=/Library/Developer/CommandLineTools/usr/bin/clang-format
-fi
+clang_format_major() {
+  "$1" --version 2>/dev/null \
+    | sed -n 's/.*clang-format version \([0-9][0-9]*\)\(\..*\)\{0,1\}$/\1/p'
+}
+
+for candidate in clang-format-18 \
+  /opt/homebrew/opt/llvm@18/bin/clang-format \
+  /usr/local/opt/llvm@18/bin/clang-format clang-format; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    candidate_path=$(command -v "$candidate")
+    if [ "$(clang_format_major "$candidate_path")" = "18" ]; then
+      clang_format=$candidate_path
+      break
+    fi
+  fi
+done
 
 if [ -n "$clang_format" ]; then
   # shellcheck disable=SC2086
@@ -59,7 +69,12 @@ if [ -n "$clang_format" ]; then
     status=1
   fi
 else
-  echo "pre-commit: clang-format not found, skipping (install LLVM)." >&2
+  echo "pre-commit: clang-format major 18 is required; formatting cannot be skipped." >&2
+  echo "Install one of: brew install llvm@18" >&2
+  echo "                sudo apt install clang-format-18" >&2
+  echo "                pip install clang-format==18.1.8" >&2
+  echo "Apple Command Line Tools clang-format 17 is not supported." >&2
+  status=1
 fi
 
 # --- clang-tidy ------------------------------------------------------------

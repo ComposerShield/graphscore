@@ -40,9 +40,9 @@ Create a reproducible, warning-clean C++23 repository foundation that continuous
 
 ### Local quality gates
 
-- [x] Add project clang-format and clang-tidy configuration.
+- [x] Add project clang-format 18 and clang-tidy configuration.
 - [x] Add cpplint configuration and a CMake lint target.
-- [x] Add executable `.githooks/pre-commit` invoking cpplint and formatting checks on relevant files.
+- [x] Add executable `.githooks/pre-commit` invoking cpplint and clang-format 18 checks on relevant files.
 - [x] Provide a bootstrap command that sets `core.hooksPath=.githooks` without changing global Git configuration.
 - [x] Keep CI authoritative by invoking the same checks independently of local hooks.
 
@@ -51,7 +51,7 @@ Create a reproducible, warning-clean C++23 repository foundation that continuous
 - [ ] Build and run GTest on macOS arm64/x86-64 release paths, Windows x86-64, and Linux x86-64.
 - [ ] Build Windows arm64 and Linux arm64 artifacts without initially claiming native test coverage.
 - [x] Exercise Debug and optimized configurations across the matrix without needlessly duplicating every expensive job.
-- [x] Run cpplint, clang-format verification, clang-tidy, ASan/UBSan, and TSan on suitable Clang runners.
+- [x] Run cpplint, clang-format 18 verification, clang-tidy, ASan/UBSan, and TSan on suitable Clang runners.
 - [x] Cache immutable FetchContent downloads without making cache presence required.
 - [x] Upload test reports and failure diagnostics.
 

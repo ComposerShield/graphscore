@@ -17,7 +17,9 @@ if (NOT GRAPHSCORE_CPPLINT OR GRAPHSCORE_CPPLINT MATCHES "NOTFOUND")
 endif()
 
 if (NOT GRAPHSCORE_CLANG_FORMAT OR GRAPHSCORE_CLANG_FORMAT MATCHES "NOTFOUND")
-  list(APPEND missing_tools "clang-format (LLVM, or Xcode Command Line Tools)")
+  list(APPEND missing_tools
+    "clang-format 18 (brew install llvm@18, sudo apt install clang-format-18, "
+    "or pip install clang-format==18.1.8)")
 endif()
 
 if (missing_tools)
@@ -28,6 +30,35 @@ if (missing_tools)
     "Install them, then re-run `cmake --preset <preset>` so the lint target "
     "picks them up.")
 endif()
+
+execute_process(
+  COMMAND "${GRAPHSCORE_CLANG_FORMAT}" --version
+  RESULT_VARIABLE format_version_result
+  OUTPUT_VARIABLE format_version_output
+  ERROR_VARIABLE format_version_error
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_STRIP_TRAILING_WHITESPACE
+)
+
+if (NOT format_version_result EQUAL 0)
+  message(FATAL_ERROR
+    "Failed to run `${GRAPHSCORE_CLANG_FORMAT} --version` (exit "
+    "${format_version_result}): ${format_version_error}\n"
+    "Install clang-format 18 and reconfigure with "
+    "-DGRAPHSCORE_CLANG_FORMAT_EXECUTABLE=<path-to-clang-format-18>.")
+endif()
+
+string(REGEX MATCH "clang-format version ([0-9]+)(\\.|[ \r\n]|$)"
+  format_version_match "${format_version_output}")
+if (NOT format_version_match OR NOT CMAKE_MATCH_1 STREQUAL "18")
+  message(FATAL_ERROR
+    "GraphScore requires clang-format major 18, but "
+    "`${GRAPHSCORE_CLANG_FORMAT}` reported: ${format_version_output}\n"
+    "Install clang-format 18, then reconfigure to replace any stale cached "
+    "executable (or pass "
+    "-DGRAPHSCORE_CLANG_FORMAT_EXECUTABLE=<path-to-clang-format-18> explicitly).")
+endif()
+message(STATUS "clang-format 18: ${GRAPHSCORE_CLANG_FORMAT}")
 
 # Collect GraphScore-owned sources. Only the directories listed by
 # cmake/Lint.cmake are walked, so FetchContent dependency trees under build/
@@ -80,10 +111,10 @@ else()
   message(STATUS "cpplint: clean")
 endif()
 
-# --- clang-format verification -------------------------------------------
+# --- clang-format 18 verification ----------------------------------------
 #
 # --dry-run -Werror reports, but does not apply, formatting differences.
-# `clang-format -i <file>` is the fix.
+# `clang-format 18 -i <file>` is the fix.
 
 execute_process(
   COMMAND "${GRAPHSCORE_CLANG_FORMAT}" --dry-run -Werror ${lint_files}
@@ -93,11 +124,11 @@ execute_process(
 
 if (NOT format_result EQUAL 0)
   message(SEND_ERROR
-    "clang-format reported unformatted files (exit ${format_result}). Fix "
+    "clang-format 18 reported unformatted files (exit ${format_result}). Fix "
     "with: ${GRAPHSCORE_CLANG_FORMAT} -i <file>")
   set(failed TRUE)
 else()
-  message(STATUS "clang-format: clean")
+  message(STATUS "clang-format 18: clean")
 endif()
 
 if (failed)

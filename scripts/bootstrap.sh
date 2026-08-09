@@ -30,16 +30,34 @@ git config --local core.hooksPath .githooks
 
 echo "bootstrap: core.hooksPath -> .githooks (local to this clone)"
 
-# Report, but do not install, the optional lint tools. Both are optional for
-# building and testing; the hook skips whichever is absent and CI runs both
-# regardless.
+# Report, but do not install, lint tools. cpplint is optional locally;
+# clang-format 18 is required whenever the pre-commit hook sees staged C/C++.
 missing=""
 
 command -v cpplint >/dev/null 2>&1 || missing="$missing\n  cpplint       pip install cpplint"
 
-if ! command -v clang-format >/dev/null 2>&1 \
-   && [ ! -x /Library/Developer/CommandLineTools/usr/bin/clang-format ]; then
-  missing="$missing\n  clang-format  LLVM install, or Xcode Command Line Tools on macOS"
+clang_format_major() {
+  "$1" --version 2>/dev/null \
+    | sed -n 's/.*clang-format version \([0-9][0-9]*\)\(\..*\)\{0,1\}$/\1/p'
+}
+
+clang_format=""
+for candidate in clang-format-18 \
+  /opt/homebrew/opt/llvm@18/bin/clang-format \
+  /usr/local/opt/llvm@18/bin/clang-format clang-format; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    candidate_path=$(command -v "$candidate")
+    if [ "$(clang_format_major "$candidate_path")" = "18" ]; then
+      clang_format=$candidate_path
+      break
+    fi
+  fi
+done
+
+if [ -n "$clang_format" ]; then
+  echo "bootstrap: clang-format 18 -> $clang_format"
+else
+  missing="$missing\n  clang-format 18  brew install llvm@18 | sudo apt install clang-format-18 | pip install clang-format==18.1.8 (required by pre-commit)"
 fi
 
 # The pre-push hook requires clang-tidy 18 specifically: CI pins that
@@ -54,7 +72,7 @@ fi
 
 if [ -n "$missing" ]; then
   # shellcheck disable=SC2059
-  printf "bootstrap: optional lint tools not found:$missing\n"
+  printf "bootstrap: lint tools not found:$missing\n"
 fi
 
 echo "bootstrap: done. Next: cmake --preset debug && cmake --build --preset debug"

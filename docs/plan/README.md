@@ -53,8 +53,8 @@ Writer-only data must never appear in a cooked runtime asset unless it is requir
 - Clang `-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wold-style-cast -Wnon-virtual-dtor -Wcast-align -Wunused -Wnull-dereference -Wdouble-promotion -Wformat=2 -Wimplicit-fallthrough -Werror` (or the clang-cl equivalent) for GraphScore-owned code.
 - Prefer `constexpr`; otherwise use `const`; mutable state requires a demonstrated need.
 - GTest is the unit test framework and is used extensively in every milestone.
-- clang-format, clang-tidy, cpplint, ASan, UBSan, and TSan are required quality layers.
-- A version-controlled `.githooks/pre-commit` runs cpplint. CI invokes the same lint target independently.
+- clang-format 18 exactly, clang-tidy, cpplint, ASan, UBSan, and TSan are required quality layers; formatting output differs by clang-format major.
+- A version-controlled `.githooks/pre-commit` runs cpplint and clang-format 18. CI invokes the same lint target independently with clang-format 18.
 - Third-party warnings are isolated and are not promoted to GraphScore build failures.
 
 ### Supported systems
@@ -252,7 +252,7 @@ Every production milestone must:
 - Keep the three primary platform builds green with Clang.
 - Add GTest coverage for new domain and runtime behavior before considering the behavior complete.
 - Add malformed-input, boundary, deterministic replay, and concurrency tests where applicable.
-- Keep GraphScore-owned targets warning-clean under warnings-as-errors, cpplint, clang-format, and clang-tidy.
+- Keep GraphScore-owned targets warning-clean under warnings-as-errors, cpplint, clang-format 18, and clang-tidy.
 - Run relevant sanitizer suites without findings.
 - Update schemas, C API documentation, accessibility semantics, and user-facing behavior documentation with the implementation.
 - Avoid hidden network dependencies, floating dependency revisions, and license-incompatible source.

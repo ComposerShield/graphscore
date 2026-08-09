@@ -44,7 +44,8 @@ verification, staging, and committing. You plan, delegate, verify, and synthesiz
 
 **Definition of done for any phase** (the repo enforces most of this mechanically):
 `cmake --build --preset debug` with zero warnings (warnings are errors), lint target clean
-(`cmake --build --preset debug --target lint` — runs cpplint + clang-format verification),
+(`cmake --build --preset debug --target lint` — runs cpplint + clang-format 18 verification,
+never Apple 17; see `AGENTS.md`),
 `ctest --preset debug --output-on-failure` green, and the plan's own verification steps
 satisfied.
 
@@ -88,7 +89,7 @@ the final approved tree. Fix workers run only Tier 1 targeted regressions. Do no
    approval, personally inspect the final diff/status, stage only the approved paths, and
    run `git commit` yourself.
 - **`git commit` needs an explicit long timeout — the default 2 minutes is not enough.**
-   `.githooks/pre-commit` runs cpplint and clang-format on staged files, then delegates to
+   `.githooks/pre-commit` runs cpplint and clang-format 18 on staged files, then delegates to
    `.githooks/pre-push` for the full const-correctness clang-tidy 18 analysis, which
    configures and builds `build/tidy`. That routinely runs several minutes on a cold or
    stale tidy tree. Always pass an explicit generous `timeout` on the commit call (600000,

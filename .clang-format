@@ -4,8 +4,9 @@
 # match the conventions already present in the tree (aligned initializer
 # runs in the C ABI shims, 80-column limit, sorted include blocks).
 #
-# Verified by `cmake --build --preset debug --target lint` and by the
-# tracked .githooks/pre-commit hook. CI runs the same check independently.
+# Formatting output changes between tool majors. GraphScore requires
+# clang-format 18 exactly; the lint target, tracked pre-commit hook, and CI
+# enforce that version independently.
 
 Language: Cpp
 BasedOnStyle: Google

@@ -53,7 +53,8 @@ is strategic — you do not edit code yourself; you may run shell commands for r
 - **Tier 1 — focused iteration:** during implementation and every fix round, configure only
   when needed; build affected targets; run only the focused test binary, GoogleTest filter,
   or CTest regex covering changed behavior; and run formatting/lint appropriate to touched
-  files. Fix workers report the exact focused tests run and do not run the full suite.
+  files with clang-format 18, never Apple 17 (see `AGENTS.md`). Fix workers report the exact
+  focused tests run and do not run the full suite.
 - **Tier 2 — phase candidate:** exactly once by the initial worker before review handoff and
   independently once by the initial reviewer: canonical debug build with zero warnings,
   full `ctest --preset debug --output-on-failure`, and full
@@ -118,7 +119,7 @@ is strategic — you do not edit code yourself; you may run shell commands for r
    shell commands for repository inspection, worktree/stash hygiene, verification,
    staging, and committing.
 - **`git commit` needs an explicit long timeout — a default ~2 minute bash timeout is not
-   enough.** `.githooks/pre-commit` runs cpplint and clang-format on staged files, then
+   enough.** `.githooks/pre-commit` runs cpplint and clang-format 18 on staged files, then
    delegates to `.githooks/pre-push` for the full const-correctness clang-tidy 18 analysis,
    which configures and builds `build/tidy`. That routinely runs several minutes on a cold
    or stale tidy tree. Always pass an explicit generous timeout on the commit call (10

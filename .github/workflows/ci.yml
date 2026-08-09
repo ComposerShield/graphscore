@@ -12,7 +12,7 @@
 #
 # Job layout (docs/plan/01-toolchain-ci.md, "GitHub Actions"):
 #
-#   lint            cpplint + clang-format verification, whole tree
+#   lint            cpplint + clang-format 18 verification, whole tree
 #   clang-tidy      const-correctness analysis — DISABLED, see the job block
 #   test            build + GTest on the four natively-tested platforms
 #   cross-build     Windows arm64 and Linux arm64, compile only
@@ -48,7 +48,7 @@ jobs:
   # Lint and format. Fast, so it runs first and fails the run early.
   # ---------------------------------------------------------------------
   lint:
-    name: Lint (cpplint, clang-format)
+    name: Lint (cpplint, clang-format 18)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,10 +62,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install cpplint
           sudo apt-get update
-          sudo apt-get install -y clang-format ninja-build
+          sudo apt-get install -y clang-format-18 ninja-build
 
       - name: Configure
-        run: cmake --preset ci -DGRAPHSCORE_BUILD_WRITER=OFF
+        run: >-
+          cmake --preset ci -DGRAPHSCORE_BUILD_WRITER=OFF
+          -DGRAPHSCORE_CLANG_FORMAT_EXECUTABLE=/usr/bin/clang-format-18
 
       - name: Lint
         run: cmake --build --preset ci --target lint

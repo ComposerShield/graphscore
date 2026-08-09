@@ -34,7 +34,7 @@ satisfy).
 | `tools/` | Developer-facing helper executables that are not part of the shipped product. |
 | `cmake/` | CMake modules: compiler/warning setup, dependency adapters (one file per third-party dependency, e.g. `SDL3.cmake`), the runtime install/export package (`RuntimePackage.cmake`), and the architecture audit (`architecture_contract.cmake` — the machine-readable ADR 0003 contract — plus `audit_permitted_edges.cmake`, `audit_link_closure.cmake`, `audit_transitive_closure.cmake`). |
 | `scripts/` | Non-CMake tooling: Python audit scripts (`audit_includes.py`, `audit_runtime_symbols.py`, `audit_cycles.py`, `audit_third_party_types.py`, sharing `graphscore_audit.py`) and `bootstrap.sh`. |
-| `.githooks/` | Tracked Git hooks (`pre-commit`: cpplint + clang-format on staged files; `pre-push`: the const-correctness clang-tidy analysis). Installed by `scripts/bootstrap.sh`; never installed automatically. |
+| `.githooks/` | Tracked Git hooks (`pre-commit`: cpplint + clang-format 18 on staged files; `pre-push`: the const-correctness clang-tidy analysis). Installed by `scripts/bootstrap.sh`; never installed automatically. |
 | `docs/plan/` | The milestone plan and the source-controlled execution checklist. |
 | `docs/decisions/` | Accepted ADRs. |
 | `docs/licenses/`, `NOTICES.md` | Third-party license inventory. |
@@ -66,7 +66,7 @@ cmake --preset asan-ubsan && cmake --build --preset asan-ubsan && ctest --preset
 # Windows uses clang-cl via the *-windows presets: debug-windows,
 # release-windows, ci-windows. ASan/TSan are not provided on Windows.
 
-# Lint: cpplint + clang-format verification (also run by the pre-commit
+# Lint: cpplint + clang-format 18 verification (also run by the pre-commit
 # hook on staged files, and by CI over the whole tree).
 cmake --build --preset debug --target lint
 
@@ -98,6 +98,18 @@ cmake --build build/tidy -- -k 0   # -k 0: report every file, not the first
 # Architecture boundary audit (ADR 0003 §7).
 cmake --build --preset debug --target audit_architecture
 ```
+
+GraphScore requires **clang-format major 18 exactly** because formatting output
+differs between majors. The local hook and CI both enforce 18; never use Apple
+Command Line Tools clang-format 17. Matching installs are
+`brew install llvm@18` (macOS), `sudo apt install clang-format-18`
+(Debian/Ubuntu), or `pip install clang-format==18.1.8`. Discovery checks
+`clang-format-18`, Apple Silicon and Intel Homebrew `llvm@18` paths, then an
+unversioned executable only when it reports major 18. If CMake cannot discover
+it, configure with
+`-DGRAPHSCORE_CLANG_FORMAT_EXECUTABLE=/opt/homebrew/opt/llvm@18/bin/clang-format`
+(or the matching installed path). This formatting policy is separate from the
+clang-tidy 18 const-correctness guidance above.
 
 `FETCHCONTENT_SOURCE_DIR_<NAME>` (e.g. `FETCHCONTENT_SOURCE_DIR_SDL3`) points
 a dependency at a local checkout instead of fetching over the network, for
