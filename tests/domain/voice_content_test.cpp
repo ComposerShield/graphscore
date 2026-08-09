@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <ranges>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -206,6 +207,102 @@ TEST(DecomposeRestTest, SmallestUnitIsAnUndottedSixtyFourth) {
 
 TEST(DecomposeRestTest, FinerThanSixtyFourthIsUnrepresentable) {
   EXPECT_FALSE(decompose_rest(*Rational::create(1, 128)).has_value());
+}
+
+TEST(DecomposeRestTest, NonDyadicDenominatorRejected) {
+  // 1/3: denominator 3 does not divide kScale (256), so the early
+  // denominator-gate in decompose_rest returns nullopt without reaching
+  // the DP.
+  const auto r = Rational::create(1, 3);
+  ASSERT_TRUE(r.has_value());
+  EXPECT_FALSE(decompose_rest(*r).has_value());
+}
+
+TEST(DecomposeRestTest, NegativeNegativeNormalizedToNonDyadicRejected) {
+  // -1/-3 canonicalizes to 1/3.  This proves Rational denominator
+  // canonicalization does not defeat the overflow-safe scaling guard.
+  const auto r = Rational::create(-1, -3);
+  ASSERT_TRUE(r.has_value());
+  EXPECT_EQ(r->numerator(), 1);
+  EXPECT_EQ(r->denominator(), 3);
+  EXPECT_FALSE(decompose_rest(*r).has_value());
+}
+
+TEST(DecomposeRestTest,
+     FiveHundredTwentyEighthsIsDottedSixtyFourthPlusSixtyFourth) {
+  // 5/128 = 3/128 + 2/128 = dotted sixty-fourth + sixty-fourth.
+  // The greedy algorithm would pick 1/32 (4/128) leaving 1/128 (dead end).
+  // Bounded exact DP must find the optimal 2-rest decomposition.
+  const auto rests = decompose_rest(*Rational::create(5, 128));
+  ASSERT_TRUE(rests.has_value());
+  ASSERT_EQ(rests->size(), 2u);
+  EXPECT_EQ((*rests)[0].duration.base(), NoteValue::kSixtyFourth);
+  EXPECT_EQ((*rests)[0].duration.dots(), 1);  // dotted 64th = 3/128
+  EXPECT_EQ((*rests)[0].duration.resolved(), *Rational::create(3, 128));
+  EXPECT_EQ((*rests)[1].duration.base(), NoteValue::kSixtyFourth);
+  EXPECT_EQ((*rests)[1].duration.dots(), 0);  // plain 64th = 2/128
+  EXPECT_EQ((*rests)[1].duration.resolved(), *Rational::create(1, 64));
+
+  Rational total(0);
+  for (const Rest& rest : *rests)
+    total = total + rest.duration.resolved();
+  EXPECT_EQ(total, *Rational::create(5, 128));
+}
+
+TEST(DecomposeRestTest, SeventeenOneHundredTwentyEighthsIsTwoRestsNonGreedy) {
+  // 17/128 = 34/256.  Greedy picks 1/8 (32/256), leaves 2/256 — dead.
+  // Exact DP must find 7/64 (28/256) + 3/128 (6/256) = 2 rests.
+  const auto rests = decompose_rest(*Rational::create(17, 128));
+  ASSERT_TRUE(rests.has_value());
+  ASSERT_EQ(rests->size(), 2u);
+  EXPECT_EQ((*rests)[0].duration.base(), NoteValue::kSixteenth);
+  EXPECT_EQ((*rests)[0].duration.dots(), 2);  // double-dotted 16th = 7/64
+  EXPECT_EQ((*rests)[0].duration.resolved(), *Rational::create(7, 64));
+  EXPECT_EQ((*rests)[1].duration.base(), NoteValue::kSixtyFourth);
+  EXPECT_EQ((*rests)[1].duration.dots(), 1);  // dotted 64th = 3/128
+  EXPECT_EQ((*rests)[1].duration.resolved(), *Rational::create(3, 128));
+
+  Rational total(0);
+  for (const Rest& rest : *rests)
+    total = total + rest.duration.resolved();
+  EXPECT_EQ(total, *Rational::create(17, 128));
+}
+
+// Overflow-safety: a large valid Rational whose scaled value (×256) would
+// overflow a signed 64-bit integer must be rejected without UB — the
+// cap check must happen before multiplication.
+TEST(DecomposeRestTest, OverflowScaleLargeRationalRejected) {
+  // numerator = 2^56 + 1  →  num × 256 ≈ 1.84 × 10^19  →  overflows int64_t
+  constexpr std::int64_t kLargeNum = (1LL << 56) + 1;
+  const auto             r         = Rational::create(kLargeNum, 1);
+  ASSERT_TRUE(r.has_value());
+  EXPECT_FALSE(decompose_rest(*r).has_value());
+}
+
+// Cap boundary: the largest value that can theoretically decompose
+// within 64 terms (kMaxTerms × largest candidate = 64 × 448/256 = 112).
+TEST(DecomposeRestTest, LargestAcceptedDpCapBoundary) {
+  // 112 = 28672/256 so target = kDpCap exactly.
+  const auto rests = decompose_rest(Rational(112));
+  ASSERT_TRUE(rests.has_value());
+  // 64 double-dotted whole notes = 64 × 448/256 = 112 exactly.
+  ASSERT_EQ(rests->size(), 64u);
+  for (const Rest& r : *rests) {
+    EXPECT_EQ(r.duration.base(), NoteValue::kWhole);
+    EXPECT_EQ(r.duration.dots(), 2);
+  }
+  // Verify total.
+  Rational total(0);
+  for (const Rest& r : *rests)
+    total = total + r.duration.resolved();
+  EXPECT_EQ(total, Rational(112));
+}
+
+// Cap boundary: one 256th beyond the cap must be rejected.
+TEST(DecomposeRestTest, ImmediatelyOutsideDpCapRejected) {
+  const auto r = Rational::create(28673, 256);
+  ASSERT_TRUE(r.has_value());
+  EXPECT_FALSE(decompose_rest(*r).has_value());
 }
 
 // -- Phase 8f-i: ChordNote/GraceNote id uniqueness in VoiceContent --
@@ -1067,4 +1164,450 @@ TEST(ReplaceEventDeltaTest, SameDurationNoRemapNoFullResetWhenIdUnchanged) {
   const auto& delta = *d_opt;
   EXPECT_FALSE(delta.full_reset);
   EXPECT_FALSE(delta.event_reorder);
+}
+
+// -- replace_event normalized rest gaps and non-overlap coverage --
+
+// Helper: verify that a voice's events are non-overlapping and exactly tile
+// the target duration.
+void expect_exact_tile(const VoiceContent& voice, Rational target) {
+  Rational cumulative(0);
+  for (std::size_t i = 0; i < voice.events().size(); ++i) {
+    const VoiceEvent& ev  = voice.events()[i];
+    const Rational    dur = event_duration(ev).resolved();
+    EXPECT_GT(dur, Rational(0))
+        << "Event " << i << " has non-positive duration";
+    // Verify non-overlap: cumulative position is this event's onset.
+    const auto found_pos = voice.position_of_event(event_id(ev));
+    ASSERT_TRUE(found_pos.has_value()) << "Event " << i << " not found";
+    EXPECT_EQ(*found_pos, cumulative) << "Event " << i << " onset mismatch";
+    cumulative = cumulative + dur;
+  }
+  EXPECT_EQ(cumulative, target) << "Voice does not exactly tile target";
+  EXPECT_EQ(voice.total_length(), target);
+}
+
+// Helper: verify that the rest events after index `after_idx` (inclusive)
+// exactly match the duration and shape of `decompose_rest(gap)`.
+void expect_rest_gap(const VoiceContent& voice, std::size_t after_idx,
+                     Rational gap) {
+  const auto expected = decompose_rest(gap);
+  ASSERT_TRUE(expected.has_value()) << "decompose_rest failed for gap";
+  for (std::size_t j = 0; j < expected->size(); ++j) {
+    const std::size_t idx = after_idx + j;
+    ASSERT_LT(idx, voice.events().size()) << "Missing rest at index " << idx;
+    ASSERT_TRUE(std::holds_alternative<Rest>(voice.events()[idx]))
+        << "Event at " << idx << " expected Rest";
+    const Rest& actual = std::get<Rest>(voice.events()[idx]);
+    EXPECT_EQ(actual.duration.base(), (*expected)[j].duration.base())
+        << "Rest " << j << " base mismatch";
+    EXPECT_EQ(actual.duration.dots(), (*expected)[j].duration.dots())
+        << "Rest " << j << " dots mismatch";
+    EXPECT_EQ(actual.duration.resolved(), (*expected)[j].duration.resolved())
+        << "Rest " << j << " duration mismatch";
+  }
+}
+
+TEST(ReplaceEventNormalizationTest,
+     ContractionAtStartGeneratesDecomposedRests) {
+  VoiceContent voice;
+  const Note   note = make_note(pitch(Letter::kC), duration(NoteValue::kWhole));
+  ASSERT_TRUE(voice.append(note).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const Rational gap = *Rational::create(3, 4);
+  const Note     replacement =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.replace_event(Rational(0), replacement, Rational(1)).ok());
+
+  // The gap after the quarter note must match decompose_rest(3/4).
+  expect_rest_gap(voice, 1, gap);
+  expect_exact_tile(voice, Rational(1));
+}
+
+TEST(ReplaceEventNormalizationTest,
+     ContractionInMiddlePreservesLaterSoundingOnset) {
+  VoiceContent voice;
+  // [note(1/4), note(1/4), rest(1/2)]
+  const Note n1 = make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(n1).ok());
+  const Note n2 = make_note(pitch(Letter::kE), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(n2).ok());
+  ASSERT_TRUE(voice.append(make_rest(duration(NoteValue::kHalf))).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId n2_id    = event_id(n2);
+  const Rational         n2_onset = *Rational::create(1, 4);
+
+  // Replace n1 (1/4) with eighth note (1/8).
+  const Note replacement =
+      make_note(pitch(Letter::kC), duration(NoteValue::kEighth));
+  ASSERT_TRUE(voice.replace_event(Rational(0), replacement, Rational(1)).ok());
+
+  // n2 must still be at onset 1/4.
+  const auto pos = voice.position_of_event(n2_id);
+  ASSERT_TRUE(pos.has_value());
+  EXPECT_EQ(*pos, n2_onset);
+
+  // The gap between replacement and n2 is 1/8, filled with a single rest.
+  // The replacement event is at index 0; gap rests start at index 1.
+  const auto gap_rests = decompose_rest(*Rational::create(1, 8));
+  ASSERT_TRUE(gap_rests.has_value());
+  ASSERT_EQ(gap_rests->size(), 1u);
+
+  expect_rest_gap(voice, 1, *Rational::create(1, 8));
+  expect_exact_tile(voice, Rational(1));
+}
+
+TEST(ReplaceEventNormalizationTest, ContractionAtEndPreservesEarlierEvents) {
+  VoiceContent voice;
+  // [rest(1/2), note(1/2)]
+  const Rest first_rest = make_rest(duration(NoteValue::kHalf));
+  ASSERT_TRUE(voice.append(first_rest).ok());
+  const Note last_note =
+      make_note(pitch(Letter::kG), duration(NoteValue::kHalf));
+  ASSERT_TRUE(voice.append(last_note).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const Rational         half          = *Rational::create(1, 2);
+  const Rational         eighth        = *Rational::create(1, 8);
+  const Rational         gap           = *Rational::create(3, 8);
+  const NotationEntityId first_rest_id = event_id(first_rest);
+
+  // Replace the last note (1/2) with eighth note (1/8).
+  const Note replacement =
+      make_note(pitch(Letter::kG), duration(NoteValue::kEighth));
+  ASSERT_TRUE(voice.replace_event(half, replacement, Rational(1)).ok());
+
+  // The first rest is unchanged at onset 0.
+  EXPECT_EQ(voice.position_of_event(first_rest_id).value_or(Rational(-1)),
+            Rational(0));
+  ASSERT_TRUE(std::holds_alternative<Rest>(voice.events()[0]));
+  EXPECT_EQ(std::get<Rest>(voice.events()[0]).duration.resolved(), half);
+
+  // The replacement is at onset 1/2.
+  ASSERT_TRUE(std::holds_alternative<Note>(voice.events()[1]));
+  EXPECT_EQ(event_duration(voice.events()[1]).resolved(), eighth);
+
+  // The gap after it matches decompose_rest(3/8).
+  expect_rest_gap(voice, 2, gap);
+  expect_exact_tile(voice, Rational(1));
+}
+
+TEST(ReplaceEventNormalizationTest,
+     ContractionWithDottedGapPreservesLaterEvent) {
+  VoiceContent voice;
+  // [note(7/8), rest(1/8)]
+  const Note note =
+      make_note(pitch(Letter::kC), *Duration::create(NoteValue::kHalf, 2));
+  ASSERT_TRUE(voice.append(note).ok());
+  const Rest tail = make_rest(duration(NoteValue::kEighth));
+  ASSERT_TRUE(voice.append(tail).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId tail_id = event_id(tail);
+
+  // Replace double-dotted half (7/8) with quarter (1/4 = 2/8).  Gap = 5/8.
+  const Note replacement =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.replace_event(Rational(0), replacement, Rational(1)).ok());
+
+  // The tail rest must still be at onset 7/8.
+  const auto tail_pos = voice.position_of_event(tail_id);
+  ASSERT_TRUE(tail_pos.has_value());
+  EXPECT_EQ(*tail_pos, *Rational::create(7, 8));
+
+  // The gap fill (5/8) should match decompose_rest.
+  expect_rest_gap(voice, 1, *Rational::create(5, 8));
+  expect_exact_tile(voice, Rational(1));
+}
+
+TEST(ReplaceEventNormalizationTest, ExpansionConsumesFollowRestSuccessfully) {
+  VoiceContent voice;
+  // [note(1/4), rest(1/4), rest(1/2)]
+  const Note note = make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(note).ok());
+  ASSERT_TRUE(voice.append(make_rest(duration(NoteValue::kQuarter))).ok());
+  ASSERT_TRUE(voice.append(make_rest(duration(NoteValue::kHalf))).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  // Expand from 1/4 to 1/2 (consume the first rest).
+  const Note replacement =
+      make_note(pitch(Letter::kC), duration(NoteValue::kHalf));
+  ASSERT_TRUE(voice.replace_event(Rational(0), replacement, Rational(1)).ok());
+
+  // Events: [note(1/2), rest(1/2)] — the consumed rest is gone.
+  ASSERT_GE(voice.events().size(), 2u);
+  EXPECT_TRUE(std::holds_alternative<Note>(voice.events()[0]));
+  EXPECT_EQ(event_duration(voice.events()[0]).resolved(),
+            *Rational::create(1, 2));
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice.events()[1]));
+  EXPECT_EQ(event_duration(voice.events()[1]).resolved(),
+            *Rational::create(1, 2));
+  expect_exact_tile(voice, Rational(1));
+}
+
+TEST(ReplaceEventNormalizationTest,
+     ExpansionConsumesMultipleRestsSuccessfully) {
+  VoiceContent voice;
+  // [note(1/8), rest(1/8), rest(1/8), rest(1/8), rest(1/8)] + normalize to 1.
+  const Note note = make_note(pitch(Letter::kC), duration(NoteValue::kEighth));
+  ASSERT_TRUE(voice.append(note).ok());
+  for (int i = 0; i < 4; ++i)
+    ASSERT_TRUE(voice.append(make_rest(duration(NoteValue::kEighth))).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const std::size_t orig_count = voice.events().size();
+
+  // Expand from 1/8 to 3/8 (consume two 1/8 rests).
+  const Note replacement = make_note(
+      pitch(Letter::kC),
+      *Duration::create(NoteValue::kQuarter, 1));  // dotted quarter = 3/8
+  ASSERT_TRUE(voice.replace_event(Rational(0), replacement, Rational(1)).ok());
+
+  // Two rests consumed → 2 fewer events than original.
+  EXPECT_EQ(voice.events().size(), orig_count - 2);
+  EXPECT_EQ(event_duration(voice.events()[0]).resolved(),
+            *Rational::create(3, 8));
+  expect_exact_tile(voice, Rational(1));
+}
+
+TEST(ReplaceEventNormalizationTest,
+     ExpansionConsumesPartialRestPreservingIdentity) {
+  VoiceContent voice;
+  // [note(1/8), rest(1/2), rest(3/8)]
+  const Note note = make_note(pitch(Letter::kC), duration(NoteValue::kEighth));
+  ASSERT_TRUE(voice.append(note).ok());
+  const Rest rest_to_split = make_rest(duration(NoteValue::kHalf));
+  ASSERT_TRUE(voice.append(rest_to_split).ok());
+  ASSERT_TRUE(voice.append(make_rest(*Duration::create(NoteValue::kQuarter, 1)))
+                  .ok());  // dotted quarter = 3/8
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId split_id = event_id(rest_to_split);
+
+  // Expand from 1/8 to 1/4 (need 1/8 more; consume partial of the 1/2 rest).
+  const Note replacement =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.replace_event(Rational(0), replacement, Rational(1)).ok());
+
+  // Events after replacement: [note(1/4), suffix_of_split, rest(3/8)]
+  // The split rest's original ID should survive on the remainder.
+  bool found_split_id = false;
+  for (const auto& ev : voice.events()) {
+    if (event_id(ev) == split_id) {
+      found_split_id = true;
+      ASSERT_TRUE(std::holds_alternative<Rest>(ev));
+      // Original split was 1/2; consumed 1/8 → remainder is 3/8.
+      EXPECT_EQ(std::get<Rest>(ev).duration.resolved(),
+                *Rational::create(3, 8));
+    }
+  }
+  EXPECT_TRUE(found_split_id) << "Split rest ID was not preserved";
+
+  expect_exact_tile(voice, Rational(1));
+}
+
+TEST(ReplaceEventNormalizationTest,
+     ExpansionInsufficientFollowRestRejectedAtomically) {
+  VoiceContent voice;
+  // [note(1/4), note(1/4)]
+  const Note n1 = make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(n1).ok());
+  const Note n2 = make_note(pitch(Letter::kE), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(n2).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const VoiceContent pre = voice;
+
+  // Try to expand n1 from 1/4 to 1/2 — needs 1/4 of rest but next event is
+  // a sounding note.
+  const Note longer = make_note(pitch(Letter::kC), duration(NoteValue::kHalf));
+  EXPECT_FALSE(voice.replace_event(Rational(0), longer, Rational(1)).ok());
+
+  // Voice unchanged.
+  EXPECT_EQ(voice, pre);
+}
+
+TEST(ReplaceEventNormalizationTest,
+     ExpansionPastTargetLengthRejectedAtomically) {
+  VoiceContent voice;
+  // Single note filling the whole target.
+  const Note note = make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(note).ok());
+  ASSERT_TRUE(voice.normalize(*Rational::create(1, 4)).ok());
+
+  const VoiceContent pre = voice;
+
+  // Try to expand to whole note when target_length = 1/4.
+  const Note longer = make_note(pitch(Letter::kC), duration(NoteValue::kWhole));
+  EXPECT_FALSE(
+      voice.replace_event(Rational(0), longer, *Rational::create(1, 4)).ok());
+  EXPECT_EQ(voice, pre);
+}
+
+TEST(ReplaceEventNormalizationTest,
+     ContractionFiveOneTwentyEighthsGapDecomposesExactly) {
+  // dotted sixteenth (3/32 = 12/128) → double-dotted thirty-second
+  // (7/128) leaves a 5/128 gap.  The old greedy picked 1/32 (4/128)
+  // leaving 1/128 (dead end).  Exact DP produces:
+  //   dotted sixty-fourth (3/128) + sixty-fourth (2/128).
+  VoiceContent voice;
+  const Note   note =
+      make_note(pitch(Letter::kC), *Duration::create(NoteValue::kSixteenth, 1));
+  ASSERT_TRUE(voice.append(note).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const Note replacement = make_note(
+      pitch(Letter::kC), *Duration::create(NoteValue::kThirtySecond, 2));
+  ASSERT_TRUE(voice.replace_event(Rational(0), replacement, Rational(1)).ok());
+
+  // Gap must match exact expected rest shapes.
+  expect_rest_gap(voice, 1, *Rational::create(5, 128));
+  expect_exact_tile(voice, Rational(1));
+
+  // Replacement onset preserved.
+  ASSERT_TRUE(std::holds_alternative<Note>(voice.events()[0]));
+  EXPECT_EQ(event_duration(voice.events()[0]).resolved(),
+            *Rational::create(7, 128));
+}
+
+TEST(ReplaceEventNormalizationTest, ContractionNonOverlapAndExactTileProperty) {
+  // Deterministic property-style coverage over generated valid voices and
+  // replacement operations.  Each case undergoes either a contraction or
+  // expansion of note events; verify non-overlap, exact tile, and atomicity
+  // on failure.
+  struct Case {
+    std::string                                  description;
+    std::vector<std::pair<VoiceEvent, Rational>> initial;
+    Rational                                     target;
+    Rational                                     replace_pos;
+    Duration                                     new_dur;
+    bool                                         expect_success;
+  };
+
+  const Rational w = Rational(1);              // whole
+  const Rational h = *Rational::create(1, 2);  // half
+  const Rational q = *Rational::create(1, 4);  // quarter
+  const Rational e = *Rational::create(1, 8);  // eighth
+
+  const std::vector<Case> cases = {
+      // Contractions: replace with shorter duration.
+      {"whole→quarter at start",
+       {{make_note(pitch(Letter::kC), *Duration::create(NoteValue::kWhole, 0)),
+         Rational(0)}},
+       w,
+       Rational(0),
+       duration(NoteValue::kQuarter),
+       true},
+      {"whole→half at start",
+       {{make_note(pitch(Letter::kC), *Duration::create(NoteValue::kWhole, 0)),
+         Rational(0)}},
+       w,
+       Rational(0),
+       duration(NoteValue::kHalf),
+       true},
+      {"half→eighth at start",
+       {{make_note(pitch(Letter::kC), *Duration::create(NoteValue::kHalf, 0)),
+         Rational(0)},
+        {make_rest(*Duration::create(NoteValue::kHalf, 0)), h}},
+       w,
+       Rational(0),
+       duration(NoteValue::kEighth),
+       true},
+      // Contraction at middle: rest→note→rest, contract the middle note.
+      {"half→quarter in middle",
+       {{make_rest(*Duration::create(NoteValue::kQuarter, 0)), Rational(0)},
+        {make_note(pitch(Letter::kE), *Duration::create(NoteValue::kHalf, 0)),
+         q},
+        {make_rest(*Duration::create(NoteValue::kQuarter, 0)), q + h}},
+       w,
+       q,
+       duration(NoteValue::kQuarter),
+       true},
+      // Contraction at end.
+      {"half→eighth at end",
+       {{make_rest(*Duration::create(NoteValue::kHalf, 0)), Rational(0)},
+        {make_note(pitch(Letter::kG), *Duration::create(NoteValue::kHalf, 0)),
+         h}},
+       w,
+       h,
+       duration(NoteValue::kEighth),
+       true},
+      // Expansion consuming rests (only rests follow).
+      {"eighth→quarter consuming rest",
+       {{make_note(pitch(Letter::kC), *Duration::create(NoteValue::kEighth, 0)),
+         Rational(0)},
+        {make_rest(*Duration::create(NoteValue::kEighth, 0)), e},
+        {make_rest(*Duration::create(NoteValue::kEighth, 0)), e + e},
+        {make_rest(*Duration::create(NoteValue::kEighth, 0)), e + e + e}},
+       h,
+       Rational(0),
+       duration(NoteValue::kQuarter),
+       true},
+      // Expansion blocked by sounding event.
+      {"quarter→half blocked by note",
+       {{make_note(pitch(Letter::kC),
+                   *Duration::create(NoteValue::kQuarter, 0)),
+         Rational(0)},
+        {make_note(pitch(Letter::kE),
+                   *Duration::create(NoteValue::kQuarter, 0)),
+         q}},
+       h,
+       Rational(0),
+       duration(NoteValue::kHalf),
+       false},
+      // Expansion exceeds target_length.
+      {"eighth→whole exceeds target",
+       {{make_note(pitch(Letter::kC), *Duration::create(NoteValue::kEighth, 0)),
+         Rational(0)}},
+       q,
+       Rational(0),
+       duration(NoteValue::kWhole),
+       false},
+  };
+
+  for (const auto& c : cases) {
+    VoiceContent voice;
+    for (const auto& [ev, pos] : c.initial) {
+      // We need events at specific positions.  Build by appending.
+      ASSERT_TRUE(voice.append(ev).ok()) << c.description << ": append failed";
+      (void)pos;  // positions confirmed by ordering
+    }
+
+    // Normalize to target.
+    const Rational initial_len = voice.total_length();
+    if (initial_len <= c.target) {
+      ASSERT_TRUE(voice.normalize(c.target).ok())
+          << c.description << ": normalize failed";
+    }
+
+    const VoiceContent pre = voice;
+
+    // Build replacement: a Note of the armed duration.  If the event at
+    // replace_pos is already a Note, preserve its pitch.
+    const auto idx_opt = voice.find_event_index_at(c.replace_pos);
+    ASSERT_TRUE(idx_opt.has_value())
+        << c.description << ": replace_pos not found";
+    const VoiceEvent&  target_ev = voice.events()[*idx_opt];
+    const SpelledPitch repl_pitch =
+        std::holds_alternative<Note>(target_ev)
+            ? std::get<Note>(target_ev).pitch
+            : (std::holds_alternative<Chord>(target_ev)
+                   ? std::get<Chord>(target_ev).notes[0].pitch
+                   : pitch(Letter::kA));
+    const VoiceEvent replacement = make_note(repl_pitch, c.new_dur);
+
+    const bool ok =
+        voice.replace_event(c.replace_pos, replacement, c.target).ok();
+    EXPECT_EQ(ok, c.expect_success)
+        << c.description << ": success expectation mismatch";
+
+    if (ok) {
+      expect_exact_tile(voice, c.target);
+    } else {
+      // Atomicity: voice unchanged.
+      EXPECT_EQ(voice, pre) << c.description << ": mutated on failure";
+    }
+  }
 }

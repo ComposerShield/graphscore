@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -572,6 +573,64 @@ TEST(NoteEntryTest, SetEventCommandNormalizesDurationContraction) {
   EXPECT_EQ(fixture.voice().total_length(), fixture.node_end());
 }
 
+TEST(NoteEntryTest, SetEventCommandContractionFiveOneTwentyEighthsGap) {
+  // dotted sixteenth (3/32 = 12/128) → double-dotted thirty-second
+  // (7/128) leaves 5/128 gap.  Old greedy dead-ended; exact DP produces
+  // [dotted 64th (3/128), 64th (2/128)].  Exercise full notation path
+  // through make_note_entry_command + exact undo/redo.
+  Fixture            fixture;
+  const SpelledPitch c = *SpelledPitch::create(Letter::kC, 4);
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(c, *Duration::create(NoteValue::kSixteenth, 1)))
+          .ok());
+  fixture.normalize_voice();
+  const VoiceContent pre_snapshot = fixture.voice();
+
+  const NotePaletteState state =
+      *NotePaletteState::create(NoteValue::kThirtySecond, 2,
+                                NotePaletteEntryKind::kNote, *Voice::create(1));
+  const NotePaletteEntrySpec spec = state.next_entry_spec();
+
+  auto cmd =
+      make_note_entry_command(fixture.project, fixture.node_id, fixture.track(),
+                              fixture.stave_id(), Rational(0), spec, c);
+  ASSERT_NE(cmd, nullptr);
+  ASSERT_TRUE(cmd->execute(fixture.project).ok());
+
+  // Replacement event is double-dotted thirty-second at onset 0.
+  ASSERT_GE(fixture.voice().events().size(), 2u);
+  ASSERT_TRUE(std::holds_alternative<Note>(fixture.voice().events()[0]));
+  EXPECT_EQ(event_duration(fixture.voice().events()[0]).resolved(),
+            *Rational::create(7, 128));
+
+  // Gap must match decompose_rest(5/128): dotted 64th + 64th.
+  const auto expected = decompose_rest(*Rational::create(5, 128));
+  ASSERT_TRUE(expected.has_value());
+  ASSERT_EQ(expected->size(), 2u);
+  ASSERT_TRUE(std::holds_alternative<Rest>(fixture.voice().events()[1]));
+  EXPECT_EQ(std::get<Rest>(fixture.voice().events()[1]).duration.base(),
+            (*expected)[0].duration.base());
+  EXPECT_EQ(std::get<Rest>(fixture.voice().events()[1]).duration.dots(),
+            (*expected)[0].duration.dots());
+  ASSERT_TRUE(std::holds_alternative<Rest>(fixture.voice().events()[2]));
+  EXPECT_EQ(std::get<Rest>(fixture.voice().events()[2]).duration.base(),
+            (*expected)[1].duration.base());
+  EXPECT_EQ(std::get<Rest>(fixture.voice().events()[2]).duration.dots(),
+            (*expected)[1].duration.dots());
+
+  EXPECT_EQ(fixture.voice().total_length(), fixture.node_end());
+
+  // Exact undo/redo.
+  const VoiceContent post_snapshot = fixture.voice();
+  EXPECT_TRUE(cmd->undo(fixture.project).ok());
+  EXPECT_EQ(fixture.voice(), pre_snapshot);
+  EXPECT_TRUE(cmd->redo(fixture.project).ok());
+  EXPECT_EQ(fixture.voice(), post_snapshot);
+  EXPECT_TRUE(cmd->undo(fixture.project).ok());
+  EXPECT_EQ(fixture.voice(), pre_snapshot);
+}
+
 // ---- Note→Chord promotion: semantic field preservation ----
 
 TEST(NoteEntryTest, NoteToChordPreservesArticulationsAndStem) {
@@ -880,6 +939,446 @@ TEST(NoteEntryTest, ChordExtensionCapturesGeneratedChordNoteId) {
   EXPECT_TRUE(cmd->redo(fixture.project).ok());
   const Chord& rechord = std::get<Chord>(fixture.voice().events()[1]);
   EXPECT_EQ(rechord.notes[2].id, generated_id);
+}
+
+// ---- Duration replacement: automatic-rest normalization ----
+
+TEST(NoteEntryTest, ContractionAtStartFillsGapWithDecomposedRests) {
+  Fixture            fixture;
+  const SpelledPitch pitch = *SpelledPitch::create(Letter::kC, 4);
+  // Whole note at position 0, plus a later sounding event at position 1.
+  Note note = make_note(pitch, *Duration::create(NoteValue::kWhole, 0));
+  ASSERT_TRUE(fixture.voice().append(note).ok());
+  const Note later = make_note(*SpelledPitch::create(Letter::kE, 4),
+                               *Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(fixture.voice().append(later).ok());
+  fixture.normalize_voice();
+
+  const NotationEntityId later_id    = later.id;
+  const Rational         later_onset = Rational(1);
+
+  // Arm quarter note and click on C4.
+  const NotePaletteEntrySpec spec =
+      armed(NoteValue::kQuarter, NotePaletteEntryKind::kNote);
+  auto cmd =
+      make_note_entry_command(fixture.project, fixture.node_id, fixture.track(),
+                              fixture.stave_id(), Rational(0), spec, pitch);
+  ASSERT_NE(cmd, nullptr);
+  EXPECT_TRUE(cmd->execute(fixture.project).ok());
+
+  // First event is now a quarter note.
+  const VoiceEvent& ev0 = fixture.voice().events().front();
+  ASSERT_TRUE(std::holds_alternative<Note>(ev0));
+  EXPECT_EQ(std::get<Note>(ev0).duration.base(), NoteValue::kQuarter);
+
+  // The later sounding event must still be at onset 1 (exactly).
+  const auto pos = fixture.voice().position_of_event(later_id);
+  ASSERT_TRUE(pos.has_value());
+  EXPECT_EQ(*pos, later_onset);
+
+  // The gap between the quarter note and the later event must be filled
+  // with decompose_rest(3/4): one double-dotted-half rest.
+  // Verify that the events between the replacement and the later note are
+  // all rests.
+  Rational cumulative = *Rational::create(1, 4);
+  for (std::size_t i = 1; i < fixture.voice().events().size(); ++i) {
+    const VoiceEvent& ev = fixture.voice().events()[i];
+    if (!std::holds_alternative<Rest>(ev)) {
+      // This is the later sounding event.
+      const auto ev_pos = fixture.voice().position_of_event(event_id(ev));
+      ASSERT_TRUE(ev_pos.has_value());
+      EXPECT_EQ(*ev_pos, cumulative);
+      break;
+    }
+    cumulative = cumulative + event_duration(ev).resolved();
+  }
+  EXPECT_EQ(cumulative, later_onset);
+
+  // Voice total length must still match node_end.
+  EXPECT_EQ(fixture.voice().total_length(), fixture.node_end());
+}
+
+TEST(NoteEntryTest, ContractionInMiddlePreservesEveryLaterOnset) {
+  Fixture            fixture;
+  const SpelledPitch e = *SpelledPitch::create(Letter::kE, 4);
+  const SpelledPitch g = *SpelledPitch::create(Letter::kG, 4);
+
+  // Build: rest(1/4), note_E(1/2), note_G(1/4), normalize.
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_rest(*Duration::create(NoteValue::kQuarter, 0)))
+                  .ok());
+  const Note mid_note = make_note(e, *Duration::create(NoteValue::kHalf, 0));
+  ASSERT_TRUE(fixture.voice().append(mid_note).ok());
+  const Note end_note = make_note(g, *Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(fixture.voice().append(end_note).ok());
+  fixture.normalize_voice();
+
+  const Rational         mid_onset   = *Rational::create(1, 4);
+  const Rational         end_onset   = *Rational::create(3, 4);
+  const NotationEntityId end_note_id = end_note.id;
+
+  // Arm eighth note, click on E4 at mid position.
+  const NotePaletteEntrySpec spec =
+      armed(NoteValue::kEighth, NotePaletteEntryKind::kNote);
+  auto cmd =
+      make_note_entry_command(fixture.project, fixture.node_id, fixture.track(),
+                              fixture.stave_id(), mid_onset, spec, e);
+  ASSERT_NE(cmd, nullptr);
+  EXPECT_TRUE(cmd->execute(fixture.project).ok());
+
+  // The end note must still be at onset 3/4.
+  const auto end_pos = fixture.voice().position_of_event(end_note_id);
+  ASSERT_TRUE(end_pos.has_value());
+  EXPECT_EQ(*end_pos, end_onset);
+
+  // Voice exactly tiles node_end.
+  EXPECT_EQ(fixture.voice().total_length(), fixture.node_end());
+}
+
+TEST(NoteEntryTest, ContractionAtEndDoesNotShiftEarlierEvents) {
+  Fixture            fixture;
+  const SpelledPitch c = *SpelledPitch::create(Letter::kC, 4);
+
+  // Build: note_C(1/4), whole rest(1), normalize.
+  const Note first = append_quarter_note(fixture, c);
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_rest(*Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  fixture.normalize_voice();
+
+  const NotationEntityId first_id = first.id;
+
+  // Arm an eighth note and replace the rest at onset 1/4 (the whole rest).
+  const NotePaletteEntrySpec spec =
+      armed(NoteValue::kEighth, NotePaletteEntryKind::kNote);
+  auto cmd = make_note_entry_command(fixture.project, fixture.node_id,
+                                     fixture.track(), fixture.stave_id(),
+                                     *Rational::create(1, 4), spec, c);
+  ASSERT_NE(cmd, nullptr);
+  EXPECT_TRUE(cmd->execute(fixture.project).ok());
+
+  // The first event (at onset 0) must remain unchanged.
+  const auto first_pos = fixture.voice().position_of_event(first_id);
+  ASSERT_TRUE(first_pos.has_value());
+  EXPECT_EQ(*first_pos, Rational(0));
+
+  // Voice still tiles node_end.
+  EXPECT_EQ(fixture.voice().total_length(), fixture.node_end());
+}
+
+TEST(NoteEntryTest, ExpansionConsumesFollowRestsSuccessfully) {
+  Fixture            fixture;
+  const SpelledPitch c = *SpelledPitch::create(Letter::kC, 4);
+
+  // Build: eighth_note, eighth_rest, eighth_rest, normalize.
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(c, *Duration::create(NoteValue::kEighth, 0)))
+          .ok());
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_rest(*Duration::create(NoteValue::kEighth, 0)))
+                  .ok());
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_rest(*Duration::create(NoteValue::kEighth, 0)))
+                  .ok());
+  fixture.normalize_voice();
+
+  // Arm quarter note, click on C4 at position 0.
+  const NotePaletteEntrySpec spec =
+      armed(NoteValue::kQuarter, NotePaletteEntryKind::kNote);
+  auto cmd =
+      make_note_entry_command(fixture.project, fixture.node_id, fixture.track(),
+                              fixture.stave_id(), Rational(0), spec, c);
+  ASSERT_NE(cmd, nullptr);
+  EXPECT_TRUE(cmd->execute(fixture.project).ok());
+
+  // The note should now be a quarter note (consumed one eighth rest).
+  const VoiceEvent& ev0 = fixture.voice().events().front();
+  ASSERT_TRUE(std::holds_alternative<Note>(ev0));
+  EXPECT_EQ(std::get<Note>(ev0).duration.base(), NoteValue::kQuarter);
+
+  // Voice tiles node_end.
+  EXPECT_EQ(fixture.voice().total_length(), fixture.node_end());
+}
+
+TEST(NoteEntryTest, ExpansionConsumesMultipleSeparateRests) {
+  Fixture            fixture;
+  const SpelledPitch c = *SpelledPitch::create(Letter::kC, 4);
+
+  // Build: eighth_note, four eighth_rests, normalize.
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(c, *Duration::create(NoteValue::kEighth, 0)))
+          .ok());
+  for (int i = 0; i < 4; ++i) {
+    ASSERT_TRUE(fixture.voice()
+                    .append(make_rest(*Duration::create(NoteValue::kEighth, 0)))
+                    .ok());
+  }
+  fixture.normalize_voice();
+  const std::size_t orig_count = fixture.voice().events().size();
+
+  // Arm dotted quarter note (3/8), click on C4 at position 0.
+  const NotePaletteEntrySpec spec(
+      armed(NoteValue::kQuarter, NotePaletteEntryKind::kNote));
+  // We need a dotted quarter.  Construct manually.
+  const NotePaletteState state = *NotePaletteState::create(
+      NoteValue::kQuarter, 1, NotePaletteEntryKind::kNote, *Voice::create(1));
+  const NotePaletteEntrySpec dotted_spec = state.next_entry_spec();
+  // dotted quarter = 3/8, consumes two eighth rests.
+
+  auto cmd =
+      make_note_entry_command(fixture.project, fixture.node_id, fixture.track(),
+                              fixture.stave_id(), Rational(0), dotted_spec, c);
+  ASSERT_NE(cmd, nullptr);
+  EXPECT_TRUE(cmd->execute(fixture.project).ok());
+
+  // Two rests consumed → count decreased by 2.
+  EXPECT_EQ(fixture.voice().events().size(), orig_count - 2);
+  EXPECT_EQ(fixture.voice().total_length(), fixture.node_end());
+}
+
+TEST(NoteEntryTest, ContractionUndoRedoExactRoundTrip) {
+  Fixture            fixture;
+  const SpelledPitch pitch = *SpelledPitch::create(Letter::kC, 4);
+  // Whole note, normalize to 2 measures (8/4).
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(pitch, *Duration::create(NoteValue::kWhole, 0)))
+          .ok());
+  fixture.normalize_voice();
+  const VoiceContent pre_snapshot = fixture.voice();
+
+  // Arm half note, click on C4 at position 0.
+  const NotePaletteEntrySpec spec =
+      armed(NoteValue::kHalf, NotePaletteEntryKind::kNote);
+  auto cmd =
+      make_note_entry_command(fixture.project, fixture.node_id, fixture.track(),
+                              fixture.stave_id(), Rational(0), spec, pitch);
+  ASSERT_NE(cmd, nullptr);
+  EXPECT_TRUE(cmd->execute(fixture.project).ok());
+
+  // After contraction: different from pre.
+  EXPECT_NE(fixture.voice(), pre_snapshot);
+
+  // Capture post-execute state before undo.
+  const VoiceContent post_snapshot = fixture.voice();
+
+  // Undo must exactly restore pre state.
+  EXPECT_TRUE(cmd->undo(fixture.project).ok());
+  EXPECT_EQ(fixture.voice(), pre_snapshot);
+
+  // Redo must return exactly to post-contraction state.
+  EXPECT_TRUE(cmd->redo(fixture.project).ok());
+  EXPECT_EQ(fixture.voice(), post_snapshot);
+
+  // Second undo restores again.
+  EXPECT_TRUE(cmd->undo(fixture.project).ok());
+  EXPECT_EQ(fixture.voice(), pre_snapshot);
+}
+
+TEST(NoteEntryTest, ExpansionUndoRedoExactRoundTrip) {
+  Fixture            fixture;
+  const SpelledPitch c = *SpelledPitch::create(Letter::kC, 4);
+  // Eighth note + two eighth rests, normalize.
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(c, *Duration::create(NoteValue::kEighth, 0)))
+          .ok());
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_rest(*Duration::create(NoteValue::kEighth, 0)))
+                  .ok());
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_rest(*Duration::create(NoteValue::kEighth, 0)))
+                  .ok());
+  fixture.normalize_voice();
+  const VoiceContent pre_snapshot = fixture.voice();
+
+  // Arm quarter note, click on C4 at position 0.
+  const NotePaletteEntrySpec spec =
+      armed(NoteValue::kQuarter, NotePaletteEntryKind::kNote);
+  auto cmd =
+      make_note_entry_command(fixture.project, fixture.node_id, fixture.track(),
+                              fixture.stave_id(), Rational(0), spec, c);
+  ASSERT_NE(cmd, nullptr);
+  EXPECT_TRUE(cmd->execute(fixture.project).ok());
+
+  EXPECT_NE(fixture.voice(), pre_snapshot);
+
+  // Capture post-execute state before undo.
+  const VoiceContent post_snapshot = fixture.voice();
+
+  // Undo must exactly restore pre state.
+  EXPECT_TRUE(cmd->undo(fixture.project).ok());
+  EXPECT_EQ(fixture.voice(), pre_snapshot);
+
+  // Redo must return exactly to post-expansion state.
+  EXPECT_TRUE(cmd->redo(fixture.project).ok());
+  EXPECT_EQ(fixture.voice(), post_snapshot);
+
+  // Final undo restores pre state again.
+  EXPECT_TRUE(cmd->undo(fixture.project).ok());
+  EXPECT_EQ(fixture.voice(), pre_snapshot);
+}
+
+// ---- Property-style generated valid measures: non-overlap and tile ----
+
+// Deterministic coverage matrix: for a set of valid voice configurations
+// and replacement operations, verify every success leaves the voice
+// non-overlapping and exactly tiled.
+TEST(NoteEntryTest, ReplacementInvariantsPropertyCoverage) {
+  struct VoiceCase {
+    std::string             description;
+    std::vector<VoiceEvent> events;
+  };
+
+  const SpelledPitch c = *SpelledPitch::create(Letter::kC, 4);
+  const SpelledPitch d = *SpelledPitch::create(Letter::kD, 4);
+
+  const std::vector<VoiceCase> voices = {
+      {"single whole note",
+       {make_note(c, *Duration::create(NoteValue::kWhole, 0))}},
+      {"note then rests",
+       {make_note(c, *Duration::create(NoteValue::kQuarter, 0)),
+        make_rest(*Duration::create(NoteValue::kQuarter, 0)),
+        make_rest(*Duration::create(NoteValue::kHalf, 0))}},
+      {"rests surrounding note",
+       {make_rest(*Duration::create(NoteValue::kQuarter, 0)),
+        make_note(d, *Duration::create(NoteValue::kHalf, 0)),
+        make_rest(*Duration::create(NoteValue::kQuarter, 0))}},
+      {"note at end after rests",
+       {make_rest(*Duration::create(NoteValue::kHalf, 0)),
+        make_rest(*Duration::create(NoteValue::kQuarter, 0)),
+        make_note(c, *Duration::create(NoteValue::kQuarter, 0))}},
+  };
+
+  // For each voice case: try replacing at selected positions with
+  // durations that are known-safe (same or shorter than the target event).
+  for (const auto& vc : voices) {
+    Fixture fixture;
+
+    Rational                                           cumulative(0);
+    std::vector<std::pair<Rational, NotationEntityId>> event_positions;
+    for (const auto& ev : vc.events) {
+      ASSERT_TRUE(fixture.voice().append(ev).ok())
+          << vc.description << ": append failed";
+      event_positions.emplace_back(cumulative, event_id(ev));
+      cumulative = cumulative + event_duration(ev).resolved();
+    }
+    fixture.normalize_voice();
+
+    for (std::size_t idx = 0; idx < vc.events.size(); ++idx) {
+      const VoiceContent pre_snapshot = fixture.voice();
+      const Rational     pos          = event_positions[idx].first;
+      const Rational     old_dur_resolved =
+          event_duration(vc.events[idx]).resolved();
+
+      // Determine replacement pitch.
+      const auto* old_note_ptr = std::get_if<Note>(&vc.events[idx]);
+      const auto* old_chord_ptr =
+          !old_note_ptr ? std::get_if<Chord>(&vc.events[idx]) : nullptr;
+      const SpelledPitch repl_pitch =
+          old_note_ptr != nullptr
+              ? old_note_ptr->pitch
+              : (old_chord_ptr != nullptr ? old_chord_ptr->notes[0].pitch : c);
+
+      // --- Same-duration replacement ---
+      // Build a spec with the exact same duration as the existing event.
+      {
+        const Duration&        orig_dur = event_duration(vc.events[idx]);
+        const NotePaletteState state    = *NotePaletteState::create(
+            orig_dur.base(), orig_dur.dots(), NotePaletteEntryKind::kNote,
+            *Voice::create(1));
+        const NotePaletteEntrySpec same_spec = state.next_entry_spec();
+
+        auto cmd = make_note_entry_command(fixture.project, fixture.node_id,
+                                           fixture.track(), fixture.stave_id(),
+                                           pos, same_spec, repl_pitch);
+        ASSERT_NE(cmd, nullptr) << vc.description << " same-dur idx " << idx;
+        ASSERT_TRUE(cmd->execute(fixture.project).ok())
+            << vc.description << " same-dur idx " << idx;
+        EXPECT_EQ(fixture.voice().total_length(), fixture.node_end())
+            << vc.description << " same-dur tile idx " << idx;
+        EXPECT_TRUE(cmd->undo(fixture.project).ok());
+        EXPECT_EQ(fixture.voice(), pre_snapshot)
+            << vc.description << " same-dur undo idx " << idx;
+        EXPECT_TRUE(cmd->redo(fixture.project).ok());
+        EXPECT_EQ(fixture.voice().total_length(), fixture.node_end());
+        EXPECT_TRUE(cmd->undo(fixture.project).ok());
+        ASSERT_EQ(fixture.voice(), pre_snapshot);
+      }
+
+      // --- Contraction: try a shorter duration ---
+      if (old_dur_resolved >= *Rational::create(1, 4)) {
+        const NotePaletteEntrySpec short_spec =
+            armed(NoteValue::kEighth, NotePaletteEntryKind::kNote);
+        auto cmd = make_note_entry_command(fixture.project, fixture.node_id,
+                                           fixture.track(), fixture.stave_id(),
+                                           pos, short_spec, repl_pitch);
+        ASSERT_NE(cmd, nullptr) << vc.description << " contraction idx " << idx;
+        ASSERT_TRUE(cmd->execute(fixture.project).ok())
+            << vc.description << " contraction idx " << idx;
+        EXPECT_EQ(fixture.voice().total_length(), fixture.node_end())
+            << vc.description << " contraction tile idx " << idx;
+        EXPECT_TRUE(cmd->undo(fixture.project).ok());
+        EXPECT_EQ(fixture.voice(), pre_snapshot)
+            << vc.description << " contraction undo idx " << idx;
+      }
+
+      // --- Expansion: try when the current event is a Note and a rest
+      //     follows (genuine new_dur > old_dur). ------------------------------
+      if (old_note_ptr != nullptr && idx + 1 < vc.events.size() &&
+          std::holds_alternative<Rest>(vc.events[idx + 1])) {
+        // Compute a genuine larger Duration: next undotted base up (unless
+        // the event is already Whole — no larger undotted base exists).
+        const NoteValue old_base = old_note_ptr->duration.base();
+        if (old_base > NoteValue::kWhole) {
+          const NoteValue larger_base =
+              static_cast<NoteValue>(static_cast<std::uint8_t>(old_base) - 1);
+          const std::optional<Duration> larger_dur =
+              Duration::create(larger_base, 0);
+          ASSERT_TRUE(larger_dur.has_value());
+          const Rational new_dur  = larger_dur->resolved();
+          const Rational required = new_dur - old_dur_resolved;
+
+          // Sum consecutive rests after idx.
+          Rational consecutive_rest(0);
+          for (std::size_t k = idx + 1; k < vc.events.size(); ++k) {
+            if (!std::holds_alternative<Rest>(vc.events[k]))
+              break;
+            consecutive_rest =
+                consecutive_rest + event_duration(vc.events[k]).resolved();
+          }
+          const bool should_succeed =
+              (required > Rational(0) && consecutive_rest >= required);
+
+          // Restore pre state.
+          fixture.voice() = pre_snapshot;
+          ASSERT_EQ(fixture.voice(), pre_snapshot);
+
+          const NotePaletteEntrySpec expand_spec =
+              armed(larger_base, NotePaletteEntryKind::kNote);
+          auto cmd = make_note_entry_command(
+              fixture.project, fixture.node_id, fixture.track(),
+              fixture.stave_id(), pos, expand_spec, repl_pitch);
+          ASSERT_NE(cmd, nullptr) << vc.description << " expansion idx " << idx;
+          const bool ok = cmd->execute(fixture.project).ok();
+          EXPECT_EQ(ok, should_succeed)
+              << vc.description << " expansion outcome idx " << idx;
+          if (ok) {
+            EXPECT_EQ(fixture.voice().total_length(), fixture.node_end())
+                << vc.description << " expansion tile idx " << idx;
+            EXPECT_TRUE(cmd->undo(fixture.project).ok());
+            EXPECT_EQ(fixture.voice(), pre_snapshot)
+                << vc.description << " expansion undo idx " << idx;
+          } else {
+            EXPECT_EQ(fixture.voice(), pre_snapshot)
+                << vc.description << " expansion atomicity idx " << idx;
+          }
+        }
+      }
+    }
+  }
 }
 
 // ---- Armed palette markings remain unapplied ----

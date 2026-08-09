@@ -338,13 +338,13 @@ class VoiceContent {
 };
 
 // Decomposes a strictly positive whole-note `length` into the fewest plain
-// (non-tuplet) Rests, greedily choosing the largest available base-value
-// and dot-count combination that fits the remainder at each step, so
-// automatic rests read as idiomatic notation rather than one arbitrary
-// fraction. Fails if `length` is not strictly positive, or if some
-// remainder is finer than the smallest representable unit (a plain
-// sixty-fourth note) — e.g. a gap left by a tuplet whose remainder is not
-// dyadic.
+// (non-tuplet) Rests, using bounded exact dynamic programming to minimize
+// the rest count, with largest-duration ordering as the deterministic
+// tie-breaker so automatic rests read as idiomatic notation rather than
+// one arbitrary fraction. Fails if `length` is not strictly positive, if
+// the length cannot be expressed as an exact sum of base-and-dot Duration
+// values (e.g. a gap left by a tuplet whose remainder is not dyadic), or
+// if the minimal decomposition would exceed 64 rests.
 [[nodiscard]] std::optional<std::vector<Rest>> decompose_rest(Rational length);
 
 }  // namespace graphscore

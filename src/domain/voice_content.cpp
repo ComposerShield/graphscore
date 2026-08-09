@@ -1117,6 +1117,12 @@ Result VoiceContent::remove_grace_group(NotationEntityId id) {
 
 namespace {
 
+// Every plain (non-tuplet) Duration resolves to an exact multiple of
+// 1/256 (double-dotted sixty-fourth = 7/256).  Scaling to integer 256ths
+// lets us run an exact dynamic-programming decomposition without floating
+// point or Rational-gcd churn.
+constexpr std::int64_t kScale = 256;
+
 std::vector<Duration> plain_rest_candidates() {
   constexpr std::array<NoteValue, 7> kBases = {
       NoteValue::kWhole,       NoteValue::kHalf,      NoteValue::kQuarter,
@@ -1140,6 +1146,11 @@ std::vector<Duration> plain_rest_candidates() {
   return candidates;
 }
 
+struct DpEntry {
+  int count      = -1;  // -1 = unreachable
+  int first_step = -1;  // index into kCandidates (best first choice)
+};
+
 }  // namespace
 
 std::optional<std::vector<Rest>> decompose_rest(Rational length) {
@@ -1149,24 +1160,86 @@ std::optional<std::vector<Rest>> decompose_rest(Rational length) {
   static const std::vector<Duration> kCandidates = plain_rest_candidates();
   constexpr int                      kMaxTerms   = 64;
 
-  std::vector<Rest> rests;
-  Rational          remaining = length;
-  for (int term = 0; remaining > Rational(0); ++term) {
-    if (term >= kMaxTerms)
-      return std::nullopt;
+  // The DP table is capped to a fixed size proportional to kMaxTerms so
+  // the algorithm's memory and time are bounded regardless of Rational
+  // magnitude.  The largest candidate is the double-dotted whole
+  // (448/256), so kMaxTerms of those is the theoretical upper bound of
+  // what the term limit permits.  Any input whose scaled value exceeds
+  // this cap can never decompose within the term limit; we check the
+  // bound before multiplication to rule out signed overflow.
+  constexpr std::int64_t kDpCap = static_cast<std::int64_t>(kMaxTerms) * 448;
 
-    const Duration* chosen = nullptr;
-    for (const Duration& candidate : kCandidates) {
-      if (candidate.resolved() <= remaining) {
-        chosen = &candidate;
-        break;
+  // Scale to (1/256)-ths without multiplying until bounds are proven.
+  // length is already reduced to lowest terms and positive, so its
+  // denominator is guaranteed to be positive.  If the denominator does
+  // not divide 256, length is not an exact multiple of 1/256 and no
+  // decomposition exists.
+  const std::int64_t den = length.denominator();
+  if (kScale % den != 0)
+    return std::nullopt;
+
+  const std::int64_t multiplier = kScale / den;
+  const std::int64_t numerator  = length.numerator();
+
+  // Reject if numerator × multiplier would exceed kDpCap — this prevents
+  // signed overflow while correctly rejecting values too large to ever
+  // decompose within kMaxTerms.
+  if (numerator > kDpCap / multiplier)
+    return std::nullopt;
+
+  const std::int64_t target = numerator * multiplier;  // safe: ≤ kDpCap
+  if (target <= 0)
+    return std::nullopt;
+
+  // Precompute candidate values in integer 256ths.
+  std::vector<std::int64_t> cand_vals;
+  cand_vals.reserve(kCandidates.size());
+  for (const Duration& c : kCandidates) {
+    const Rational r = c.resolved() * Rational(kScale);
+    cand_vals.push_back(r.numerator());
+  }
+
+  // --- Exact DP (backward formulation) ---
+  // dp[i] records the minimal rest count and the index of the first
+  // candidate to apply.  Among equal-count decompositions the smaller
+  // candidate index (larger Duration) wins, which yields the deterministic
+  // largest-duration-first tiebreak the public contract promises.
+  std::vector<DpEntry> dp(static_cast<std::size_t>(target) + 1);
+  dp[0] = {0, -1};
+
+  for (std::int64_t i = 0; i < target; ++i) {
+    const DpEntry& cur = dp[static_cast<std::size_t>(i)];
+    if (cur.count < 0)
+      continue;
+    const int next_count = cur.count + 1;
+    for (int j = 0; j < static_cast<int>(cand_vals.size()); ++j) {
+      const std::int64_t nxt = i + cand_vals[static_cast<std::size_t>(j)];
+      if (nxt > target)
+        continue;
+      DpEntry& dest = dp[static_cast<std::size_t>(nxt)];
+      if (dest.count < 0 || next_count < dest.count ||
+          (next_count == dest.count && j < dest.first_step)) {
+        dest.count      = next_count;
+        dest.first_step = j;
       }
     }
-    if (chosen == nullptr)
-      return std::nullopt;
+  }
 
-    rests.push_back(make_rest(*chosen));
-    remaining = remaining - chosen->resolved();
+  const DpEntry& end = dp[static_cast<std::size_t>(target)];
+  if (end.count < 0 || end.count > kMaxTerms)
+    return std::nullopt;
+
+  // Reconstruct from target down to 0.  dp[i].first_step is the
+  // *first* candidate applied when reaching i, so following the chain
+  // yields rests in application order (largest first thanks to the
+  // tiebreak above).
+  std::vector<Rest> rests;
+  rests.reserve(static_cast<std::size_t>(end.count));
+  std::int64_t pos = target;
+  while (pos > 0) {
+    const int j = dp[static_cast<std::size_t>(pos)].first_step;
+    rests.push_back(make_rest(kCandidates[static_cast<std::size_t>(j)]));
+    pos -= cand_vals[static_cast<std::size_t>(j)];
   }
 
   return rests;
