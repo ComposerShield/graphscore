@@ -56,7 +56,7 @@ Provide a polished, directly editable focused notation system inside a node, wit
 
 - [ ] Insert/delete measures across every track and update signatures, clefs, tempo anchors, spans, selection, and rests atomically.
 - [ ] Create and edit arbitrary single-level `N:M` tuplets without allowing nested tuplets.
-- [ ] Edit ties, slurs, hairpins, pedal spans, beam breaks/joins, and stem overrides with clear invalid-target feedback.
+- [ ] Edit articulations, dynamics, ties, slurs, hairpins, pedal spans, beam breaks/joins, and stem overrides with clear invalid-target feedback.
 - [ ] Create the final pickdown through an explicit node-end duration setting and show the transition boundary distinctly.
 - [ ] Copy/paste one or more complete selected measures to an explicitly chosen destination measure and staff/track scope.
 - [ ] Cut/copy/paste arbitrary non-measure-aligned selections, including partial beats and multi-staff fragments, while preserving valid rhythm.
