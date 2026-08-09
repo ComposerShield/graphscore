@@ -784,4 +784,43 @@ struct NotationPreview {
     const Project& project, const NotationLayout& layout,
     const NotePaletteState& palette, NotationPoint point);
 
+// Constructs a reversible domain command for the note-entry pointer action
+// described in docs/plan/05-notation-editor.md ("Clicking an existing
+// rhythmic event in the selected voice changes its selected duration;
+// clicking another pitch at the onset builds a chord").
+//
+// `position` is the onset of the existing event to replace (typically
+// NotationPreview::candidate_onset from the same click). `armed` is the
+// palette's current next_entry_spec(); its `.voice` field is the sole
+// source of truth for which voice this command targets.
+// `candidate_pitch` is NotationPreview::candidate_pitch from the same
+// click; it must be present when armed.entry_kind is kNote, and is
+// ignored when kRest.
+//
+// Duration-only replacement preserves the existing event's top-level
+// identity (Note::id, Chord::id, Rest::id) and every existing embedded
+// identity (ChordNote::id).  A new notehead on an existing event adds a
+// ChordNote with a fresh NotationEntityId; the existing ChordNote ids are
+// carried forward unchanged.  A Note promoted to a Chord keeps the Note's
+// id as one of the Chord's ChordNotes.  A Rest at `position` is replaced
+// with a Note when kNote is armed; a Note or Chord is replaced with a Rest
+// when kRest is armed.  Duplicate-pitch clicks are treated as
+// duration-only: neither duplicate noteheads nor duplicate ChordNotes are
+// created.
+//
+// Returns nullptr when no event starts at `position` in the armed voice,
+// when armed.entry_kind is kNote but candidate_pitch is absent, when the
+// constructed replacement would violate domain invariants (fewer than two
+// notes in a Chord, duplicate IDs, etc.), or when `project` does not own
+// the specified node/track/stave.  The returned command has not been
+// executed; the caller applies it through a CommandHistory.
+//
+// This function is toolkit-neutral, consumes only the armed entry kind/
+// duration/voice and candidate pitch, and does not apply markings
+// (articulations, dynamics, etc.) — those are Structural editing scope.
+[[nodiscard]] std::unique_ptr<Command> make_note_entry_command(
+    const Project& project, NodeId node_id, TrackId track_id, StaveId stave_id,
+    Rational position, const NotePaletteEntrySpec& armed,
+    std::optional<SpelledPitch> candidate_pitch);
+
 }  // namespace graphscore

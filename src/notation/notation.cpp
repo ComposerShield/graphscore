@@ -9,6 +9,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <memory>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -3481,6 +3482,108 @@ std::optional<NotationPreview> preview_note_entry(
                      staff_space});
   }
   return preview;
+}
+
+std::unique_ptr<Command> make_note_entry_command(
+    const Project& project, NodeId node_id, TrackId track_id, StaveId stave_id,
+    Rational position, const NotePaletteEntrySpec& armed,
+    std::optional<SpelledPitch> candidate_pitch) {
+  const Node* node = project.find_node(node_id);
+  if (node == nullptr)
+    return nullptr;
+  const TrackLane* lane = node->lane(track_id);
+  if (lane == nullptr)
+    return nullptr;
+  const StaveVoices* stave = lane->stave(stave_id);
+  if (stave == nullptr)
+    return nullptr;
+  const VoiceContent& content = stave->voice(armed.voice);
+  const auto          idx     = content.find_event_index_at(position);
+  if (!idx.has_value())
+    return nullptr;
+  const VoiceEvent& existing = content.events()[*idx];
+
+  if (armed.entry_kind == NotePaletteEntryKind::kRest) {
+    // Replace with a Rest of the armed duration.  Discard any
+    // candidate_pitch: rests have no pitch.  Preserve identity on
+    // duration-only; for kind conversion (Note/Chord→Rest) the old
+    // identity is consumed by replace_event per its documented ID-reuse
+    // rules.
+    if (const auto* old_rest = std::get_if<Rest>(&existing);
+        old_rest != nullptr) {
+      Rest new_rest     = *old_rest;
+      new_rest.duration = armed.duration;
+      return std::make_unique<SetEventCommand>(node_id, track_id, stave_id,
+                                               armed.voice, position, new_rest);
+    }
+    return std::make_unique<SetEventCommand>(node_id, track_id, stave_id,
+                                             armed.voice, position,
+                                             make_rest(armed.duration));
+  }
+
+  // --- kNote entry ---
+  if (!candidate_pitch.has_value())
+    return nullptr;
+
+  const SpelledPitch& new_pitch = *candidate_pitch;
+
+  // Replace a Rest with a single Note.
+  if (std::holds_alternative<Rest>(existing)) {
+    return std::make_unique<SetEventCommand>(
+        node_id, track_id, stave_id, armed.voice, position,
+        make_note(new_pitch, armed.duration));
+  }
+
+  // Existing Note: pitch match → duration-only; mismatch → promote to Chord.
+  if (const auto* old_note = std::get_if<Note>(&existing)) {
+    if (old_note->pitch == new_pitch) {
+      Note new_note     = *old_note;
+      new_note.duration = armed.duration;
+      return std::make_unique<SetEventCommand>(node_id, track_id, stave_id,
+                                               armed.voice, position, new_note);
+    }
+    // Promote Note to a 2-note Chord.  The original Note's id becomes the
+    // first ChordNote; the new pitch gets a fresh id. Preserve articulations
+    // and stem override from the original Note.
+    std::vector<ChordNote> chord_notes;
+    chord_notes.push_back(
+        {old_note->id, old_note->pitch, old_note->tied_to_next});
+    chord_notes.push_back({NotationEntityId::generate(), new_pitch, false});
+    return std::make_unique<SetEventCommand>(
+        node_id, track_id, stave_id, armed.voice, position,
+        make_chord(armed.duration, std::move(chord_notes),
+                   old_note->articulations, old_note->stem));
+  }
+
+  // Existing Chord.
+  if (const auto* old_chord = std::get_if<Chord>(&existing)) {
+    // Detect duplicate pitch.
+    const bool pitch_already_present = std::ranges::any_of(
+        old_chord->notes,
+        [&](const ChordNote& cn) { return cn.pitch == new_pitch; });
+
+    if (pitch_already_present) {
+      // Duration-only: preserve every identity.
+      Chord new_chord    = *old_chord;
+      new_chord.duration = armed.duration;
+      return std::make_unique<SetEventCommand>(
+          node_id, track_id, stave_id, armed.voice, position, new_chord);
+    }
+
+    // Add a new notehead to the existing chord. Preserve identity,
+    // articulations and stem override.
+    std::vector<ChordNote> new_notes = old_chord->notes;
+    new_notes.push_back({NotationEntityId::generate(), new_pitch, false});
+    Chord new_chord = make_chord(armed.duration, std::move(new_notes));
+    new_chord.id    = old_chord->id;    // preserve top-level identity
+    new_chord.stem  = old_chord->stem;  // preserve stem override
+    new_chord.articulations =
+        old_chord->articulations;  // preserve articulations
+    return std::make_unique<SetEventCommand>(node_id, track_id, stave_id,
+                                             armed.voice, position, new_chord);
+  }
+
+  return nullptr;
 }
 
 }  // namespace graphscore

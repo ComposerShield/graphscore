@@ -633,7 +633,11 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
       return norm_result;
 
     VoiceDelta d = make_event_delta({target_id, new_id}, true);
+    if (new_id != target_id)
+      d.full_reset = true;
     events_.swap(temp);
+    if (new_id != target_id)
+      remap_event_id_across_references(target_id, new_id);
     advance_revision(std::move(d));
     return Result();
   }
@@ -650,7 +654,11 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
       return norm_result;
 
     VoiceDelta d = make_event_delta({target_id, new_id}, false);
+    if (new_id != target_id)
+      d.full_reset = true;
     events_.swap(temp);
+    if (new_id != target_id)
+      remap_event_id_across_references(target_id, new_id);
     advance_revision(std::move(d));
     return Result();
   }
@@ -737,7 +745,11 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
     return norm_result;
 
   VoiceDelta d = make_event_delta({target_id, new_id}, true);
+  if (new_id != target_id)
+    d.full_reset = true;
   events_.swap(temp);
+  if (new_id != target_id)
+    remap_event_id_across_references(target_id, new_id);
   advance_revision(std::move(d));
   return Result();
 }
@@ -1158,6 +1170,39 @@ std::optional<std::vector<Rest>> decompose_rest(Rational length) {
   }
 
   return rests;
+}
+
+void VoiceContent::remap_event_id_across_references(NotationEntityId old_id,
+                                                    NotationEntityId new_id) {
+  if (old_id == new_id)
+    return;
+
+  for (DynamicMarking& d : dynamics_) {
+    if (d.at_event == old_id)
+      d.at_event = new_id;
+  }
+  for (Hairpin& h : hairpins_) {
+    if (h.start_event == old_id)
+      h.start_event = new_id;
+    if (h.end_event == old_id)
+      h.end_event = new_id;
+  }
+  for (Slur& s : slurs_) {
+    if (s.start_event == old_id)
+      s.start_event = new_id;
+    if (s.end_event == old_id)
+      s.end_event = new_id;
+  }
+  for (BeamOverride& b : beam_overrides_) {
+    for (NotationEntityId& eid : b.events) {
+      if (eid == old_id)
+        eid = new_id;
+    }
+  }
+  for (GraceGroup& g : grace_groups_) {
+    if (g.principal_event == old_id)
+      g.principal_event = new_id;
+  }
 }
 
 }  // namespace graphscore

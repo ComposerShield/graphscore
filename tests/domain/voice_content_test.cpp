@@ -9,6 +9,7 @@
 
 #include <graphscore/domain/graphscore_domain.hpp>
 
+using graphscore::Articulation;
 using graphscore::BeamOverride;
 using graphscore::Chord;
 using graphscore::ChordNote;
@@ -631,4 +632,439 @@ TEST(GraceNoteIdUniquenessTest, AddGraceGroupRejectsNilGroupId) {
                             GraceNoteType::kAppoggiatura, false}}};
   EXPECT_FALSE(voice.add_grace_group(group).ok());
   EXPECT_EQ(voice.grace_groups().size(), 0u);
+}
+
+// -- replace_event ID remapping across event-reference families --
+
+TEST(ReplaceEventRemapTest, RemapsAllFiveEventReferenceFamilies) {
+  VoiceContent voice;
+  const Note   original =
+      make_note(pitch(Letter::kC), duration(NoteValue::kEighth));
+  const Note successor =
+      make_note(pitch(Letter::kG), duration(NoteValue::kEighth));
+  ASSERT_TRUE(voice.append(original).ok());
+  ASSERT_TRUE(voice.append(successor).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId old_top_id = event_id(original);
+  const NotationEntityId succ_id    = event_id(successor);
+
+  // Attach one of each reference family to the original note.
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(old_top_id, Dynamic::kF)).ok());
+  ASSERT_TRUE(voice
+                  .add_hairpin(make_hairpin(old_top_id, succ_id,
+                                            HairpinDirection::kCrescendo))
+                  .ok());
+  ASSERT_TRUE(voice.add_slur(make_slur(old_top_id, succ_id)).ok());
+  ASSERT_TRUE(voice
+                  .add_beam_override(make_beam_override(
+                      BeamOverride::Kind::kJoin, {old_top_id, succ_id}))
+                  .ok());
+  ASSERT_TRUE(
+      voice
+          .add_grace_group(make_grace_group(
+              old_top_id, {GraceNote{.pitch    = pitch(Letter::kB),
+                                     .duration = duration(NoteValue::kEighth),
+                                     .type = GraceNoteType::kAppoggiatura}}))
+          .ok());
+
+  // Replace the original Note with a Chord whose top-level ID differs.
+  const Chord chord =
+      make_chord(duration(NoteValue::kEighth),
+                 {{old_top_id, pitch(Letter::kC), false},
+                  {NotationEntityId::generate(), pitch(Letter::kE), false}});
+  const auto new_top_id = event_id(chord);
+  EXPECT_NE(new_top_id, old_top_id);
+  ASSERT_TRUE(voice.replace_event(Rational(0), chord, Rational(1)).ok());
+
+  // All five families remapped old_top_id -> new_top_id.
+  ASSERT_EQ(voice.dynamics().size(), 1u);
+  EXPECT_EQ(voice.dynamics()[0].at_event, new_top_id);
+  ASSERT_EQ(voice.hairpins().size(), 1u);
+  EXPECT_EQ(voice.hairpins()[0].start_event, new_top_id);
+  EXPECT_EQ(voice.hairpins()[0].end_event, succ_id);
+  ASSERT_EQ(voice.slurs().size(), 1u);
+  EXPECT_EQ(voice.slurs()[0].start_event, new_top_id);
+  EXPECT_EQ(voice.slurs()[0].end_event, succ_id);
+  ASSERT_EQ(voice.beam_overrides().size(), 1u);
+  ASSERT_EQ(voice.beam_overrides()[0].events.size(), 2u);
+  EXPECT_EQ(voice.beam_overrides()[0].events[0], new_top_id);
+  EXPECT_EQ(voice.beam_overrides()[0].events[1], succ_id);
+  ASSERT_EQ(voice.grace_groups().size(), 1u);
+  EXPECT_EQ(voice.grace_groups()[0].principal_event, new_top_id);
+
+  // Referential validation passes (references point to the top-level event).
+  EXPECT_TRUE(validate_voice_references(voice).empty());
+}
+
+TEST(ReplaceEventRemapTest, NoRemapWhenTopLevelIdUnchanged) {
+  VoiceContent voice;
+  const Note   original =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(original).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId top_id = event_id(original);
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(top_id, Dynamic::kP)).ok());
+
+  // Replace with a Note carrying the same top-level id (same pitch, different
+  // duration).
+  Note replacement     = original;
+  replacement.duration = duration(NoteValue::kHalf);
+  ASSERT_TRUE(voice.replace_event(Rational(0), replacement, Rational(1)).ok());
+
+  // Dynamic still points to the same id.
+  ASSERT_EQ(voice.dynamics().size(), 1u);
+  EXPECT_EQ(voice.dynamics()[0].at_event, top_id);
+}
+
+TEST(ReplaceEventRemapTest, RemapsBeamOverrideAllEvents) {
+  VoiceContent voice;
+  const Note   n1 = make_note(pitch(Letter::kC), duration(NoteValue::kEighth));
+  const Note   n2 = make_note(pitch(Letter::kD), duration(NoteValue::kEighth));
+  const Note   n3 = make_note(pitch(Letter::kE), duration(NoteValue::kEighth));
+  ASSERT_TRUE(voice.append(n1).ok());
+  ASSERT_TRUE(voice.append(n2).ok());
+  ASSERT_TRUE(voice.append(n3).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId old_id = event_id(n2);
+  ASSERT_TRUE(
+      voice
+          .add_beam_override(make_beam_override(
+              BeamOverride::Kind::kJoin, {event_id(n1), old_id, event_id(n3)}))
+          .ok());
+
+  // Replace the middle Note (n2) with a Chord having a different top-level id.
+  const Chord chord =
+      make_chord(duration(NoteValue::kEighth),
+                 {{old_id, pitch(Letter::kD), false},
+                  {NotationEntityId::generate(), pitch(Letter::kF), false}});
+  const auto new_top_id = event_id(chord);
+  EXPECT_NE(new_top_id, old_id);
+  ASSERT_TRUE(
+      voice.replace_event(*Rational::create(1, 8), chord, Rational(1)).ok());
+
+  ASSERT_EQ(voice.beam_overrides().size(), 1u);
+  ASSERT_EQ(voice.beam_overrides()[0].events.size(), 3u);
+  EXPECT_EQ(voice.beam_overrides()[0].events[1], new_top_id);
+  EXPECT_NE(voice.beam_overrides()[0].events[1], old_id);
+}
+
+TEST(ReplaceEventRemapTest, RemapsBothEndpointsOfHairpinAndSlur) {
+  VoiceContent voice;
+  const Note left = make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  const Note right =
+      make_note(pitch(Letter::kG), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(left).ok());
+  ASSERT_TRUE(voice.append(right).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId left_id  = event_id(left);
+  const NotationEntityId right_id = event_id(right);
+
+  // Hairpin and slur span both notes.
+  ASSERT_TRUE(voice
+                  .add_hairpin(make_hairpin(left_id, right_id,
+                                            HairpinDirection::kCrescendo))
+                  .ok());
+  ASSERT_TRUE(voice.add_slur(make_slur(left_id, right_id)).ok());
+
+  // Replace left note with a Chord (new top-level id).
+  const Chord chord_left =
+      make_chord(duration(NoteValue::kQuarter),
+                 {{left_id, pitch(Letter::kC), false},
+                  {NotationEntityId::generate(), pitch(Letter::kE), false}});
+  const auto new_left_id = chord_left.id;
+  EXPECT_NE(new_left_id, left_id);
+  ASSERT_TRUE(voice.replace_event(Rational(0), chord_left, Rational(1)).ok());
+
+  // Replace right note with a Chord (new top-level id).
+  const Chord chord_right =
+      make_chord(duration(NoteValue::kQuarter),
+                 {{right_id, pitch(Letter::kG), false},
+                  {NotationEntityId::generate(), pitch(Letter::kB), false}});
+  const auto new_right_id = chord_right.id;
+  EXPECT_NE(new_right_id, right_id);
+  ASSERT_TRUE(
+      voice.replace_event(*Rational::create(1, 4), chord_right, Rational(1))
+          .ok());
+
+  // Both endpoints remapped for hairpin.
+  ASSERT_EQ(voice.hairpins().size(), 1u);
+  EXPECT_EQ(voice.hairpins()[0].start_event, new_left_id);
+  EXPECT_EQ(voice.hairpins()[0].end_event, new_right_id);
+  // Both endpoints remapped for slur.
+  ASSERT_EQ(voice.slurs().size(), 1u);
+  EXPECT_EQ(voice.slurs()[0].start_event, new_left_id);
+  EXPECT_EQ(voice.slurs()[0].end_event, new_right_id);
+
+  // Referential validation passes.
+  EXPECT_TRUE(validate_voice_references(voice).empty());
+}
+
+TEST(ReplaceEventRemapTest, FailedReplacementLeavesReferencesIntact) {
+  VoiceContent voice;
+  const Note   original =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  const Note successor =
+      make_note(pitch(Letter::kG), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(original).ok());
+  ASSERT_TRUE(voice.append(successor).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId old_id = event_id(original);
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(old_id, Dynamic::kF)).ok());
+
+  // Attempt to replace with a chord whose notehead id collides with the
+  // successor's id — must fail atomically.
+  const NotationEntityId succ_event_id = event_id(successor);
+  const Chord            bad_chord =
+      Chord{NotationEntityId::generate(),
+            duration(NoteValue::kQuarter),
+            {ChordNote{succ_event_id, pitch(Letter::kE), false},
+             ChordNote{NotationEntityId::generate(), pitch(Letter::kG), false}},
+            {},
+            {}};
+  EXPECT_FALSE(
+      voice.replace_event(Rational(0), VoiceEvent(bad_chord), Rational(1))
+          .ok());
+
+  // References and events are unchanged.
+  ASSERT_EQ(voice.dynamics().size(), 1u);
+  EXPECT_EQ(voice.dynamics()[0].at_event, old_id);
+  EXPECT_TRUE(std::holds_alternative<Note>(voice.events()[0]));
+  EXPECT_EQ(event_id(voice.events()[0]), old_id);
+}
+
+// -- replace_event delta signaling for reference remapping --
+
+TEST(ReplaceEventDeltaTest, SameDurationIdChangeEmitsFullReset) {
+  VoiceContent voice;
+  const Note   original =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  const Note successor =
+      make_note(pitch(Letter::kG), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(original).ok());
+  ASSERT_TRUE(voice.append(successor).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId old_id  = event_id(original);
+  const NotationEntityId succ_id = event_id(successor);
+
+  // Attach one of each reference family to the original note.
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(old_id, Dynamic::kF)).ok());
+  ASSERT_TRUE(voice
+                  .add_hairpin(make_hairpin(old_id, succ_id,
+                                            HairpinDirection::kCrescendo))
+                  .ok());
+  ASSERT_TRUE(voice.add_slur(make_slur(old_id, succ_id)).ok());
+  ASSERT_TRUE(voice
+                  .add_beam_override(make_beam_override(
+                      BeamOverride::Kind::kJoin, {old_id, succ_id}))
+                  .ok());
+  ASSERT_TRUE(
+      voice
+          .add_grace_group(make_grace_group(
+              old_id, {GraceNote{.pitch    = pitch(Letter::kB),
+                                 .duration = duration(NoteValue::kEighth),
+                                 .type     = GraceNoteType::kAppoggiatura}}))
+          .ok());
+
+  const auto rev0 = voice.capture_revision();
+
+  // Same-duration replacement with different top-level ID.
+  const Chord chord =
+      make_chord(duration(NoteValue::kQuarter),
+                 {{old_id, pitch(Letter::kC), false},
+                  {NotationEntityId::generate(), pitch(Letter::kE), false}});
+  const auto new_top_id = event_id(chord);
+  EXPECT_NE(new_top_id, old_id);
+  ASSERT_TRUE(voice.replace_event(Rational(0), chord, Rational(1)).ok());
+
+  const auto d_opt = voice.delta_since(rev0);
+  ASSERT_TRUE(d_opt.has_value());
+  const auto& delta = *d_opt;
+  EXPECT_TRUE(delta.full_reset);
+  EXPECT_FALSE(delta.event_reorder);
+}
+
+TEST(ReplaceEventDeltaTest, ContractionIdChangeEmitsFullReset) {
+  VoiceContent voice;
+  const Note   original =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(original).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId old_id = event_id(original);
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(old_id, Dynamic::kP)).ok());
+
+  const auto rev0 = voice.capture_revision();
+
+  // Contraction: replace quarter note with eighth note (new top-level ID).
+  const Note shorter =
+      make_note(pitch(Letter::kD), duration(NoteValue::kEighth));
+  EXPECT_NE(event_id(shorter), old_id);
+  ASSERT_TRUE(voice.replace_event(Rational(0), shorter, Rational(1)).ok());
+
+  const auto d_opt = voice.delta_since(rev0);
+  ASSERT_TRUE(d_opt.has_value());
+  const auto& delta = *d_opt;
+  EXPECT_TRUE(delta.full_reset);
+}
+
+TEST(ReplaceEventDeltaTest, ExpansionIdChangeEmitsFullReset) {
+  VoiceContent voice;
+  const Note   original =
+      make_note(pitch(Letter::kC), duration(NoteValue::kEighth));
+  ASSERT_TRUE(voice.append(original).ok());
+  ASSERT_TRUE(voice.append(make_rest(duration(NoteValue::kEighth))).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId old_id = event_id(original);
+  ASSERT_TRUE(
+      voice.add_slur(make_slur(old_id, event_id(voice.events()[1]))).ok());
+
+  const auto rev0 = voice.capture_revision();
+
+  // Expansion: replace eighth note with quarter note, consuming the rest.
+  const Note longer =
+      make_note(pitch(Letter::kD), duration(NoteValue::kQuarter));
+  EXPECT_NE(event_id(longer), old_id);
+  ASSERT_TRUE(voice.replace_event(Rational(0), longer, Rational(1)).ok());
+
+  const auto d_opt = voice.delta_since(rev0);
+  ASSERT_TRUE(d_opt.has_value());
+  const auto& delta = *d_opt;
+  EXPECT_TRUE(delta.full_reset);
+}
+
+TEST(ReplaceEventDeltaTest, SameIdReplacementDoesNotEmitFullReset) {
+  VoiceContent voice;
+  const Note   original =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(original).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId top_id = event_id(original);
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(top_id, Dynamic::kP)).ok());
+
+  const auto rev0 = voice.capture_revision();
+
+  // Same-ID replacement: just change duration.
+  Note replacement     = original;
+  replacement.duration = duration(NoteValue::kHalf);
+  EXPECT_EQ(event_id(replacement), top_id);
+  ASSERT_TRUE(voice.replace_event(Rational(0), replacement, Rational(1)).ok());
+
+  const auto d_opt = voice.delta_since(rev0);
+  ASSERT_TRUE(d_opt.has_value());
+  const auto& delta = *d_opt;
+  EXPECT_FALSE(delta.full_reset);
+}
+
+TEST(ReplaceEventDeltaTest, MergedDeltaPreservesFullReset) {
+  VoiceContent voice;
+  const Note   original =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(original).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId old_id = event_id(original);
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(old_id, Dynamic::kF)).ok());
+
+  const auto rev0 = voice.capture_revision();
+
+  // First mutation: add a slur (normal delta, no full_reset).
+  ASSERT_TRUE(
+      voice.add_slur(make_slur(old_id, NotationEntityId::generate())).ok());
+
+  // Second mutation: replace with different top-level ID (triggers full_reset).
+  const Chord chord =
+      make_chord(duration(NoteValue::kQuarter),
+                 {{old_id, pitch(Letter::kC), false},
+                  {NotationEntityId::generate(), pitch(Letter::kE), false}});
+  ASSERT_TRUE(voice.replace_event(Rational(0), chord, Rational(1)).ok());
+
+  const auto d_opt = voice.delta_since(rev0);
+  ASSERT_TRUE(d_opt.has_value());
+  const auto& delta = *d_opt;
+  // The merged delta must carry full_reset because the replace_event delta
+  // had it.
+  EXPECT_TRUE(delta.full_reset);
+}
+
+TEST(ReplaceEventDeltaTest, FailedReplacementPreservesRevisionAtomicity) {
+  VoiceContent voice;
+  const Note   original =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  const Note successor =
+      make_note(pitch(Letter::kG), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(original).ok());
+  ASSERT_TRUE(voice.append(successor).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId old_id = event_id(original);
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(old_id, Dynamic::kF)).ok());
+
+  const auto rev0 = voice.capture_revision();
+
+  // Attempt to replace with a chord whose notehead id collides with the
+  // successor's id — must fail atomically.
+  const NotationEntityId succ_event_id = event_id(successor);
+  const Chord            bad_chord =
+      Chord{NotationEntityId::generate(),
+            duration(NoteValue::kQuarter),
+            {ChordNote{succ_event_id, pitch(Letter::kE), false},
+             ChordNote{NotationEntityId::generate(), pitch(Letter::kG), false}},
+            {},
+            {}};
+  EXPECT_FALSE(
+      voice.replace_event(Rational(0), VoiceEvent(bad_chord), Rational(1))
+          .ok());
+
+  // Revision did not advance.
+  EXPECT_EQ(voice.capture_revision(), rev0);
+  // References are unchanged.
+  ASSERT_EQ(voice.dynamics().size(), 1u);
+  EXPECT_EQ(voice.dynamics()[0].at_event, old_id);
+  EXPECT_TRUE(std::holds_alternative<Note>(voice.events()[0]));
+}
+
+TEST(ReplaceEventDeltaTest, SameDurationNoRemapNoFullResetWhenIdUnchanged) {
+  VoiceContent voice;
+  const Note   original =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(original).ok());
+  ASSERT_TRUE(voice.normalize(Rational(1)).ok());
+
+  const NotationEntityId top_id = event_id(original);
+  ASSERT_TRUE(
+      voice
+          .add_hairpin(make_hairpin(top_id, NotationEntityId::generate(),
+                                    HairpinDirection::kCrescendo))
+          .ok());
+
+  const auto rev0 = voice.capture_revision();
+
+  // Same-ID, same-duration replacement (just change pitch).
+  Note replacement  = original;
+  replacement.pitch = pitch(Letter::kG);
+  EXPECT_EQ(event_id(replacement), top_id);
+  EXPECT_EQ(replacement.duration.resolved(), original.duration.resolved());
+  ASSERT_TRUE(voice.replace_event(Rational(0), replacement, Rational(1)).ok());
+
+  const auto d_opt = voice.delta_since(rev0);
+  ASSERT_TRUE(d_opt.has_value());
+  const auto& delta = *d_opt;
+  EXPECT_FALSE(delta.full_reset);
+  EXPECT_FALSE(delta.event_reorder);
 }

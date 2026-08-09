@@ -8125,7 +8125,7 @@ TEST(CommandTest, SetEventDurationExpansionConsumesMultipleFollowingRests) {
 // Phase 8e-i — Command rejection of dangling dynamic/grace references
 // =========================================================================
 
-TEST(CommandTest, SetEventRejectsDanglingDynamicReference) {
+TEST(CommandTest, SetEventRemapsReferenceWhenIdChanges) {
   auto          fx   = make_notation_setup();
   Node*         node = fx.project.find_node(fx.node_id);
   VoiceContent* voice =
@@ -8140,14 +8140,18 @@ TEST(CommandTest, SetEventRejectsDanglingDynamicReference) {
                       ev_id, graphscore::Dynamic::kMf))
                   .ok());
 
-  // Replace the event — would leave dynamic dangling.
-  auto cmd = std::make_unique<SetEventCommand>(
-      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
-      make_rest(quarter()));
+  const auto rest        = make_rest(quarter());
+  const auto new_rest_id = event_id(rest);
+  EXPECT_NE(new_rest_id, ev_id);
 
-  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
-  // Voice must be unchanged.
-  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+  auto cmd =
+      std::make_unique<SetEventCommand>(fx.node_id, fx.track_id, fx.stave_id,
+                                        *Voice::create(1), Rational(0), rest);
+
+  EXPECT_TRUE(cmd->execute(fx.project).ok());
+  // Dynamic reference remapped to the new Rest's id.
+  EXPECT_EQ(voice->dynamics()[0].at_event, new_rest_id);
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
 }
 
 TEST(CommandTest, ConvertEventToRestRejectsDanglingGraceReference) {
@@ -8700,7 +8704,7 @@ TEST(CommandTest, SetEventExpansionRejectsDanglingRestReference) {
   EXPECT_EQ(*voice, saved);
 }
 
-TEST(CommandTest, InsertConsumesRestWithMarkingRejected) {
+TEST(CommandTest, InsertConsumesRestRemapsMarkingReference) {
   auto          fx   = make_notation_setup();
   Node*         node = fx.project.find_node(fx.node_id);
   VoiceContent* voice =
@@ -8712,23 +8716,27 @@ TEST(CommandTest, InsertConsumesRestWithMarkingRejected) {
   ASSERT_TRUE(voice->append(note_ev).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
-  const NotationEntityId rest_id = event_id(voice->events()[0]);
-  ASSERT_TRUE(
-      voice
-          ->add_slur(graphscore::Slur{NotationEntityId::generate(), rest_id,
-                                      event_id(voice->events()[1])})
-          .ok());
+  const NotationEntityId rest_id  = event_id(voice->events()[0]);
+  const NotationEntityId note2_id = event_id(voice->events()[1]);
+  ASSERT_TRUE(voice
+                  ->add_slur(graphscore::Slur{NotationEntityId::generate(),
+                                              rest_id, note2_id})
+                  .ok());
 
-  const VoiceContent saved = *voice;
+  // Replace the rest at position 0 with a note — the slur start endpoint
+  // is remapped to the new note's id.
+  const auto new_note    = make_note(pitch_d4(), quarter());
+  const auto new_note_id = event_id(new_note);
+  EXPECT_NE(new_note_id, rest_id);
 
-  // Insert a note at position 0 consuming the rest — the slur's start
-  // endpoint would dangle.
-  auto cmd = std::make_unique<SetEventCommand>(
-      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0),
-      make_note(pitch_d4(), quarter()));
+  auto cmd = std::make_unique<SetEventCommand>(fx.node_id, fx.track_id,
+                                               fx.stave_id, *Voice::create(1),
+                                               Rational(0), new_note);
 
-  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
-  EXPECT_EQ(*voice, saved);
+  EXPECT_TRUE(cmd->execute(fx.project).ok());
+  // Slur start remapped to the new note's id.
+  EXPECT_EQ(voice->slurs()[0].start_event, new_note_id);
+  EXPECT_EQ(voice->slurs()[0].end_event, note2_id);
 }
 
 TEST(CommandTest, PartialRestConsumptionPreservesSurvivingReference) {

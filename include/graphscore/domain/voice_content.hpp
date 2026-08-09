@@ -85,11 +85,12 @@ struct RefOp {
 
 // Aggregated mutation record since a given revision.  If `full_reset` is
 // true, the consumer must perform a complete rebuild (stale cursor, lineage
-// change, copy/assignment, move-from).  Otherwise each per-family operation
-// vector carries exactly the add/remove/update records in mutation order.
-// `event_reorder` is true when the event vector's size or order changed
-// (requiring index-per-measure rebuilds), false when only in-place event
-// content or references changed.
+// change, copy/assignment, move-from, or a replace_event mutation that
+// changed the top-level event ID, which may remap any of the five reference
+// families).  Otherwise each per-family operation vector carries exactly the
+// add/remove/update records in mutation order.  `event_reorder` is true when
+// the event vector's size or order changed (requiring index-per-measure
+// rebuilds), false when only in-place event content or references changed.
 struct VoiceDelta {
   std::vector<NotationEntityId>      changed_event_ids;
   std::vector<RefOp<DynamicMarking>> dynamic_ops;
@@ -308,6 +309,17 @@ class VoiceContent {
 
   // Called from copy/move assignment to invalidate prior tokens.
   void reset_revision_tracking() noexcept;
+
+  // Rewrites every event-reference field in all five reference families
+  // that currently holds `old_id` to hold `new_id` instead. Callers must
+  // signal reference remapping in the revision-tracking delta (currently
+  // by setting VoiceDelta::full_reset). Performs no rewrite when
+  // old_id == new_id.
+  //
+  // Maintained as a member so it has direct access to private reference
+  // vectors during an in-flight replace_event transaction.
+  void remap_event_id_across_references(NotationEntityId old_id,
+                                        NotationEntityId new_id);
 
   static constexpr std::size_t kMaxTrackedRevisions = 16;
 
