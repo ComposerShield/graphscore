@@ -17,6 +17,7 @@
 namespace {
 
 using graphscore::Clef;
+using graphscore::decompose_rest;
 using graphscore::Duration;
 using graphscore::GlyphCommand;
 using graphscore::GlyphMetrics;
@@ -286,7 +287,13 @@ TEST(NotePreviewTest, ArmedVoiceChangesTheSnappedOnsetAtTheSamePoint) {
   EXPECT_NE(voice1->candidate_onset, voice2->candidate_onset);
 }
 
-TEST(NotePreviewTest, EmptyVoiceYieldsNoPreview) {
+// Contract change (explicit voice-stream workflow): an entirely empty voice
+// used to yield std::nullopt outright; a composer arming Voice 2 and
+// clicking could never get a preview or place a note there. It now
+// previews as if the voice had already been filled by
+// decompose_measure_aligned_rests -- the composer's first click into a
+// never-touched voice must show something, not silently reject.
+TEST(NotePreviewTest, EmptyVoiceYieldsPreviewAtTheHypotheticalFillOnset) {
   Fixture fixture(1);
   ASSERT_TRUE(fixture.voice(1)
                   .append(make_rest(*Duration::create(NoteValue::kWhole, 0)))
@@ -296,6 +303,80 @@ TEST(NotePreviewTest, EmptyVoiceYieldsNoPreview) {
   const NotationLayout layout = require_layout(
       layout_notation(fixture.project, fixture.node_id, metrics));
   const NotationPoint point = staff_center(layout);
+
+  const auto preview = preview_note_entry(
+      fixture.project, layout,
+      note_state(0, 2, NoteValue::kQuarter, NotePaletteEntryKind::kRest),
+      point);
+  ASSERT_TRUE(preview.has_value());
+  EXPECT_EQ(preview->voice, *Voice::create(2));
+  // The single-measure timeline's hypothetical fill for voice 2 is one
+  // whole-measure rest, so it offers exactly one onset -- 0 -- regardless
+  // of where in the measure the click falls, matching the real-voice
+  // contract WholeMeasureRestOffersExactlyOneOnsetRegardlessOfClickPosition
+  // proves for a voice that already holds that same whole rest.
+  EXPECT_EQ(preview->candidate_onset, Rational(0));
+}
+
+// Onset selection across a multi-rest hypothetical fill: a 5/8 measure
+// decomposes into more than one rest, so the empty voice's hypothetical
+// fill offers more than one onset, and the click nearest each one must
+// resolve to that onset specifically -- not always the first.
+TEST(NotePreviewTest,
+     EmptyVoiceOnsetSelectionAcrossAMultiRestHypotheticalFill) {
+  Fixture    fixture({measure(5, 8)}, StaffLayout::single_staff());
+  const auto shape = decompose_rest(*Rational::create(5, 8));
+  ASSERT_TRUE(shape.has_value());
+  ASSERT_GE(shape->size(), 2u) << "5/8 must decompose into more than one rest "
+                                  "for this test to be meaningful";
+
+  // Voice 1 gets the identical real rest sequence decompose_rest(5/8)
+  // produces, so its rendered glyph positions are ground truth for where
+  // each onset actually falls -- the same technique
+  // EquidistantOnsetsTieBreakToTheEarlierOnset uses above, rather than
+  // reproducing the engraver's own x<->time formula in this test.
+  for (const Rest& rest : *shape) {
+    ASSERT_TRUE(fixture.voice(1).append(rest).ok());
+  }
+  // Voice 2 is left empty; its hypothetical fill has the same shape.
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint first_point  = rest_origin(layout, (*shape)[0], 1);
+  const NotationPoint second_point = rest_origin(layout, (*shape)[1], 1);
+
+  const auto first = preview_note_entry(
+      fixture.project, layout,
+      note_state(0, 2, NoteValue::kQuarter, NotePaletteEntryKind::kRest),
+      first_point);
+  const auto second = preview_note_entry(
+      fixture.project, layout,
+      note_state(0, 2, NoteValue::kQuarter, NotePaletteEntryKind::kRest),
+      second_point);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+  EXPECT_EQ(first->candidate_onset, Rational(0));
+  EXPECT_EQ(second->candidate_onset, (*shape)[0].duration.resolved());
+  EXPECT_NE(first->candidate_onset, second->candidate_onset);
+}
+
+// The empty-voice substitution is narrowly scoped to a voice with zero
+// events. A voice that already holds content, but has no event boundary
+// within the specific resolved measure, is a different case (a short or
+// incomplete voice) and keeps the pre-existing std::nullopt behavior.
+TEST(NotePreviewTest, NonEmptyVoiceWithNoOnsetInMeasureStillYieldsNoPreview) {
+  Fixture fixture(2);
+  ASSERT_TRUE(fixture.voice(2)
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kQuarter, 0)))
+                  .ok());
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  // Measure 1 (ordinal 1): voice 2's only event is a quarter note at 0,
+  // entirely within measure 0, so measure 1 has no event boundary in it.
+  const NotationPoint point = staff_center(layout, 1);
 
   const auto preview = preview_note_entry(
       fixture.project, layout,

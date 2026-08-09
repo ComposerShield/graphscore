@@ -3408,17 +3408,47 @@ std::optional<NotationPreview> preview_note_entry(
       time_at_x(measures, measure->ordinal, point.x, measure->bounds.x,
                 measure->bounds.width, staff_space);
 
+  // The durations to scan for onsets: the armed voice's own events, unless
+  // it is entirely empty, in which case the voice-stream workflow previews
+  // against the durations of the same measure-aligned rest fill a click
+  // would materialize (decompose_measure_aligned_rests, voice_content.hpp).
+  // A voice that merely has no event boundary within the resolved measure
+  // (but is not itself empty) is not covered by this substitution and
+  // still yields std::nullopt below via an unmatched scan.
+  std::vector<Rational> event_durations;
+  if (content.events().empty()) {
+    // Reads only the hypothetical fill's shape, so the duration-only core
+    // (decompose_measure_aligned_rest_durations, voice_content.hpp) is used
+    // directly rather than decompose_measure_aligned_rests: every pointer
+    // move through an empty voice would otherwise mint and immediately
+    // discard a fresh Rest id per term.
+    const std::optional<std::vector<Duration>> hypothetical_fill =
+        decompose_measure_aligned_rest_durations(*timeline);
+    if (!hypothetical_fill.has_value()) {
+      return std::nullopt;
+    }
+    event_durations.reserve(hypothetical_fill->size());
+    for (const Duration& duration : *hypothetical_fill) {
+      event_durations.push_back(duration.resolved());
+    }
+  } else {
+    event_durations.reserve(content.events().size());
+    for (const VoiceEvent& event : content.events()) {
+      event_durations.push_back(event_duration(event).resolved());
+    }
+  }
+
   // Snaps to the start of an existing rhythmic event (including a
-  // normalized rest) in the armed voice, scoped to the resolved measure --
-  // never a metric grid derived from the armed duration. Events are
-  // visited in onset order, and only a strictly smaller distance replaces
-  // the current best, so on an exact tie the earlier onset wins
-  // deterministically.
+  // normalized rest, real or hypothetical) in the armed voice, scoped to
+  // the resolved measure -- never a metric grid derived from the armed
+  // duration. Onsets are visited in order, and only a strictly smaller
+  // distance replaces the current best, so on an exact tie the earlier
+  // onset wins deterministically.
   bool     found_onset   = false;
   double   best_distance = std::numeric_limits<double>::infinity();
   Rational resolved_onset;
   Rational onset;
-  for (const VoiceEvent& event : content.events()) {
+  for (const Rational& event_dur : event_durations) {
     if (onset >= measure_start && onset < measure_start + measure_length) {
       const double distance = std::abs(onset.to_double() - reference_time);
       if (distance < best_distance) {
@@ -3427,7 +3457,7 @@ std::optional<NotationPreview> preview_note_entry(
         found_onset    = true;
       }
     }
-    onset = onset + event_duration(event).resolved();
+    onset = onset + event_dur;
   }
   if (!found_onset) {
     return std::nullopt;
@@ -3498,7 +3528,60 @@ std::unique_ptr<Command> make_note_entry_command(
   if (stave == nullptr)
     return nullptr;
   const VoiceContent& content = stave->voice(armed.voice);
-  const auto          idx     = content.find_event_index_at(position);
+
+  // Explicit voice-stream workflow: the armed voice has never held
+  // anything, so there is no existing event boundary to click on. Match
+  // `position` against the onsets of the same hypothetical measure-aligned
+  // rest fill preview_note_entry previews, and if it matches, return one
+  // CommandTransaction that creates the stream and then replaces the rest
+  // at `position` -- a single undoable action that either succeeds
+  // completely or leaves the project untouched.
+  if (content.events().empty()) {
+    const NodeTimeline* timeline = node->timeline();
+    if (timeline == nullptr)
+      return nullptr;
+    const std::optional<std::vector<Rest>> hypothetical_fill =
+        decompose_measure_aligned_rests(*timeline);
+    if (!hypothetical_fill.has_value())
+      return nullptr;
+
+    bool     position_is_an_onset = false;
+    Rational onset;
+    for (const Rest& rest : *hypothetical_fill) {
+      if (onset == position) {
+        position_is_an_onset = true;
+        break;
+      }
+      onset = onset + rest.duration.resolved();
+    }
+    if (!position_is_an_onset)
+      return nullptr;
+
+    VoiceEvent new_event;
+    if (armed.entry_kind == NotePaletteEntryKind::kRest) {
+      new_event = make_rest(armed.duration);
+    } else {
+      if (!candidate_pitch.has_value())
+        return nullptr;
+      new_event = make_note(*candidate_pitch, armed.duration);
+    }
+
+    auto transaction = std::make_unique<CommandTransaction>();
+    if (!transaction
+             ->add_command(std::make_unique<CreateVoiceStreamCommand>(
+                 node_id, track_id, stave_id, armed.voice))
+             .ok())
+      return nullptr;
+    if (!transaction
+             ->add_command(std::make_unique<SetEventCommand>(
+                 node_id, track_id, stave_id, armed.voice, position,
+                 std::move(new_event)))
+             .ok())
+      return nullptr;
+    return transaction;
+  }
+
+  const auto idx = content.find_event_index_at(position);
   if (!idx.has_value())
     return nullptr;
   const VoiceEvent& existing = content.events()[*idx];

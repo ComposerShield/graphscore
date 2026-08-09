@@ -27,6 +27,7 @@
 #include <graphscore/domain/connect_command.hpp>
 #include <graphscore/domain/connector.hpp>
 #include <graphscore/domain/convert_event_to_rest_command.hpp>
+#include <graphscore/domain/create_voice_stream_command.hpp>
 #include <graphscore/domain/cut_fragment_command.hpp>
 #include <graphscore/domain/delete_measure_command.hpp>
 #include <graphscore/domain/disconnect_command.hpp>

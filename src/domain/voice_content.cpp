@@ -15,6 +15,8 @@
 #include <variant>
 #include <vector>
 
+#include <graphscore/domain/node_timeline.hpp>
+
 namespace graphscore {
 
 // --- VoiceContent mutation tracking
@@ -1151,9 +1153,15 @@ struct DpEntry {
   int first_step = -1;  // index into kCandidates (best first choice)
 };
 
-}  // namespace
-
-std::optional<std::vector<Rest>> decompose_rest(Rational length) {
+// The duration-only core of decompose_rest(): identical exact DP, but
+// returns the decomposition as plain Duration values rather than minting a
+// fresh Rest (and the Uuid::generate() that entails) per term. decompose_rest
+// below wraps this to mint ids for callers that materialize real Rests;
+// decompose_measure_aligned_rest_durations (voice_content.hpp) calls this
+// directly per measure so a purely informational caller -- preview_note_entry
+// (graphscore_notation), which discards every id immediately -- never mints
+// one in the first place.
+std::optional<std::vector<Duration>> decompose_rest_durations(Rational length) {
   if (length <= Rational(0))
     return std::nullopt;
 
@@ -1231,18 +1239,72 @@ std::optional<std::vector<Rest>> decompose_rest(Rational length) {
 
   // Reconstruct from target down to 0.  dp[i].first_step is the
   // *first* candidate applied when reaching i, so following the chain
-  // yields rests in application order (largest first thanks to the
+  // yields terms in application order (largest first thanks to the
   // tiebreak above).
-  std::vector<Rest> rests;
-  rests.reserve(static_cast<std::size_t>(end.count));
+  std::vector<Duration> durations;
+  durations.reserve(static_cast<std::size_t>(end.count));
   std::int64_t pos = target;
   while (pos > 0) {
     const int j = dp[static_cast<std::size_t>(pos)].first_step;
-    rests.push_back(make_rest(kCandidates[static_cast<std::size_t>(j)]));
+    durations.push_back(kCandidates[static_cast<std::size_t>(j)]);
     pos -= cand_vals[static_cast<std::size_t>(j)];
   }
 
+  return durations;
+}
+
+}  // namespace
+
+std::optional<std::vector<Rest>> decompose_rest(Rational length) {
+  const std::optional<std::vector<Duration>> durations =
+      decompose_rest_durations(length);
+  if (!durations.has_value())
+    return std::nullopt;
+
+  std::vector<Rest> rests;
+  rests.reserve(durations->size());
+  for (const Duration& duration : *durations)
+    rests.push_back(make_rest(duration));
   return rests;
+}
+
+std::optional<std::vector<Duration>> decompose_measure_aligned_rest_durations(
+    const NodeTimeline& timeline) {
+  const MeasureMap&     measures = timeline.measures();
+  std::vector<Duration> result;
+
+  for (std::size_t index = 0; index < measures.measure_count(); ++index) {
+    const std::optional<std::vector<Duration>> piece =
+        decompose_rest_durations(measures.measure_length(index));
+    if (!piece.has_value())
+      return std::nullopt;
+    result.insert(result.end(), piece->begin(), piece->end());
+  }
+
+  if (const std::optional<Rational> pickdown = timeline.pickdown_duration();
+      pickdown.has_value()) {
+    const std::optional<std::vector<Duration>> piece =
+        decompose_rest_durations(*pickdown);
+    if (!piece.has_value())
+      return std::nullopt;
+    result.insert(result.end(), piece->begin(), piece->end());
+  }
+
+  return result;
+}
+
+std::optional<std::vector<Rest>> decompose_measure_aligned_rests(
+    const NodeTimeline& timeline) {
+  const std::optional<std::vector<Duration>> durations =
+      decompose_measure_aligned_rest_durations(timeline);
+  if (!durations.has_value())
+    return std::nullopt;
+
+  std::vector<Rest> result;
+  result.reserve(durations->size());
+  for (const Duration& duration : *durations)
+    result.push_back(make_rest(duration));
+  return result;
 }
 
 void VoiceContent::remap_event_id_across_references(NotationEntityId old_id,

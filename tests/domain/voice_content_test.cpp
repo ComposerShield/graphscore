@@ -2,9 +2,11 @@
 
 #include <gtest/gtest.h>
 
+#include <cassert>
 #include <cstddef>
 #include <ranges>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -14,6 +16,7 @@ using graphscore::Articulation;
 using graphscore::BeamOverride;
 using graphscore::Chord;
 using graphscore::ChordNote;
+using graphscore::decompose_measure_aligned_rests;
 using graphscore::decompose_rest;
 using graphscore::Duration;
 using graphscore::Dynamic;
@@ -24,6 +27,7 @@ using graphscore::GraceNote;
 using graphscore::GraceNoteType;
 using graphscore::Hairpin;
 using graphscore::HairpinDirection;
+using graphscore::KeySignature;
 using graphscore::Letter;
 using graphscore::make_beam_override;
 using graphscore::make_chord;
@@ -33,6 +37,9 @@ using graphscore::make_hairpin;
 using graphscore::make_note;
 using graphscore::make_rest;
 using graphscore::make_slur;
+using graphscore::Measure;
+using graphscore::MeasureMap;
+using graphscore::NodeTimeline;
 using graphscore::NotationEntityId;
 using graphscore::Note;
 using graphscore::NoteValue;
@@ -42,6 +49,7 @@ using graphscore::Rest;
 using graphscore::Slur;
 using graphscore::SpelledPitch;
 using graphscore::StemDirection;
+using graphscore::TimeSignature;
 using graphscore::validate_voice_references;
 using graphscore::VoiceContent;
 using graphscore::VoiceDelta;
@@ -57,6 +65,30 @@ SpelledPitch pitch(Letter letter) {
 
 Duration duration(NoteValue base, std::uint8_t dots = 0) {
   return *Duration::create(base, dots);
+}
+
+Measure measure(std::uint8_t numerator, std::uint16_t denominator = 4) {
+  return Measure{*TimeSignature::create(numerator, denominator),
+                 KeySignature{}};
+}
+
+NodeTimeline make_timeline(std::vector<Measure> measures) {
+  auto timeline = NodeTimeline::create(std::move(measures), {});
+  assert(timeline.has_value());
+  return std::move(*timeline);
+}
+
+// Rest::operator== compares NotationEntityId, and every Rest
+// decompose_rest/decompose_measure_aligned_rests produces carries a fresh
+// generated id -- two independently produced fills of the same span are
+// never Rest-equal even when they are the same musical shape. Comparisons
+// below compare each Rest's Duration only.
+std::vector<Duration> rest_durations(const std::vector<Rest>& rests) {
+  std::vector<Duration> durations;
+  durations.reserve(rests.size());
+  for (const Rest& rest : rests)
+    durations.push_back(rest.duration);
+  return durations;
 }
 
 }  // namespace
@@ -303,6 +335,123 @@ TEST(DecomposeRestTest, ImmediatelyOutsideDpCapRejected) {
   const auto r = Rational::create(28673, 256);
   ASSERT_TRUE(r.has_value());
   EXPECT_FALSE(decompose_rest(*r).has_value());
+}
+
+// ---- decompose_measure_aligned_rests: no rest ever crosses a barline ----
+
+// Three 3/4 measures give node_end() == 9/4. A single decompose_rest(9/4)
+// call's first rest alone already resolves to more than one measure's
+// worth of time (3/4) -- it necessarily spans past the first barline. The
+// measure-aligned fill must instead decompose each measure independently,
+// producing three separate dotted-half rests whose cumulative sums land
+// exactly on every barline.
+TEST(DecomposeMeasureAlignedRestsTest,
+     ThreeThreeQuarterMeasuresRespectEveryBarline) {
+  const NodeTimeline timeline =
+      make_timeline({measure(3, 4), measure(3, 4), measure(3, 4)});
+  const Rational per_measure = *Rational::create(3, 4);
+
+  // The naive whole-span decomposition does cross a barline, confirming
+  // this is a genuine worked example and not a vacuous test.
+  const auto naive = decompose_rest(timeline.node_end());
+  ASSERT_TRUE(naive.has_value());
+  ASSERT_FALSE(naive->empty());
+  EXPECT_GT((*naive)[0].duration.resolved(), per_measure);
+
+  const auto result = decompose_measure_aligned_rests(timeline);
+  ASSERT_TRUE(result.has_value());
+  ASSERT_EQ(result->size(), 3u);
+
+  Rational cumulative(0);
+  for (const Rest& rest : *result) {
+    EXPECT_EQ(rest.duration.resolved(), per_measure);
+    cumulative = cumulative + rest.duration.resolved();
+  }
+  EXPECT_EQ(cumulative, timeline.node_end());
+  EXPECT_EQ(cumulative, timeline.measures().total_length());
+}
+
+// Several meters, including a mixed set, decomposed independently: the
+// observable property this test proves is that the measure-aligned result
+// tiles every measure boundary exactly (each measure starts on a rest
+// boundary and no single rest overruns its own measure's length) --
+// verified without re-deriving decompose_rest's own per-measure output,
+// which would only be a change detector against voice_content.cpp's own
+// implementation rather than independent evidence.
+TEST(DecomposeMeasureAlignedRestsTest,
+     MixedMetersEachTileExactlyWithNoRestExceedingItsMeasure) {
+  const NodeTimeline timeline =
+      make_timeline({measure(4, 4), measure(3, 8), measure(5, 4)});
+
+  const auto result = decompose_measure_aligned_rests(timeline);
+  ASSERT_TRUE(result.has_value());
+
+  const MeasureMap& measures = timeline.measures();
+  Rational          cumulative(0);
+  std::size_t       rest_index = 0;
+  for (std::size_t m = 0; m < measures.measure_count(); ++m) {
+    EXPECT_EQ(cumulative, measures.measure_start(m))
+        << "measure " << m << " does not start on a rest boundary";
+    const Rational target = cumulative + measures.measure_length(m);
+    while (cumulative < target) {
+      ASSERT_LT(rest_index, result->size())
+          << "measure " << m << " ran out of rests before reaching its end";
+      const Rational rest_dur = (*result)[rest_index].duration.resolved();
+      ASSERT_LE(cumulative + rest_dur, target)
+          << "a rest in measure " << m << " overran the barline";
+      cumulative = cumulative + rest_dur;
+      ++rest_index;
+    }
+  }
+  EXPECT_EQ(cumulative, timeline.node_end());
+  EXPECT_EQ(rest_index, result->size())
+      << "extra rests beyond the last measure";
+}
+
+// A trailing pickdown region is decomposed as its own final group, after
+// every main-region measure's rests -- never merged with the boundary
+// measure's own decomposition.
+TEST(DecomposeMeasureAlignedRestsTest, PickdownIsDecomposedAsItsOwnFinalGroup) {
+  NodeTimeline timeline = make_timeline({measure(4, 4)});
+  ASSERT_TRUE(timeline.set_pickdown(*Rational::create(1, 4)).ok());
+
+  const auto result = decompose_measure_aligned_rests(timeline);
+  ASSERT_TRUE(result.has_value());
+
+  const auto main_piece     = decompose_rest(*Rational::create(4, 4));
+  const auto pickdown_piece = decompose_rest(*Rational::create(1, 4));
+  ASSERT_TRUE(main_piece.has_value());
+  ASSERT_TRUE(pickdown_piece.has_value());
+
+  std::vector<Rest> expected = *main_piece;
+  expected.insert(expected.end(), pickdown_piece->begin(),
+                  pickdown_piece->end());
+  EXPECT_EQ(rest_durations(*result), rest_durations(expected));
+
+  // Exact tiling: the boundary between main region and pickdown falls
+  // exactly on a rest boundary, and the total exactly matches node_end().
+  Rational cumulative(0);
+  bool     saw_boundary = false;
+  for (const Rest& rest : *result) {
+    cumulative = cumulative + rest.duration.resolved();
+    if (cumulative == timeline.boundary_position())
+      saw_boundary = true;
+  }
+  EXPECT_TRUE(saw_boundary);
+  EXPECT_EQ(cumulative, timeline.node_end());
+}
+
+// A pickdown whose duration is not an exact sum of base-and-dot Duration
+// values (a non-dyadic-denominator Rational) cannot be decomposed by
+// decompose_rest, so the whole fill fails -- never a partial fill covering
+// only the main region.
+TEST(DecomposeMeasureAlignedRestsTest,
+     UnrepresentablePickdownFailsTheWholeFillNotJustAPiece) {
+  NodeTimeline   timeline        = make_timeline({measure(4, 4)});
+  const Rational unrepresentable = *Rational::create(1, 3);
+  ASSERT_TRUE(timeline.set_pickdown(unrepresentable).ok());
+
+  EXPECT_FALSE(decompose_measure_aligned_rests(timeline).has_value());
 }
 
 // -- Phase 8f-i: ChordNote/GraceNote id uniqueness in VoiceContent --

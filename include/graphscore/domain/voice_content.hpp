@@ -16,6 +16,8 @@
 
 namespace graphscore {
 
+class NodeTimeline;
+
 // Monotonic revision token for incremental consumers.
 // A VoiceRevision advances on every successful mutation to a VoiceContent
 // (or TrackLane). Consumers may snapshot the current value with
@@ -344,7 +346,58 @@ class VoiceContent {
 // one arbitrary fraction. Fails if `length` is not strictly positive, if
 // the length cannot be expressed as an exact sum of base-and-dot Duration
 // values (e.g. a gap left by a tuplet whose remainder is not dyadic), or
-// if the minimal decomposition would exceed 64 rests.
+// if the minimal decomposition would exceed the internal 64-term cap.
 [[nodiscard]] std::optional<std::vector<Rest>> decompose_rest(Rational length);
+
+// The duration-only, non-allocating-id core of decompose_measure_aligned_rests
+// below: the same measure-by-measure tiling, but as plain Duration values
+// rather than minted Rest objects. Each main-region measure of
+// timeline.measures() is decomposed independently (never
+// decompose_rest(timeline.node_end()) as one span -- see
+// decompose_measure_aligned_rests for why that would cross barlines); a
+// trailing pickdown region, when timeline has one, is decomposed as its own
+// final group after every main-region measure's durations.
+//
+// Returns std::nullopt, allocating nothing observable and mutating nothing,
+// under the same conditions decompose_measure_aligned_rests documents.
+//
+// A caller that only needs the shape (e.g. preview_note_entry,
+// graphscore_notation, which resolves onsets from the durations alone and
+// discards everything else) should call this directly rather than
+// decompose_measure_aligned_rests: minting and immediately discarding a
+// fresh Rest -- and the Uuid::generate() that costs -- per term on every
+// pointer move is pure waste. decompose_measure_aligned_rests itself is a
+// thin id-minting wrapper over this function, so the two can never drift
+// apart on the durations they agree on.
+[[nodiscard]] std::optional<std::vector<Duration>>
+decompose_measure_aligned_rest_durations(const NodeTimeline& timeline);
+
+// The measure-aligned counterpart to decompose_rest(): the ordered Rest
+// sequence that exactly tiles [0, timeline.node_end()) such that no single
+// Rest crosses a measure boundary, with a freshly minted id per Rest. This
+// is deliberately different from calling decompose_rest(timeline.node_end())
+// once: a naive whole-span decomposition can and does produce rests
+// spanning a barline (e.g. three 3/4 measures decompose as a dotted whole
+// plus a dotted half, neither of which respects a single 3/4 barline),
+// which is not valid notation.
+//
+// Returns std::nullopt, allocating nothing observable and mutating
+// nothing, if any individual measure's or the pickdown's span cannot be
+// expressed exactly by decompose_rest -- never a partial or approximate
+// fill. Every measure length MeasureMap can produce is strictly positive,
+// and NodeTimeline::set_pickdown enforces a strictly positive pickdown
+// duration, so the only realistic failure mode is a span whose duration is
+// not an exact sum of base-and-dot Duration values, or one whose minimal
+// decomposition would exceed decompose_rest's internal 64-term cap (the
+// same conditions decompose_rest itself documents).
+//
+// This is the single source of truth for "what would filling this node's
+// currently-empty voice with normalized rests look like": both
+// preview_note_entry (graphscore_notation, via
+// decompose_measure_aligned_rest_durations above) and CreateVoiceStreamCommand
+// (via this function) derive from the same tiling, so the pointer-entry
+// preview and the command it previews can never drift apart.
+[[nodiscard]] std::optional<std::vector<Rest>> decompose_measure_aligned_rests(
+    const NodeTimeline& timeline);
 
 }  // namespace graphscore

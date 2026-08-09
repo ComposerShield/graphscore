@@ -770,16 +770,38 @@ struct NotationPreview {
 // `palette`'s duration, dots, note-vs-rest kind, and voice are the sole
 // source of truth for what would be entered; this never re-derives them.
 //
+// Explicit voice-stream workflow: when the armed voice is entirely empty
+// (VoiceContent::events().empty()), onset resolution behaves exactly as if
+// that voice had already been filled by
+// decompose_measure_aligned_rests(voice_content.hpp) -- the same
+// measure-aligned rest tiling make_note_entry_command below actually
+// applies on the composer's click. This function reads that hypothetical
+// fill's onset shape (never the Rest ids themselves) on every pointer
+// move, so it calls the duration-only core,
+// decompose_measure_aligned_rest_durations, directly rather than minting
+// and immediately discarding a fresh Rest id per term; both derive from
+// the same underlying tiling, so they can never disagree on shape. The
+// nearest onset among that hypothetical fill's durations within the
+// resolved measure is used, so the very first click into a never-touched
+// voice (e.g. arming "Voice 2" for the first time) previews at a real
+// onset instead of failing outright. This narrow carve-out applies only
+// to a voice with zero events; a voice that already holds some content
+// but has no event boundary within the resolved measure specifically (a
+// short/incomplete voice) is unaffected and still falls through to the
+// std::nullopt case below.
+//
 // Returns std::nullopt when `point` falls outside every system, when it
 // falls outside every staff's own ledger/marking lane (the staff's five
 // lines plus a bounded allowance above and below, matching the layout's own
 // marking budget -- never an unbounded nearest-staff guess across the far
-// larger system extent), when the armed voice has no onset at all within
-// the resolved measure (an empty voice, or a measure with no event boundary
-// in it for that voice), or when (kNote only) the resolved staff step falls
-// outside SpelledPitch's valid octave range -- never a clamped value in any
-// of these cases. A pure query: never mutates `project`, `layout`, or any
-// cache.
+// larger system extent), when the armed voice is non-empty but has no
+// onset at all within the resolved measure (a measure with no event
+// boundary in it for that voice), when the armed voice is empty and its
+// hypothetical measure-aligned fill cannot be produced exactly, or when
+// (kNote only) the resolved staff step falls outside SpelledPitch's valid
+// octave range -- never a clamped value in any of these cases. A pure
+// query: never mutates `project`, `layout`, or any cache, even when it
+// internally computes the hypothetical fill's shape for an empty voice.
 [[nodiscard]] std::optional<NotationPreview> preview_note_entry(
     const Project& project, const NotationLayout& layout,
     const NotePaletteState& palette, NotationPoint point);
@@ -808,12 +830,43 @@ struct NotationPreview {
 // duration-only: neither duplicate noteheads nor duplicate ChordNotes are
 // created.
 //
-// Returns nullptr when no event starts at `position` in the armed voice,
-// when armed.entry_kind is kNote but candidate_pitch is absent, when the
-// constructed replacement would violate domain invariants (fewer than two
-// notes in a Chord, duplicate IDs, etc.), or when `project` does not own
-// the specified node/track/stave.  The returned command has not been
-// executed; the caller applies it through a CommandHistory.
+// Explicit voice-stream workflow: this is the composer's only path to
+// start a rhythmic line in a voice that has never held anything (a stave
+// always carries four structural VoiceContent slots, but an untouched one
+// is empty until something fills it, and every case above operates on an
+// *existing* event boundary that an empty voice does not have). When the
+// armed voice is entirely empty, `position` is matched against the onsets
+// of that voice's hypothetical measure-aligned rest fill
+// (decompose_measure_aligned_rests, voice_content.hpp -- the same
+// computation preview_note_entry above previews) rather than against any
+// existing event, and on a match the returned Command is a
+// CommandTransaction (command_transaction.hpp) composing, in order, a
+// CreateVoiceStreamCommand that materializes the fill followed by the same
+// SetEventCommand the non-empty path above would build at that onset.
+// Because SetEventCommand replaces by exact Rational position rather than
+// by id, it needs no knowledge of the ids CreateVoiceStreamCommand mints.
+// The transaction is one CommandHistory entry: a single undo removes the
+// note (or rest) and the entire stream together, returning the voice to
+// completely empty, exactly as if the composer had never clicked; redo is
+// id-for-id identical to the original execute. Arming kRest into an empty
+// voice still materializes the stream -- the result is simply a voice of
+// normalized rests -- rather than being special-cased into a no-op, so
+// arming a rest duration and clicking an empty voice has the same
+// voice-creating effect as arming a note.
+//
+// Returns nullptr when the armed voice is non-empty and no event starts at
+// `position` in it, when the armed voice is empty and `position` is not an
+// onset of its hypothetical measure-aligned fill (or that fill cannot be
+// produced exactly), when the armed voice is empty and the node has no
+// NodeTimeline (the non-empty path above never needs one, so this is a
+// failure mode unique to the empty-voice path), when armed.entry_kind is
+// kNote but candidate_pitch is absent, when the constructed replacement
+// would violate domain invariants (fewer than two notes in a Chord,
+// duplicate IDs, etc.), or when `project` does not own the specified
+// node/track/stave.  The non-empty path's behavior (including every
+// rejection above it) is unchanged by this addition: it still returns a
+// bare SetEventCommand, never a transaction.  The returned command has not
+// been executed; the caller applies it through a CommandHistory.
 //
 // This function is toolkit-neutral, consumes only the armed entry kind/
 // duration/voice and candidate pitch, and does not apply markings
