@@ -129,10 +129,43 @@ air-gapped host fails outright unless `BRAVURA_FONT_SRC` is already set.
 through independently of the `FetchContent` overrides above) whenever the
 main build tree was configured with the writer on.
 
+## Toolchain policy
+
+GraphScore builds with the **platform-native** Clang on each platform, at or
+above a declared floor. `cmake/CompilerGate.cmake` enforces the floor and
+fails configure with an actionable message; CI pins the exact toolchain.
+
+| Platform | Compiler | Floor | CI pin |
+|---|---|---|---|
+| macOS | Apple Clang | **17.0** (Xcode 16.3) | `macos-15` (Apple Clang 17), plus `macos-26` as a forward canary |
+| Linux | LLVM Clang | **18.0** | `clang-18`, registered as `clang`/`clang++` via `update-alternatives` |
+| Windows | clang-cl | **18.0** | Visual Studio image's bundled clang-cl |
+
+There is no single pinned version across platforms, because there is no
+Apple Clang 18 — Apple's version numbers are its own line and do not track
+upstream LLVM releases. Using upstream LLVM on macOS instead was considered
+and rejected: it would build the shipped Writer app and Runtime dylib with a
+non-Apple toolchain, taking on libc++ selection and rpath management.
+
+The floors are set by **observed** feature support, not by preference or by
+the LLVM version a release is nominally based on. Apple Clang 15 *and 16*
+both reject P1091R3 (lambda capture of a structured binding) despite being
+nominally LLVM 16/17-based; Apple Clang 17 is the first that accepts it.
+When raising or lowering a floor, probe the actual runners rather than
+reasoning from version numbers.
+
+Local development must also meet the floor: run `clang++ --version` and
+compare against the table. `macos-14` is **not** a supported build host — its
+newest Xcode is 16.2, still Apple Clang 16.
+
+This is separate from the pinned **clang-format 18** and **clang-tidy 18**
+above, which are analysis tools rather than compilers.
+
 ## C++23 and const-correctness
 
-- The project requires C++23 and Clang or AppleClang; other compilers fail
-  configure with an actionable message.
+- The project requires C++23 and Clang or AppleClang at or above the floor in
+  "Toolchain policy"; anything else fails configure with an actionable
+  message.
 - Prefer `constexpr`; otherwise `const`; mutable state requires a
   demonstrated need. The five accepted exception categories — realtime state,
   atomics, caches, platform handles, move-from sources and out-parameters —
@@ -248,19 +281,6 @@ rationale.
 - Windows arm64 and Linux arm64 are build-only in CI; native test execution
   is not required there. macOS arm64/x86-64 and Windows/Linux x86-64 build
   and run tests natively.
-- The oldest C++ toolchain in the matrix is the `macos-14` runner's Apple
-  Clang 15 (Xcode 15.4), used by the `macOS arm64 (Debug)` and
-  `macOS arm64 (Release)` jobs. It is the effective language floor: a local
-  build, and the `macos-latest` job, both run a much newer Apple Clang and
-  will happily accept C++20/23 constructs that Apple Clang 15 rejects. The
-  one that has actually bitten this repository is P1091R3 — **a structured
-  binding cannot be captured by a lambda**, so write
-  `const auto& pair = ...; const auto& id = pair.first;` rather than
-  `const auto& [id, other] = ...` whenever a lambda in the same scope
-  references the bound name. `src/notation/notation.cpp` carries the current
-  examples and a comment at each site. Nothing checks this locally, so a
-  change that compiles and tests clean on a dev machine can still fail those
-  two jobs.
 - The sanitizer and clang-tidy CI jobs configure with
   `-DGRAPHSCORE_BUILD_WRITER=OFF`. Instrumenting or analysing SDL3 costs most
   of those jobs' time on third-party code GraphScore does not own.

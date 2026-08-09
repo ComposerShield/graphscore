@@ -1905,13 +1905,7 @@ template <typename Record>
     group_begin = group_end;
   }
 
-  for (const auto& beam_pair : beam_pairs) {
-    // Bound to named locals rather than destructured: Apple Clang 15 (the
-    // oldest macOS toolchain in CI) does not implement P1091R3, so a
-    // structured binding cannot be captured by a lambda.
-    const NotationEntityId& left_id  = beam_pair.first;
-    const NotationEntityId& right_id = beam_pair.second;
-
+  for (const auto& [left_id, right_id] : beam_pairs) {
     const auto left_found = std::ranges::find_if(
         placements,
         [&](const auto& value) { return event_id(*value.event) == left_id; });
@@ -2121,12 +2115,7 @@ template <typename Record>
       if (record.event_index + 1 < events.size()) {
         const auto source_pitches = pitches(event);
         const auto target_pitches = pitches(events[record.event_index + 1]);
-        for (const auto& source_pitch : source_pitches) {
-          // Named locals, not a structured binding: see the beam-pair loop
-          // above for why these cannot be destructured here.
-          const NotationEntityId& note_id = source_pitch.first;
-          const SpelledPitch&     pitch   = source_pitch.second;
-
+        for (const auto& [note_id, pitch] : source_pitches) {
           const bool tied = std::visit(
               [&](const auto& concrete) {
                 using Event = std::decay_t<decltype(concrete)>;
@@ -2707,11 +2696,7 @@ NotationLayoutResult layout_internal(
 
   double system_y      = options.top_margin;
   double maximum_width = options.system_width;
-  for (const auto& system_range : ranges) {
-    // Named locals, not a structured binding: see the beam-pair loop above.
-    const std::size_t first = system_range.first;
-    const std::size_t end   = system_range.second;
-
+  for (const auto [first, end] : ranges) {
     double used_width = 0.0;
     for (std::size_t index = first; index < end; ++index) {
       used_width += widths[index];

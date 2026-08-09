@@ -62,7 +62,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install cpplint
           sudo apt-get update
-          sudo apt-get install -y clang-format-18 ninja-build
+          sudo apt-get install -y clang-18 clang-format-18 ninja-build
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
       - name: Configure
         run: >-
@@ -135,18 +137,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # macos-15 is the oldest image meeting the Apple Clang 17 floor
+          # (cmake/CompilerGate.cmake). Pinned so image promotion can't drift.
           - name: macOS arm64 (Debug)
-            runner: macos-14
+            runner: macos-15
             preset: debug
           - name: macOS arm64 (Release)
-            runner: macos-14
+            runner: macos-15
             preset: ci
           # Intel macOS retired by GitHub; M1 dropped it.
           # - name: macOS x86-64 (Release)
           #   runner: macos-13
           #   preset: ci
           - name: macOS arm64 (RelWithDebInfo, latest)
-            runner: macos-latest
+            runner: macos-26
             preset: ci
           - name: Linux x86-64 (Debug)
             runner: ubuntu-latest
@@ -173,11 +177,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            clang ninja-build \
+            clang-18 ninja-build \
             libx11-dev libxext-dev libxcursor-dev libxi-dev \
             libxfixes-dev libxrandr-dev \
             libwayland-dev wayland-protocols libxkbcommon-dev \
             libgl-dev mesa-common-dev
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
       - name: Install macOS toolchain
         if: runner.os == 'macOS'
@@ -257,11 +263,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            clang ninja-build \
+            clang-18 ninja-build \
             libx11-dev libxext-dev libxcursor-dev libxi-dev \
             libxfixes-dev libxrandr-dev \
             libwayland-dev wayland-protocols libxkbcommon-dev \
             libgl-dev mesa-common-dev
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
       - name: Install Windows toolchain
         if: runner.os == 'Windows'
@@ -293,7 +301,9 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang ninja-build
+          sudo apt-get install -y clang-18 ninja-build
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
       # A sanitizer only gives correct results when every translation unit in
       # the binary is instrumented, so cmake/Sanitizers.cmake instruments
@@ -337,7 +347,9 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang ninja-build
+          sudo apt-get install -y clang-18 ninja-build
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
       - name: Configure without the writer
         run: cmake --preset ci -DGRAPHSCORE_BUILD_WRITER=OFF
