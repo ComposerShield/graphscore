@@ -612,7 +612,9 @@ TEST(NotationLayoutTest, RejectsEveryInvalidSpacingRelationship) {
 }
 
 TEST(NotationLayoutTest, RejectsNonFiniteValueInEveryOption) {
-  constexpr double NotationLayoutOptions::* members[] = {
+  using OptionMember = double NotationLayoutOptions::*;
+
+  constexpr OptionMember members[] = {
       &NotationLayoutOptions::system_width,
       &NotationLayoutOptions::left_margin,
       &NotationLayoutOptions::right_margin,
@@ -624,7 +626,7 @@ TEST(NotationLayoutTest, RejectsNonFiniteValueInEveryOption) {
       &NotationLayoutOptions::minimum_measure_width,
       &NotationLayoutOptions::whole_note_spacing,
   };
-  for (double NotationLayoutOptions::* member : members) {
+  for (const OptionMember member : members) {
     NotationLayoutOptions options;
     options.*member = std::numeric_limits<double>::quiet_NaN();
     EXPECT_FALSE(options.valid());

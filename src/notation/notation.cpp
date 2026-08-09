@@ -1807,13 +1807,13 @@ template <typename Record>
                         pitch.letter())
                   : state->second;
           if (pitch.accidental() != prevailing) {
+            const auto overlaps_accidental = [&](double occupied_y) {
+              return std::abs(y - occupied_y) < space * 1.6;
+            };
             std::size_t column = 0;
             while (column < accidental_columns.size() &&
-                   std::ranges::any_of(
-                       accidental_columns[column],
-                       [&](double occupied_y) {
-                         return std::abs(y - occupied_y) < space * 1.6;
-                       })) {
+                   std::ranges::any_of(accidental_columns[column],
+                                       overlaps_accidental)) {
               ++column;
             }
             if (column == accidental_columns.size()) {
@@ -2270,15 +2270,15 @@ template <typename Record>
             event_duration(events[local_events[end].event_index]).resolved();
         ++end;
       }
+      const auto is_incomplete_tuplet_diagnostic = [&](const auto& diagnostic) {
+        return diagnostic.entity_id == first_record.id &&
+               diagnostic.code ==
+                   NotationDiagnosticCode::kIncompleteTupletGroup;
+      };
       if (ratio.has_value() && run_end > system_start &&
           run_start < system_end &&
-          !std::ranges::any_of(
-              voice_indexed.diagnostics,
-              [&](const auto& diagnostic) {
-                return diagnostic.entity_id == first_record.id &&
-                       diagnostic.code ==
-                           NotationDiagnosticCode::kIncompleteTupletGroup;
-              })) {
+          !std::ranges::any_of(voice_indexed.diagnostics,
+                               is_incomplete_tuplet_diagnostic)) {
         const NotationEntityId id = first_record.id;
         const double y = staff.bounds.y - space * (2.5 + voice_index * 0.7);
         builder.add_line(make_id(id, "tuplet/bracket"), {span_x(run_start), y},
