@@ -30,7 +30,7 @@ Provide a polished, directly editable focused notation system inside a node, wit
 
 ### Note palette and pointer entry
 
-- [ ] Palette controls for durations through sixty-fourth, dots, rests, voices, tuplets, ties/slurs, articulations, dynamics, and other in-scope markings.
+- [x] Palette controls for durations through sixty-fourth, dots, rests, voices, tuplets, ties/slurs, articulations, dynamics, and other in-scope markings. **(Toolkit-neutral palette state model only: `NotePaletteState`/`NotePaletteEntrySpec` in `graphscore_notation`. Applying an armed control to the score is deliberately deferred — durations/dots/rests to the pointer-entry bullets below, voices likewise, tuplets and every marking to Structural editing.)**
 - [ ] Show a yellow semitransparent note/rest preview at the candidate staff pitch and nearest valid onset before click.
 - [ ] Clicking an existing rhythmic event in the selected voice changes its selected duration; clicking another pitch at the onset builds a chord.
 - [ ] Replacing/shortening material creates normalized automatic rests rather than overlaps or implicit gaps.

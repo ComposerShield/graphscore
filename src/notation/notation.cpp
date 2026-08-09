@@ -3213,4 +3213,28 @@ void NotationLayoutCache::reset() noexcept {
   impl_->initialized = false;
 }
 
+std::vector<Articulation> NotePaletteState::armed_articulations() const {
+  std::vector<Articulation> armed;
+  for (const Articulation articulation : kAllArticulations) {
+    if (has_articulation(articulation))
+      armed.push_back(articulation);
+  }
+  return armed;
+}
+
+NotePaletteEntrySpec NotePaletteState::next_entry_spec() const {
+  return NotePaletteEntrySpec{
+      .duration      = resolved_duration(),
+      .entry_kind    = entry_kind(),
+      .voice         = voice(),
+      .articulations = armed_articulations(),
+      .dynamic       = dynamic(),
+      .hairpin       = hairpin_direction(),
+      .tie_to_next   = tie_to_next_armed(),
+      .slur          = slur_armed(),
+      .pedal         = pedal_armed(),
+      .beam_override = beam_override_kind(),
+  };
+}
+
 }  // namespace graphscore

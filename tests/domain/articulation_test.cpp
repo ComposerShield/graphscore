@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include <graphscore/domain/graphscore_domain.hpp>
@@ -13,6 +15,8 @@ using graphscore::Duration;
 using graphscore::event_articulations;
 using graphscore::event_stem;
 using graphscore::is_duration_articulation;
+using graphscore::kAllArticulations;
+using graphscore::kArticulationCount;
 using graphscore::Letter;
 using graphscore::make_chord;
 using graphscore::make_note;
@@ -41,6 +45,15 @@ TEST(ArticulationTest, IsDurationArticulationIdentifiesTheThreeConflicting) {
   EXPECT_TRUE(is_duration_articulation(Articulation::kTenuto));
   EXPECT_FALSE(is_duration_articulation(Articulation::kAccent));
   EXPECT_FALSE(is_duration_articulation(Articulation::kMarcato));
+}
+
+TEST(ArticulationTest, KAllArticulationsCoversEveryEnumeratorInOrderOnce) {
+  EXPECT_EQ(kArticulationCount,
+            static_cast<std::uint8_t>(kAllArticulations.size()));
+  for (std::size_t i = 0; i < kAllArticulations.size(); ++i) {
+    EXPECT_EQ(static_cast<std::uint8_t>(kAllArticulations[i]),
+              static_cast<std::uint8_t>(i));
+  }
 }
 
 TEST(ArticulationTest, NoteAttachesSingleArticulation) {

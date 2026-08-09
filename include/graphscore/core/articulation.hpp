@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 
 namespace graphscore {
@@ -17,6 +18,21 @@ enum class Articulation : std::uint8_t {
   kStaccatissimo,
   kTenuto,
 };
+
+// The single source of truth for "every Articulation enumerator", so
+// call sites that must reason over all of them (e.g.
+// graphscore::NotePaletteState::armed_articulations()) derive from this
+// array instead of maintaining their own copy of the enumerator list that
+// could go stale relative to this one. Order is the enumerator declaration
+// order above.
+inline constexpr std::array<Articulation, 5> kAllArticulations = {
+    Articulation::kAccent,   Articulation::kMarcato,
+    Articulation::kStaccato, Articulation::kStaccatissimo,
+    Articulation::kTenuto,
+};
+
+inline constexpr std::uint8_t kArticulationCount =
+    static_cast<std::uint8_t>(kAllArticulations.size());
 
 // Staccato, staccatissimo, and tenuto all shorten or lengthen a note's
 // sounded duration and are mutually exclusive on one event; accent and
