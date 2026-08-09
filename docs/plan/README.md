@@ -179,7 +179,7 @@ Writer-only data must never appear in a cooked runtime asset unless it is requir
 
 ## Milestone Roadmap
 
-Progress is tracked in the source-controlled [execution checklist](CHECKLIST.md). Every milestone and major implementation/test step has its own task box; check a step only after all detailed bullets in its linked section are complete.
+Progress is tracked in the source-controlled [execution checklist](CHECKLIST.md). Every milestone and major implementation/test step has its own task box; check a step after all detailed bullets in its linked section are complete, and record completed increments short of that as checked indented sub-entries so partial progress stays visible rather than reading as untouched.
 
 | Milestone | Outcome |
 | --- | --- |

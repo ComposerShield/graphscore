@@ -314,8 +314,9 @@ rationale.
 - [docs/plan/README.md](docs/plan/README.md) — product vision, locked
   decisions, milestone roadmap.
 - [docs/plan/CHECKLIST.md](docs/plan/CHECKLIST.md) — source-controlled
-  execution checklist; check a box only once every detailed deliverable in
-  its linked section is done.
+  execution checklist; check a step box once every detailed deliverable in
+  its linked section is done, and record completed increments short of that
+  as checked indented sub-entries so partial progress stays visible.
 - [docs/plan/01-toolchain-ci.md](docs/plan/01-toolchain-ci.md) — this
   milestone's deliverables and acceptance criteria in full.
 - [docs/decisions/0003-architecture-target-dag.md](docs/decisions/0003-architecture-target-dag.md)
