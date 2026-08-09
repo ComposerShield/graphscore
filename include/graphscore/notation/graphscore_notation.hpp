@@ -719,4 +719,69 @@ static_assert(NotePaletteState()
                   .with_articulation_armed(Articulation::kAccent)
                   .has_value());
 
+// The pointer-entry preview from "Note palette and pointer entry"
+// (docs/plan/05-notation-editor.md): a note/rest glyph plus dots shown at
+// the candidate staff pitch and nearest valid onset before the composer
+// clicks. `commands` is a standalone list, deliberately never appended to
+// NotationLayout::commands: NotationCommand carries no color or alpha
+// field, and ADR 0003 forbids graphscore_notation from depending on
+// graphscore_rendering, where RgbaColor lives. So the preview's documented
+// yellow, semitransparent appearance is not a property of these commands --
+// it belongs to a later, separate rasterize_notation pass over `commands`
+// with its own yellow, semitransparent RasterOptions, kept apart from the
+// opaque pass that rasterizes NotationLayout::commands. Producing a preview
+// never mutates the Project, the NotationLayout it reads bounds from, or
+// any cache.
+struct NotationPreview {
+  std::vector<NotationCommand> commands;
+  TrackId                      track_id;
+  StaveId                      stave_id;
+  Voice                        voice;
+  NotePaletteEntryKind         entry_kind = NotePaletteEntryKind::kNote;
+
+  // The staff step the pointer resolves to, always spelled natural: a click
+  // selects a diatonic staff position, never an accidental, so this never
+  // carries invented accidental inference. Meaningful only when entry_kind
+  // is kNote -- a Rest has no pitch, so a rest preview always leaves this
+  // std::nullopt rather than reporting a placeholder staff position as
+  // though it meant something.
+  std::optional<SpelledPitch> candidate_pitch;
+
+  // The nearest existing rhythmic-event onset (including a normalized rest)
+  // in the armed voice/measure the pointer resolves to. There is no metric
+  // grid derived from the armed duration: a measure covered by one
+  // whole-measure rest offers exactly one onset (its own start), so any
+  // click within it previews at the measure start.
+  Rational candidate_onset;
+
+  [[nodiscard]] bool operator==(const NotationPreview&) const = default;
+
+  // Applies the same finiteness/bound rules
+  // NotationLayout::geometry_is_finite() applies to its own commands, so
+  // preview geometry can be validated the same way without folding preview
+  // commands into a real layout.
+  [[nodiscard]] bool geometry_is_finite() const;
+};
+
+// Resolves `point` against `layout` (produced by a prior layout_notation()/
+// NotationLayoutCache::update() call for the same project/node) to a
+// candidate staff pitch/rest position and nearest valid onset, and builds
+// the standalone preview geometry for what `palette` would insert there.
+// `palette`'s duration, dots, note-vs-rest kind, and voice are the sole
+// source of truth for what would be entered; this never re-derives them.
+//
+// Returns std::nullopt when `point` falls outside every system, when it
+// falls outside every staff's own ledger/marking lane (the staff's five
+// lines plus a bounded allowance above and below, matching the layout's own
+// marking budget -- never an unbounded nearest-staff guess across the far
+// larger system extent), when the armed voice has no onset at all within
+// the resolved measure (an empty voice, or a measure with no event boundary
+// in it for that voice), or when (kNote only) the resolved staff step falls
+// outside SpelledPitch's valid octave range -- never a clamped value in any
+// of these cases. A pure query: never mutates `project`, `layout`, or any
+// cache.
+[[nodiscard]] std::optional<NotationPreview> preview_note_entry(
+    const Project& project, const NotationLayout& layout,
+    const NotePaletteState& palette, NotationPoint point);
+
 }  // namespace graphscore

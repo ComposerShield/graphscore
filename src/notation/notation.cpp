@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -1120,19 +1121,21 @@ void append_fragment(NotationLayout& output, const SystemFragment& fragment) {
   return staff_top + kVoiceOffsets[voice.index() - Voice::kMin] * staff_space;
 }
 
-[[nodiscard]] double position_x(const MeasureMap&          measures,
-                                const std::vector<double>& widths,
-                                std::size_t measure_index, Rational position,
-                                double measure_x, double staff_space) noexcept {
-  const Rational within = position - measures.measure_start(measure_index);
-  const double   fraction =
-      within.to_double() / measures.measure_length(measure_index).to_double();
+// The horizontal space `position_x`/`time_at_x` reserve at the head of a
+// measure for its clef/key/time-signature glyphs, before the rhythmic span
+// begins. Shared so the pointer-entry preview's x<->time mapping stays
+// exactly reproducible from the layout it reads, never a separate
+// approximation of it.
+[[nodiscard]] double measure_leading_width(const MeasureMap& measures,
+                                           std::size_t       measure_index,
+                                           double            measure_width,
+                                           double staff_space) noexcept {
   const Measure& measure       = measures.measure(measure_index);
   const double   digit_columns = static_cast<double>(
       std::max(std::to_string(measure.time_signature.numerator()).size(),
                  std::to_string(measure.time_signature.denominator()).size()));
-  const double leading = std::min(
-      widths[measure_index] - staff_space * 2.0,
+  return std::min(
+      measure_width - staff_space * 2.0,
       staff_space *
           (6.5 +
            1.5 * (std::abs(static_cast<int>(measure.key_signature.fifths())) +
@@ -1144,9 +1147,47 @@ void append_fragment(NotationLayout& output, const SystemFragment& fragment) {
                                  .key_signature.fifths()))
                        : 0)) +
            1.5 * digit_columns));
+}
+
+[[nodiscard]] double position_x(const MeasureMap& measures,
+                                std::size_t measure_index, double measure_width,
+                                Rational position, double measure_x,
+                                double staff_space) noexcept {
+  const Rational within = position - measures.measure_start(measure_index);
+  const double   fraction =
+      within.to_double() / measures.measure_length(measure_index).to_double();
+  const double leading = measure_leading_width(measures, measure_index,
+                                               measure_width, staff_space);
   const double rhythmic_width =
-      std::max(staff_space, widths[measure_index] - leading - staff_space);
+      std::max(staff_space, measure_width - leading - staff_space);
   return measure_x + leading + rhythmic_width * fraction;
+}
+
+[[nodiscard]] double position_x(const MeasureMap&          measures,
+                                const std::vector<double>& widths,
+                                std::size_t measure_index, Rational position,
+                                double measure_x, double staff_space) noexcept {
+  return position_x(measures, measure_index, widths[measure_index], position,
+                    measure_x, staff_space);
+}
+
+// The exact inverse of position_x(): the musical time at horizontal position
+// `x` within the measure at `measure_index`, clamped to the measure's own
+// rhythmic span (never before/after it, matching position_x's own domain).
+[[nodiscard]] double time_at_x(const MeasureMap& measures,
+                               std::size_t measure_index, double x,
+                               double measure_x, double measure_width,
+                               double staff_space) noexcept {
+  const double leading = measure_leading_width(measures, measure_index,
+                                               measure_width, staff_space);
+  const double rhythmic_width =
+      std::max(staff_space, measure_width - leading - staff_space);
+  const double fraction =
+      rhythmic_width > 0.0
+          ? std::clamp((x - measure_x - leading) / rhythmic_width, 0.0, 1.0)
+          : 0.0;
+  return measures.measure_start(measure_index).to_double() +
+         fraction * measures.measure_length(measure_index).to_double();
 }
 
 [[nodiscard]] bool add_signature_glyphs(
@@ -1293,6 +1334,41 @@ void append_fragment(NotationLayout& output, const SystemFragment& fragment) {
          static_cast<double>(clef_middle_line(clef) - diatonic_index(pitch)) *
              space * 0.5 +
          space * 2.0;
+}
+
+// The exact inverse of pitch_y(): the natural diatonic staff step nearest
+// `y`, spelled with Accidental::kNatural (a staff position selects a step,
+// never an accidental). Returns std::nullopt rather than a clamped value
+// when the nearest step's octave falls outside SpelledPitch's valid
+// [kMinOctave, kMaxOctave] range, when `space` is not strictly positive, or
+// when any input is non-finite.
+[[nodiscard]] std::optional<SpelledPitch> spelled_pitch_at(
+    double y, Clef clef, double top, double space) noexcept {
+  if (!(space > 0.0) || !std::isfinite(y) || !std::isfinite(top)) {
+    return std::nullopt;
+  }
+  const double raw = static_cast<double>(clef_middle_line(clef)) -
+                     (y - top - space * 2.0) * 2.0 / space;
+  if (!std::isfinite(raw) || std::abs(raw) > 1e6) {
+    return std::nullopt;
+  }
+  const std::int64_t step         = std::llround(raw);
+  std::int64_t       octave_plus1 = step / 7;
+  std::int64_t       letter_index = step % 7;
+  if (letter_index < 0) {
+    --octave_plus1;
+    letter_index += 7;
+  }
+  const std::int64_t octave = octave_plus1 - 1;
+  if (octave < SpelledPitch::kMinOctave || octave > SpelledPitch::kMaxOctave) {
+    return std::nullopt;
+  }
+  constexpr std::array<Letter, 7> kLettersFromC = {
+      Letter::kC, Letter::kD, Letter::kE, Letter::kF,
+      Letter::kG, Letter::kA, Letter::kB};
+  return SpelledPitch::create(
+      kLettersFromC[static_cast<std::size_t>(letter_index)],
+      static_cast<std::int8_t>(octave), Accidental::kNatural);
 }
 
 [[nodiscard]] SmuflGlyph notehead_glyph(NoteValue value) noexcept {
@@ -2402,6 +2478,37 @@ template <typename Record>
   return NotationLayoutResult{error, std::nullopt};
 }
 
+// Shared per-command finiteness rule behind both NotationLayout::
+// geometry_is_finite() and NotationPreview::geometry_is_finite(), so a
+// preview's standalone command list can be validated the same way without
+// folding it into a real NotationLayout.
+[[nodiscard]] bool finite_command(const NotationCommand& command) {
+  return std::visit(
+      [](const auto& concrete) {
+        using Command = std::decay_t<decltype(concrete)>;
+        if constexpr (std::is_same_v<Command, GlyphCommand>) {
+          return finite_point(concrete.origin) &&
+                 std::isfinite(concrete.staff_space) &&
+                 concrete.staff_space > 0.0;
+        } else if constexpr (std::is_same_v<Command, LineCommand>) {
+          return finite_point(concrete.from) && finite_point(concrete.to) &&
+                 std::isfinite(concrete.width) && concrete.width >= 0.0;
+        } else if constexpr (std::is_same_v<Command, PathCommand>) {
+          return std::isfinite(concrete.stroke_width) &&
+                 concrete.stroke_width >= 0.0 &&
+                 std::all_of(concrete.elements.begin(), concrete.elements.end(),
+                             [](const PathElement& element) {
+                               return finite_point(element.control1) &&
+                                      finite_point(element.control2) &&
+                                      finite_point(element.end);
+                             });
+        } else {
+          return finite_rect(concrete.bounds);
+        }
+      },
+      command);
+}
+
 [[nodiscard]] bool geometry_is_bounded(const NotationLayout& layout) {
   if (!bounded_rect(layout.bounds) ||
       !std::ranges::all_of(
@@ -2594,35 +2701,11 @@ bool NotationLayout::geometry_is_finite() const {
           [](const HitRegion& region) { return finite_rect(region.bounds); })) {
     return false;
   }
-  return std::all_of(
-      commands.begin(), commands.end(), [](const NotationCommand& command) {
-        return std::visit(
-            [](const auto& concrete) {
-              using Command = std::decay_t<decltype(concrete)>;
-              if constexpr (std::is_same_v<Command, GlyphCommand>) {
-                return finite_point(concrete.origin) &&
-                       std::isfinite(concrete.staff_space) &&
-                       concrete.staff_space > 0.0;
-              } else if constexpr (std::is_same_v<Command, LineCommand>) {
-                return finite_point(concrete.from) &&
-                       finite_point(concrete.to) &&
-                       std::isfinite(concrete.width) && concrete.width >= 0.0;
-              } else if constexpr (std::is_same_v<Command, PathCommand>) {
-                return std::isfinite(concrete.stroke_width) &&
-                       concrete.stroke_width >= 0.0 &&
-                       std::all_of(concrete.elements.begin(),
-                                   concrete.elements.end(),
-                                   [](const PathElement& element) {
-                                     return finite_point(element.control1) &&
-                                            finite_point(element.control2) &&
-                                            finite_point(element.end);
-                                   });
-              } else {
-                return finite_rect(concrete.bounds);
-              }
-            },
-            command);
-      });
+  return std::all_of(commands.begin(), commands.end(), finite_command);
+}
+
+bool NotationPreview::geometry_is_finite() const {
+  return std::all_of(commands.begin(), commands.end(), finite_command);
 }
 
 bool NotationLayoutOptions::valid() const noexcept {
@@ -3235,6 +3318,169 @@ NotePaletteEntrySpec NotePaletteState::next_entry_spec() const {
       .pedal         = pedal_armed(),
       .beam_override = beam_override_kind(),
   };
+}
+
+std::optional<NotationPreview> preview_note_entry(
+    const Project& project, const NotationLayout& layout,
+    const NotePaletteState& palette, NotationPoint point) {
+  if (!finite_point(point)) {
+    return std::nullopt;
+  }
+  const SystemLayout* system = nullptr;
+  for (const SystemLayout& candidate : layout.systems) {
+    if (candidate.bounds.contains(point)) {
+      system = &candidate;
+      break;
+    }
+  }
+  if (system == nullptr) {
+    return std::nullopt;
+  }
+
+  // The nearest staff by vertical center, not strict containment: a click
+  // in the ledger-line/marking lane above or below a staff's own five lines
+  // must still resolve to that staff. But SystemLayout::bounds reserves a
+  // large per-system marking budget (system_top_padding plus a
+  // staff_slot_height per stave, up to 256 staff-spaces for a single-staff
+  // system) so system containment alone is not a bounded proximity check --
+  // a click far below every staff, still inside that oversized system
+  // extent, must not silently attribute to the nearest one. kLedgerLaneSpaces
+  // matches system_top_padding's own six-staff-space marking budget: the
+  // window a click may fall in above/below a staff's own five lines and
+  // still resolve to it.
+  constexpr double         kLedgerLaneSpaces = 6.0;
+  const StaffSystemLayout* staff             = nullptr;
+  double staff_distance = std::numeric_limits<double>::infinity();
+  for (const StaffSystemLayout& candidate : system->staves) {
+    const double candidate_space = candidate.bounds.height / 4.0;
+    const double allowed =
+        candidate.bounds.height * 0.5 + kLedgerLaneSpaces * candidate_space;
+    const double center   = candidate.bounds.y + candidate.bounds.height * 0.5;
+    const double distance = std::abs(point.y - center);
+    if (distance <= allowed && distance < staff_distance) {
+      staff_distance = distance;
+      staff          = &candidate;
+    }
+  }
+  if (staff == nullptr) {
+    return std::nullopt;
+  }
+
+  const MeasureLayout* measure = nullptr;
+  for (const MeasureLayout& candidate : system->measures) {
+    if (point.x >= candidate.bounds.x &&
+        point.x <= candidate.bounds.x + candidate.bounds.width) {
+      measure = &candidate;
+      break;
+    }
+  }
+  if (measure == nullptr) {
+    return std::nullopt;
+  }
+
+  const Node* node = project.find_node(layout.node_id);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  const NodeTimeline* timeline = node->timeline();
+  if (timeline == nullptr) {
+    return std::nullopt;
+  }
+  const MeasureMap& measures = timeline->measures();
+  if (measure->ordinal >= measures.measure_count()) {
+    return std::nullopt;
+  }
+  const TrackLane* lane = node->lane(staff->track_id);
+  if (lane == nullptr) {
+    return std::nullopt;
+  }
+  const StaveVoices* voices = lane->stave(staff->stave_id);
+  if (voices == nullptr) {
+    return std::nullopt;
+  }
+  const VoiceContent& content = voices->voice(palette.voice());
+
+  const Rational measure_start  = measures.measure_start(measure->ordinal);
+  const Rational measure_length = measures.measure_length(measure->ordinal);
+  const double   staff_space    = staff->bounds.height / 4.0;
+  const double   reference_time =
+      time_at_x(measures, measure->ordinal, point.x, measure->bounds.x,
+                measure->bounds.width, staff_space);
+
+  // Snaps to the start of an existing rhythmic event (including a
+  // normalized rest) in the armed voice, scoped to the resolved measure --
+  // never a metric grid derived from the armed duration. Events are
+  // visited in onset order, and only a strictly smaller distance replaces
+  // the current best, so on an exact tie the earlier onset wins
+  // deterministically.
+  bool     found_onset   = false;
+  double   best_distance = std::numeric_limits<double>::infinity();
+  Rational resolved_onset;
+  Rational onset;
+  for (const VoiceEvent& event : content.events()) {
+    if (onset >= measure_start && onset < measure_start + measure_length) {
+      const double distance = std::abs(onset.to_double() - reference_time);
+      if (distance < best_distance) {
+        best_distance  = distance;
+        resolved_onset = onset;
+        found_onset    = true;
+      }
+    }
+    onset = onset + event_duration(event).resolved();
+  }
+  if (!found_onset) {
+    return std::nullopt;
+  }
+
+  const ClefLane* clef_lane = timeline->clef_lane(staff->stave_id);
+  const Clef      clef =
+      clef_lane == nullptr ? Clef::kTreble : clef_lane->clef_at(resolved_onset);
+
+  const double glyph_x =
+      position_x(measures, measure->ordinal, measure->bounds.width,
+                 resolved_onset, measure->bounds.x, staff_space);
+
+  NotationPreview preview;
+  preview.track_id        = staff->track_id;
+  preview.stave_id        = staff->stave_id;
+  preview.voice           = palette.voice();
+  preview.entry_kind      = palette.entry_kind();
+  preview.candidate_onset = resolved_onset;
+
+  double glyph_y = 0.0;
+  if (palette.entry_kind() == NotePaletteEntryKind::kNote) {
+    const std::optional<SpelledPitch> candidate_pitch =
+        spelled_pitch_at(point.y, clef, staff->bounds.y, staff_space);
+    if (!candidate_pitch.has_value()) {
+      return std::nullopt;
+    }
+    preview.candidate_pitch = candidate_pitch;
+    glyph_y = pitch_y(*candidate_pitch, clef, staff->bounds.y, staff_space);
+  } else {
+    glyph_y = event_y(palette.voice(), staff->bounds.y, staff_space);
+  }
+  if (!bounded_point({glyph_x, glyph_y})) {
+    return std::nullopt;
+  }
+
+  const NoteValue base_value = palette.resolved_duration().base();
+  const bool      is_note = palette.entry_kind() == NotePaletteEntryKind::kNote;
+  const char32_t  code_point = smufl_codepoint(
+      is_note ? notehead_glyph(base_value) : rest_glyph(base_value));
+  preview.commands.emplace_back(
+      GlyphCommand{make_id("preview", is_note ? "notehead" : "rest"),
+                   code_point,
+                   {glyph_x, glyph_y},
+                   staff_space});
+  for (std::uint8_t dot = 0; dot < palette.dots(); ++dot) {
+    preview.commands.emplace_back(
+        GlyphCommand{make_id("preview", "dot/" + std::to_string(dot)),
+                     smufl_codepoint(SmuflGlyph::kAugmentationDot),
+                     {glyph_x + staff_space * (1.2 + dot * 0.65),
+                      glyph_y - staff_space * 0.25},
+                     staff_space});
+  }
+  return preview;
 }
 
 }  // namespace graphscore

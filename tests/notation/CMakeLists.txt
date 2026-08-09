@@ -3,6 +3,7 @@
 add_executable(graphscore_notation_test
   notation_test.cpp
   note_palette_test.cpp
+  note_preview_test.cpp
 )
 
 target_compile_features(graphscore_notation_test PRIVATE cxx_std_23)
