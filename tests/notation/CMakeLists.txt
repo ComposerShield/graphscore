@@ -2,6 +2,7 @@
 
 add_executable(graphscore_notation_test
   notation_test.cpp
+  note_audition_test.cpp
   note_entry_test.cpp
   note_palette_test.cpp
   note_preview_test.cpp

@@ -876,4 +876,67 @@ struct NotationPreview {
     Rational position, const NotePaletteEntrySpec& armed,
     std::optional<SpelledPitch> candidate_pitch);
 
+// The short audition request for the same note-entry pointer action
+// make_note_entry_command above builds a command for
+// (docs/plan/05-notation-editor.md: "Newly inserted or pitch-edited notes
+// issue a short preview request; actual plugin audition is connected in
+// Milestone 08"). The parameter list mirrors make_note_entry_command's
+// exactly so a caller invokes both with the same arguments; this milestone
+// produces the request as a value and nothing plays it, so there is no
+// consumer in this repository yet -- graphscore_writer_audio picks it up in
+// Milestone 08 (ADR 0003 assigns "note-preview insertion audition" there,
+// which is also why NoteAuditionRequest itself is declared in
+// graphscore_core rather than here; see core/note_audition.hpp).
+//
+// A pure query: it never mutates `project` and builds no command. It is
+// evaluated against the PRE-execution project state, i.e. a caller calls it
+// before executing make_note_entry_command's command, since it reads the
+// event currently at `position` to decide what the click newly sounds.
+//
+// Both functions resolve the click through one shared internal branch
+// resolution, so they can never disagree about which case a click falls
+// into. What each branch auditions:
+//
+//   * a new note into an entirely empty armed voice: the one new pitch;
+//   * a rest replaced by a note: the one new pitch;
+//   * a note promoted to a two-note chord: BOTH pitches;
+//   * a notehead added to an existing chord: EVERY pitch of the resulting
+//     chord, pre-existing ones included;
+//   * a same-pitch click on a note, or a duplicate-pitch click on a chord
+//     (both pure duration changes): std::nullopt;
+//   * armed.entry_kind == kRest: std::nullopt;
+//   * any input make_note_entry_command rejects (returns nullptr for):
+//     std::nullopt.
+//
+// The two product decisions behind that table, in the composer's terms:
+// adding a pitch to a chord auditions the WHOLE resulting chord, because
+// the composer is building a harmony and wants to hear it rather than the
+// single pitch they clicked; and a pure duration change is SILENT, because
+// no pitch was inserted and none changed, so clicking through rhythms on
+// one note never re-sounds it.
+//
+// Velocity is velocity_for_dynamic(project.default_dynamic())
+// (core/playback_mapping.hpp) and nothing more. Accent/marcato emphasis
+// (apply_emphasis), hairpin interpolation, and resolving whichever
+// DynamicMarking actually governs `position` in the timeline are all
+// deliberately NOT applied: armed articulations and markings are not yet
+// applied on note entry at all (see make_note_entry_command's last
+// paragraph -- that is Structural editing scope), and position-based
+// dynamic-context resolution is explicitly outside playback_mapping.hpp's
+// own scope ("Scope: math only, not context resolution"). When a later
+// phase resolves governing context across a timeline, this call site is
+// where the richer resolution belongs.
+//
+// Pitch conversion: SpelledPitch::to_midi_pitch() (core/spelled_pitch.hpp)
+// fails at extreme octaves. When the NEWLY INSERTED pitch does not convert,
+// this returns std::nullopt outright -- there is nothing meaningful to
+// audition. Otherwise every pre-existing chord pitch that converts is
+// included and any that does not is silently skipped, so one unsoundable
+// notehead already in a chord never suppresses the audition of the pitch
+// the composer just added.
+[[nodiscard]] std::optional<NoteAuditionRequest> audition_for_note_entry(
+    const Project& project, NodeId node_id, TrackId track_id, StaveId stave_id,
+    Rational position, const NotePaletteEntrySpec& armed,
+    std::optional<SpelledPitch> candidate_pitch);
+
 }  // namespace graphscore

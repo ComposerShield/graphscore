@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <iterator>
@@ -3514,128 +3515,143 @@ std::optional<NotationPreview> preview_note_entry(
   return preview;
 }
 
-std::unique_ptr<Command> make_note_entry_command(
+namespace {
+
+// The one case a note-entry click resolves to. Branch selection lives
+// solely in resolve_note_entry below, and both make_note_entry_command and
+// audition_for_note_entry consume its result, so the command a click builds
+// and the audition it requests can never disagree about which case the
+// click fell into.
+enum class NoteEntryBranch : std::uint8_t {
+  kCreateStreamRest,   // entirely empty armed voice, kRest armed
+  kCreateStreamNote,   // entirely empty armed voice, kNote armed
+  kRestDurationOnly,   // existing Rest, kRest armed
+  kEventToRest,        // existing Note/Chord, kRest armed
+  kRestToNote,         // existing Rest, kNote armed
+  kNoteDurationOnly,   // existing Note, same pitch clicked
+  kNoteToChord,        // existing Note, different pitch clicked
+  kChordDurationOnly,  // existing Chord, pitch already present
+  kChordExtension,     // existing Chord, new pitch clicked
+};
+
+struct NoteEntryResolution {
+  NoteEntryBranch branch = NoteEntryBranch::kCreateStreamRest;
+
+  // The event currently at the clicked position, owned by the project's own
+  // VoiceContent. Null on the two kCreateStream* branches, where the armed
+  // voice is entirely empty and there is no event to replace.
+  const VoiceEvent* existing = nullptr;
+
+  // The pitches this click makes newly audible, with the NEWLY INSERTED
+  // pitch first and every retained pre-existing chord pitch after it.
+  // Empty on every branch that introduces no new sounding pitch (both
+  // duration-only branches and every kRest branch), which is exactly when
+  // audition_for_note_entry returns no request.
+  std::vector<SpelledPitch> sounding_pitches;
+
+  // The pitch the click inserts. Precondition: this is one of the four
+  // pitch-inserting branches, equivalently !sounding_pitches.empty(). Both
+  // entry points read the inserted pitch from here rather than from their
+  // own std::optional<SpelledPitch> parameter, so the command and the
+  // audition are built from literally the same value and neither has to
+  // re-establish that the caller supplied one.
+  [[nodiscard]] const SpelledPitch& inserted_pitch() const {
+    assert(!sounding_pitches.empty());
+    return sounding_pitches.front();
+  }
+};
+
+// Resolves a note-entry click into its single branch. A pure query: it
+// never mutates `project`. Returns std::nullopt for exactly the inputs
+// make_note_entry_command rejects with nullptr.
+[[nodiscard]] std::optional<NoteEntryResolution> resolve_note_entry(
     const Project& project, NodeId node_id, TrackId track_id, StaveId stave_id,
     Rational position, const NotePaletteEntrySpec& armed,
-    std::optional<SpelledPitch> candidate_pitch) {
+    const std::optional<SpelledPitch>& candidate_pitch) {
   const Node* node = project.find_node(node_id);
   if (node == nullptr)
-    return nullptr;
+    return std::nullopt;
   const TrackLane* lane = node->lane(track_id);
   if (lane == nullptr)
-    return nullptr;
+    return std::nullopt;
   const StaveVoices* stave = lane->stave(stave_id);
   if (stave == nullptr)
-    return nullptr;
+    return std::nullopt;
   const VoiceContent& content = stave->voice(armed.voice);
 
   // Explicit voice-stream workflow: the armed voice has never held
   // anything, so there is no existing event boundary to click on. Match
   // `position` against the onsets of the same hypothetical measure-aligned
-  // rest fill preview_note_entry previews, and if it matches, return one
+  // rest fill preview_note_entry previews; on a match the caller builds one
   // CommandTransaction that creates the stream and then replaces the rest
-  // at `position` -- a single undoable action that either succeeds
-  // completely or leaves the project untouched.
+  // at `position`. Only the fill's onset shape is read here, never the Rest
+  // ids, so this calls the duration-only core
+  // (decompose_measure_aligned_rest_durations) exactly as
+  // preview_note_entry does rather than
+  // decompose_measure_aligned_rests, whose freshly minted ids were
+  // discarded unused on this path; both derive from the same tiling and so
+  // can never disagree on shape.
   if (content.events().empty()) {
     const NodeTimeline* timeline = node->timeline();
     if (timeline == nullptr)
-      return nullptr;
-    const std::optional<std::vector<Rest>> hypothetical_fill =
-        decompose_measure_aligned_rests(*timeline);
+      return std::nullopt;
+    const std::optional<std::vector<Duration>> hypothetical_fill =
+        decompose_measure_aligned_rest_durations(*timeline);
     if (!hypothetical_fill.has_value())
-      return nullptr;
+      return std::nullopt;
 
     bool     position_is_an_onset = false;
     Rational onset;
-    for (const Rest& rest : *hypothetical_fill) {
+    for (const Duration& rest_duration : *hypothetical_fill) {
       if (onset == position) {
         position_is_an_onset = true;
         break;
       }
-      onset = onset + rest.duration.resolved();
+      onset = onset + rest_duration.resolved();
     }
     if (!position_is_an_onset)
-      return nullptr;
+      return std::nullopt;
 
-    VoiceEvent new_event;
-    if (armed.entry_kind == NotePaletteEntryKind::kRest) {
-      new_event = make_rest(armed.duration);
-    } else {
-      if (!candidate_pitch.has_value())
-        return nullptr;
-      new_event = make_note(*candidate_pitch, armed.duration);
-    }
-
-    auto transaction = std::make_unique<CommandTransaction>();
-    if (!transaction
-             ->add_command(std::make_unique<CreateVoiceStreamCommand>(
-                 node_id, track_id, stave_id, armed.voice))
-             .ok())
-      return nullptr;
-    if (!transaction
-             ->add_command(std::make_unique<SetEventCommand>(
-                 node_id, track_id, stave_id, armed.voice, position,
-                 std::move(new_event)))
-             .ok())
-      return nullptr;
-    return transaction;
+    if (armed.entry_kind == NotePaletteEntryKind::kRest)
+      return NoteEntryResolution{
+          NoteEntryBranch::kCreateStreamRest, nullptr, {}};
+    if (!candidate_pitch.has_value())
+      return std::nullopt;
+    return NoteEntryResolution{
+        NoteEntryBranch::kCreateStreamNote, nullptr, {*candidate_pitch}};
   }
 
   const auto idx = content.find_event_index_at(position);
   if (!idx.has_value())
-    return nullptr;
+    return std::nullopt;
   const VoiceEvent& existing = content.events()[*idx];
 
   if (armed.entry_kind == NotePaletteEntryKind::kRest) {
-    // Replace with a Rest of the armed duration.  Discard any
-    // candidate_pitch: rests have no pitch.  Preserve identity on
-    // duration-only; for kind conversion (Note/Chord→Rest) the old
-    // identity is consumed by replace_event per its documented ID-reuse
-    // rules.
-    if (const auto* old_rest = std::get_if<Rest>(&existing);
-        old_rest != nullptr) {
-      Rest new_rest     = *old_rest;
-      new_rest.duration = armed.duration;
-      return std::make_unique<SetEventCommand>(node_id, track_id, stave_id,
-                                               armed.voice, position, new_rest);
-    }
-    return std::make_unique<SetEventCommand>(node_id, track_id, stave_id,
-                                             armed.voice, position,
-                                             make_rest(armed.duration));
+    // A rest sounds nothing, so no kRest branch ever auditions. Discard any
+    // candidate_pitch: rests have no pitch.
+    if (std::holds_alternative<Rest>(existing))
+      return NoteEntryResolution{
+          NoteEntryBranch::kRestDurationOnly, &existing, {}};
+    return NoteEntryResolution{NoteEntryBranch::kEventToRest, &existing, {}};
   }
 
   // --- kNote entry ---
   if (!candidate_pitch.has_value())
-    return nullptr;
+    return std::nullopt;
 
   const SpelledPitch& new_pitch = *candidate_pitch;
 
-  // Replace a Rest with a single Note.
-  if (std::holds_alternative<Rest>(existing)) {
-    return std::make_unique<SetEventCommand>(
-        node_id, track_id, stave_id, armed.voice, position,
-        make_note(new_pitch, armed.duration));
-  }
+  if (std::holds_alternative<Rest>(existing))
+    return NoteEntryResolution{
+        NoteEntryBranch::kRestToNote, &existing, {new_pitch}};
 
   // Existing Note: pitch match → duration-only; mismatch → promote to Chord.
   if (const auto* old_note = std::get_if<Note>(&existing)) {
-    if (old_note->pitch == new_pitch) {
-      Note new_note     = *old_note;
-      new_note.duration = armed.duration;
-      return std::make_unique<SetEventCommand>(node_id, track_id, stave_id,
-                                               armed.voice, position, new_note);
-    }
-    // Promote Note to a 2-note Chord.  The original Note's id becomes the
-    // first ChordNote; the new pitch gets a fresh id. Preserve articulations
-    // and stem override from the original Note.
-    std::vector<ChordNote> chord_notes;
-    chord_notes.push_back(
-        {old_note->id, old_note->pitch, old_note->tied_to_next});
-    chord_notes.push_back({NotationEntityId::generate(), new_pitch, false});
-    return std::make_unique<SetEventCommand>(
-        node_id, track_id, stave_id, armed.voice, position,
-        make_chord(armed.duration, std::move(chord_notes),
-                   old_note->articulations, old_note->stem));
+    if (old_note->pitch == new_pitch)
+      return NoteEntryResolution{
+          NoteEntryBranch::kNoteDurationOnly, &existing, {}};
+    return NoteEntryResolution{
+        NoteEntryBranch::kNoteToChord, &existing, {new_pitch, old_note->pitch}};
   }
 
   // Existing Chord.
@@ -3645,28 +3661,161 @@ std::unique_ptr<Command> make_note_entry_command(
         old_chord->notes,
         [&](const ChordNote& cn) { return cn.pitch == new_pitch; });
 
-    if (pitch_already_present) {
-      // Duration-only: preserve every identity.
-      Chord new_chord    = *old_chord;
-      new_chord.duration = armed.duration;
-      return std::make_unique<SetEventCommand>(
-          node_id, track_id, stave_id, armed.voice, position, new_chord);
+    if (pitch_already_present)
+      return NoteEntryResolution{
+          NoteEntryBranch::kChordDurationOnly, &existing, {}};
+
+    std::vector<SpelledPitch> sounding_pitches;
+    sounding_pitches.reserve(old_chord->notes.size() + 1);
+    sounding_pitches.push_back(new_pitch);
+    for (const ChordNote& chord_note : old_chord->notes)
+      sounding_pitches.push_back(chord_note.pitch);
+    return NoteEntryResolution{NoteEntryBranch::kChordExtension, &existing,
+                               std::move(sounding_pitches)};
+  }
+
+  return std::nullopt;
+}
+
+}  // namespace
+
+std::unique_ptr<Command> make_note_entry_command(
+    const Project& project, NodeId node_id, TrackId track_id, StaveId stave_id,
+    Rational position, const NotePaletteEntrySpec& armed,
+    std::optional<SpelledPitch> candidate_pitch) {
+  const std::optional<NoteEntryResolution> resolution = resolve_note_entry(
+      project, node_id, track_id, stave_id, position, armed, candidate_pitch);
+  if (!resolution.has_value())
+    return nullptr;
+
+  const auto set_event = [&](VoiceEvent event) {
+    return std::make_unique<SetEventCommand>(
+        node_id, track_id, stave_id, armed.voice, position, std::move(event));
+  };
+
+  switch (resolution->branch) {
+    case NoteEntryBranch::kCreateStreamRest:
+    case NoteEntryBranch::kCreateStreamNote: {
+      // One CommandTransaction that creates the stream and then replaces the
+      // rest at `position` -- a single undoable action that either succeeds
+      // completely or leaves the project untouched.
+      VoiceEvent new_event;
+      if (resolution->branch == NoteEntryBranch::kCreateStreamRest) {
+        new_event = make_rest(armed.duration);
+      } else {
+        new_event = make_note(resolution->inserted_pitch(), armed.duration);
+      }
+
+      auto transaction = std::make_unique<CommandTransaction>();
+      if (!transaction
+               ->add_command(std::make_unique<CreateVoiceStreamCommand>(
+                   node_id, track_id, stave_id, armed.voice))
+               .ok())
+        return nullptr;
+      if (!transaction
+               ->add_command(std::make_unique<SetEventCommand>(
+                   node_id, track_id, stave_id, armed.voice, position,
+                   std::move(new_event)))
+               .ok())
+        return nullptr;
+      return transaction;
     }
 
-    // Add a new notehead to the existing chord. Preserve identity,
-    // articulations and stem override.
-    std::vector<ChordNote> new_notes = old_chord->notes;
-    new_notes.push_back({NotationEntityId::generate(), new_pitch, false});
-    Chord new_chord = make_chord(armed.duration, std::move(new_notes));
-    new_chord.id    = old_chord->id;    // preserve top-level identity
-    new_chord.stem  = old_chord->stem;  // preserve stem override
-    new_chord.articulations =
-        old_chord->articulations;  // preserve articulations
-    return std::make_unique<SetEventCommand>(node_id, track_id, stave_id,
-                                             armed.voice, position, new_chord);
+    case NoteEntryBranch::kRestDurationOnly: {
+      // Preserve identity on duration-only.
+      Rest new_rest     = std::get<Rest>(*resolution->existing);
+      new_rest.duration = armed.duration;
+      return set_event(new_rest);
+    }
+
+    case NoteEntryBranch::kEventToRest:
+      // For kind conversion (Note/Chord→Rest) the old identity is consumed
+      // by replace_event per its documented ID-reuse rules.
+      return set_event(make_rest(armed.duration));
+
+    case NoteEntryBranch::kRestToNote:
+      return set_event(make_note(resolution->inserted_pitch(), armed.duration));
+
+    case NoteEntryBranch::kNoteDurationOnly: {
+      Note new_note     = std::get<Note>(*resolution->existing);
+      new_note.duration = armed.duration;
+      return set_event(new_note);
+    }
+
+    case NoteEntryBranch::kNoteToChord: {
+      // Promote Note to a 2-note Chord.  The original Note's id becomes the
+      // first ChordNote; the new pitch gets a fresh id. Preserve articulations
+      // and stem override from the original Note.
+      const Note&            old_note = std::get<Note>(*resolution->existing);
+      std::vector<ChordNote> chord_notes;
+      chord_notes.push_back(
+          {old_note.id, old_note.pitch, old_note.tied_to_next});
+      chord_notes.push_back(
+          {NotationEntityId::generate(), resolution->inserted_pitch(), false});
+      return set_event(make_chord(armed.duration, std::move(chord_notes),
+                                  old_note.articulations, old_note.stem));
+    }
+
+    case NoteEntryBranch::kChordDurationOnly: {
+      // Duration-only: preserve every identity.
+      Chord new_chord    = std::get<Chord>(*resolution->existing);
+      new_chord.duration = armed.duration;
+      return set_event(new_chord);
+    }
+
+    case NoteEntryBranch::kChordExtension: {
+      // Add a new notehead to the existing chord. Preserve identity,
+      // articulations and stem override.
+      const Chord&           old_chord = std::get<Chord>(*resolution->existing);
+      std::vector<ChordNote> new_notes = old_chord.notes;
+      new_notes.push_back(
+          {NotationEntityId::generate(), resolution->inserted_pitch(), false});
+      Chord new_chord = make_chord(armed.duration, std::move(new_notes));
+      new_chord.id    = old_chord.id;    // preserve top-level identity
+      new_chord.stem  = old_chord.stem;  // preserve stem override
+      new_chord.articulations =
+          old_chord.articulations;  // preserve articulations
+      return set_event(new_chord);
+    }
   }
 
   return nullptr;
+}
+
+std::optional<NoteAuditionRequest> audition_for_note_entry(
+    const Project& project, NodeId node_id, TrackId track_id, StaveId stave_id,
+    Rational position, const NotePaletteEntrySpec& armed,
+    std::optional<SpelledPitch> candidate_pitch) {
+  const std::optional<NoteEntryResolution> resolution = resolve_note_entry(
+      project, node_id, track_id, stave_id, position, armed, candidate_pitch);
+  // An empty sounding set is exactly the "nothing newly sounds" case: both
+  // duration-only branches and every kRest branch.
+  if (!resolution.has_value() || resolution->sounding_pitches.empty())
+    return std::nullopt;
+
+  // The newly inserted pitch failing to convert leaves nothing meaningful
+  // to audition, so the whole request is dropped rather than reduced to the
+  // retained chord pitches.
+  if (!resolution->inserted_pitch().to_midi_pitch().has_value())
+    return std::nullopt;
+
+  NoteAuditionRequest request;
+  request.track_id = track_id;
+  request.velocity = velocity_for_dynamic(project.default_dynamic());
+  request.pitches.reserve(resolution->sounding_pitches.size());
+  for (const SpelledPitch& pitch : resolution->sounding_pitches) {
+    const std::optional<MidiPitch> midi = pitch.to_midi_pitch();
+    // A pre-existing chord pitch that cannot sound is silently skipped.
+    if (midi.has_value())
+      request.pitches.push_back(*midi);
+  }
+
+  // NoteAuditionRequest's contract: ascending MidiPitch order, deduplicated
+  // so enharmonic spellings collapsing to one MidiPitch sound once.
+  std::ranges::sort(request.pitches);
+  const auto duplicates = std::ranges::unique(request.pitches);
+  request.pitches.erase(duplicates.begin(), duplicates.end());
+  return request;
 }
 
 }  // namespace graphscore

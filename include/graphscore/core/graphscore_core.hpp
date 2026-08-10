@@ -13,6 +13,7 @@
 #include <graphscore/core/midi_channel.hpp>
 #include <graphscore/core/midi_pitch.hpp>
 #include <graphscore/core/midi_velocity.hpp>
+#include <graphscore/core/note_audition.hpp>
 #include <graphscore/core/playback_mapping.hpp>
 #include <graphscore/core/rational.hpp>
 #include <graphscore/core/result.hpp>
