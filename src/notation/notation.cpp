@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -22,6 +23,26 @@ namespace graphscore {
 namespace {
 
 constexpr char32_t kTimeZero = U'\uE080';
+
+// Shared hit-region id suffixes (the "role" half of make_id's "root/role"
+// scheme, before add_glyph/add_hit append their own trailing "/hit"). The
+// discriminating information for a hit is in HitResult::id, not in
+// HitRegion::semantic_id, which several distinct hit sources for the same
+// entity intentionally share (see resolve_hit_entity below). Defining each
+// suffix once and using the same constant at both the emitting make_id(...)
+// call and any place that later inspects the id keeps a future rename of
+// one of these regions from silently producing a wrong-but-plausible hit
+// id: renaming the literal here changes every call site at once, rather
+// than requiring an emitter and a separate ad hoc string literal elsewhere
+// to be edited in lockstep. Only the suffixes actually consumed today are
+// named; dot/accidental/flag regions stay inline literals (see
+// resolve_hit_entity's comment). Phase 2b (marking resolution) extends this
+// table with its own kind-specific suffixes (articulation/N,
+// tie/segment/system-N, tuplet/digit/N) rather than restructuring it.
+constexpr std::string_view kHitSuffixNotehead      = "notehead";
+constexpr std::string_view kHitSuffixGraceNotehead = "grace-notehead";
+constexpr std::string_view kHitSuffixStem          = "stem";
+constexpr std::string_view kHitSuffixRest          = "rest";
 
 [[nodiscard]] NotationId make_id(const std::string& root,
                                  const std::string& role) {
@@ -1802,7 +1823,7 @@ template <typename Record>
                  .add_glyph(
                      make_id(rest->id,
                              "voice/" + std::to_string(placed.voice.index()) +
-                                 "/rest"),
+                                 "/" + std::string{kHitSuffixRest}),
                      smufl_codepoint(rest_glyph(rest->duration.base())),
                      {placed.x, placed.anchor_y}, semantic)
                  .has_value()) {
@@ -1859,7 +1880,8 @@ template <typename Record>
           if (voice_collision) {
             head_x += placed.stem_up ? -space * 0.22 : space * 0.22;
           }
-          const NotationId head_id = make_id(note_id, "notehead");
+          const NotationId head_id =
+              make_id(note_id, std::string{kHitSuffixNotehead});
           if (!builder
                    .add_glyph(head_id,
                               smufl_codepoint(
@@ -1933,8 +1955,29 @@ template <typename Record>
                                     : *std::ranges::max_element(head_ys);
         const double stem_end = head_y + (placed.stem_up ? -3.5 : 3.5) * space;
         if (event_duration(event).base() != NoteValue::kWhole) {
-          builder.add_line(make_id(entity, "stem"), {stem_x, head_y},
-                           {stem_x, stem_end}, space * 0.12);
+          const NotationId stem_id =
+              make_id(entity, std::string{kHitSuffixStem});
+          builder.add_line(stem_id, {stem_x, head_y}, {stem_x, stem_end},
+                           space * 0.12);
+          // A stem's own drawn width (space * 0.12) is too thin to click
+          // comfortably; widen the hit target to half a staff-space while
+          // staying well short of the notehead's own tightened width
+          // (space * 1.2, priority 6) so an overlap between the two -- the
+          // stem sits right at that notehead's edge, space * 0.65 out from
+          // its head_x versus the notehead's own space * 0.6 half-width --
+          // is resolved by priority, not accidentally avoided by geometry.
+          // Role kEvent (not a new HitRole) matches the existing rest/flag
+          // convention: kEvent already means "the whole event", which is
+          // exactly what clicking a stem (as opposed to one notehead of a
+          // chord) selects.
+          constexpr double kStemHitHalfWidth = 0.25;
+          const double     stem_hit_width    = space * kStemHitHalfWidth * 2.0;
+          const double     stem_top          = std::min(head_y, stem_end);
+          const double     stem_height       = std::abs(stem_end - head_y);
+          builder.add_hit(stem_id, semantic, HitRole::kEvent,
+                          NotationRect{stem_x - space * kStemHitHalfWidth,
+                                       stem_top, stem_hit_width, stem_height},
+                          4);
         }
         const bool beamed =
             std::ranges::any_of(beam_pairs, [&](const auto& pair) {
@@ -2251,7 +2294,7 @@ template <typename Record>
         const double y = pitch_y(grace.pitch, clef, staff.bounds.y, space);
         if (!builder
                  .add_glyph(
-                     make_id(grace.id, "grace-notehead"),
+                     make_id(grace.id, std::string{kHitSuffixGraceNotehead}),
                      smufl_codepoint(notehead_glyph(grace.duration.base())),
                      {x, y}, NotationId{grace.id.to_string()}, 0.65)
                  .has_value()) {
@@ -3322,12 +3365,18 @@ NotePaletteEntrySpec NotePaletteState::next_entry_spec() const {
   };
 }
 
-std::optional<NotationPreview> preview_note_entry(
-    const Project& project, const NotationLayout& layout,
-    const NotePaletteState& palette, NotationPoint point) {
-  if (!finite_point(point)) {
-    return std::nullopt;
-  }
+namespace {
+
+// A system plus the staff `point` attributes to within it: shared by
+// preview_note_entry and resolve_selection_at, both of which need exactly
+// the same point -> staff attribution.
+struct ResolvedStaffSite {
+  const SystemLayout*      system = nullptr;
+  const StaffSystemLayout* staff  = nullptr;
+};
+
+[[nodiscard]] std::optional<ResolvedStaffSite> resolve_staff_at(
+    const NotationLayout& layout, NotationPoint point) {
   const SystemLayout* system = nullptr;
   for (const SystemLayout& candidate : layout.systems) {
     if (candidate.bounds.contains(point)) {
@@ -3367,15 +3416,47 @@ std::optional<NotationPreview> preview_note_entry(
   if (staff == nullptr) {
     return std::nullopt;
   }
+  return ResolvedStaffSite{system, staff};
+}
 
-  const MeasureLayout* measure = nullptr;
-  for (const MeasureLayout& candidate : system->measures) {
+[[nodiscard]] const MeasureLayout* resolve_measure_at(
+    const SystemLayout& system, NotationPoint point) {
+  for (const MeasureLayout& candidate : system.measures) {
     if (point.x >= candidate.bounds.x &&
         point.x <= candidate.bounds.x + candidate.bounds.width) {
-      measure = &candidate;
-      break;
+      return &candidate;
     }
   }
+  return nullptr;
+}
+
+// The staff/measure/nearest-legal-onset `point` resolves to for `voice`:
+// the resolution preview_note_entry previews and resolve_selection_at's
+// insertion-caret arm snaps to, factored out so the two can never disagree
+// about it.
+struct ResolvedInsertionSite {
+  const StaffSystemLayout* staff    = nullptr;
+  const MeasureLayout*     measure  = nullptr;
+  const NodeTimeline*      timeline = nullptr;
+  Rational                 resolved_onset;
+  // The lane/voice content the onset above was resolved against, so a
+  // caller that must additionally check the onset against the domain's own
+  // caret-legality rule (validate_insertion_caret_set,
+  // graphscore/domain/selection.cpp) can do so without re-deriving them
+  // from `project`. preview_note_entry, the other caller, never reads
+  // these two fields, so adding them changes nothing about its behavior.
+  const TrackLane*    lane          = nullptr;
+  const VoiceContent* voice_content = nullptr;
+};
+
+[[nodiscard]] std::optional<ResolvedInsertionSite> resolve_insertion_site(
+    const Project& project, const NotationLayout& layout, Voice voice,
+    NotationPoint point) {
+  const std::optional<ResolvedStaffSite> site = resolve_staff_at(layout, point);
+  if (!site.has_value()) {
+    return std::nullopt;
+  }
+  const MeasureLayout* measure = resolve_measure_at(*site->system, point);
   if (measure == nullptr) {
     return std::nullopt;
   }
@@ -3392,25 +3473,25 @@ std::optional<NotationPreview> preview_note_entry(
   if (measure->ordinal >= measures.measure_count()) {
     return std::nullopt;
   }
-  const TrackLane* lane = node->lane(staff->track_id);
+  const TrackLane* lane = node->lane(site->staff->track_id);
   if (lane == nullptr) {
     return std::nullopt;
   }
-  const StaveVoices* voices = lane->stave(staff->stave_id);
+  const StaveVoices* voices = lane->stave(site->staff->stave_id);
   if (voices == nullptr) {
     return std::nullopt;
   }
-  const VoiceContent& content = voices->voice(palette.voice());
+  const VoiceContent& content = voices->voice(voice);
 
   const Rational measure_start  = measures.measure_start(measure->ordinal);
   const Rational measure_length = measures.measure_length(measure->ordinal);
-  const double   staff_space    = staff->bounds.height / 4.0;
+  const double   staff_space    = site->staff->bounds.height / 4.0;
   const double   reference_time =
       time_at_x(measures, measure->ordinal, point.x, measure->bounds.x,
                 measure->bounds.width, staff_space);
 
-  // The durations to scan for onsets: the armed voice's own events, unless
-  // it is entirely empty, in which case the voice-stream workflow previews
+  // The durations to scan for onsets: `voice`'s own events, unless it is
+  // entirely empty, in which case the voice-stream workflow resolves
   // against the durations of the same measure-aligned rest fill a click
   // would materialize (decompose_measure_aligned_rests, voice_content.hpp).
   // A voice that merely has no event boundary within the resolved measure
@@ -3440,11 +3521,11 @@ std::optional<NotationPreview> preview_note_entry(
   }
 
   // Snaps to the start of an existing rhythmic event (including a
-  // normalized rest, real or hypothetical) in the armed voice, scoped to
-  // the resolved measure -- never a metric grid derived from the armed
-  // duration. Onsets are visited in order, and only a strictly smaller
-  // distance replaces the current best, so on an exact tie the earlier
-  // onset wins deterministically.
+  // normalized rest, real or hypothetical) in `voice`, scoped to the
+  // resolved measure -- never a metric grid derived from an armed duration.
+  // Onsets are visited in order, and only a strictly smaller distance
+  // replaces the current best, so on an exact tie the earlier onset wins
+  // deterministically.
   bool     found_onset   = false;
   double   best_distance = std::numeric_limits<double>::infinity();
   Rational resolved_onset;
@@ -3464,12 +3545,35 @@ std::optional<NotationPreview> preview_note_entry(
     return std::nullopt;
   }
 
+  return ResolvedInsertionSite{site->staff,    measure, timeline,
+                               resolved_onset, lane,    &content};
+}
+
+}  // namespace
+
+std::optional<NotationPreview> preview_note_entry(
+    const Project& project, const NotationLayout& layout,
+    const NotePaletteState& palette, NotationPoint point) {
+  if (!finite_point(point)) {
+    return std::nullopt;
+  }
+  const std::optional<ResolvedInsertionSite> site =
+      resolve_insertion_site(project, layout, palette.voice(), point);
+  if (!site.has_value()) {
+    return std::nullopt;
+  }
+  const StaffSystemLayout* staff          = site->staff;
+  const MeasureLayout*     measure        = site->measure;
+  const NodeTimeline*      timeline       = site->timeline;
+  const Rational           resolved_onset = site->resolved_onset;
+  const double             staff_space    = staff->bounds.height / 4.0;
+
   const ClefLane* clef_lane = timeline->clef_lane(staff->stave_id);
   const Clef      clef =
       clef_lane == nullptr ? Clef::kTreble : clef_lane->clef_at(resolved_onset);
 
   const double glyph_x =
-      position_x(measures, measure->ordinal, measure->bounds.width,
+      position_x(timeline->measures(), measure->ordinal, measure->bounds.width,
                  resolved_onset, measure->bounds.x, staff_space);
 
   NotationPreview preview;
@@ -3513,6 +3617,260 @@ std::optional<NotationPreview> preview_note_entry(
                      staff_space});
   }
   return preview;
+}
+
+namespace {
+
+// What kind of domain entity a hit's semantic id names within one voice's
+// content, plus the actual matched id -- see find_entity_in_voice.
+enum class ResolvedEntityKind : std::uint8_t {
+  kNone,
+  kNote,
+  kChord,
+  kRest,
+  kChordNote,
+  kGraceNote,
+};
+
+struct ResolvedEntity {
+  ResolvedEntityKind kind = ResolvedEntityKind::kNone;
+  NotationEntityId   id;
+};
+
+// Scoped, bounded lookup of the entity `target` (a HitRegion::semantic_id's
+// string value) names within one voice's own content: a linear scan of
+// that one voice's own events/chord notes/grace notes, never the whole
+// project. There is no way to parse a NotationEntityId back out of that
+// string -- StrongId/Uuid (graphscore/core) expose no from_string()/parse()
+// -- so this instead walks the actual ids the voice already owns and
+// compares each one's own to_string() against `target`, returning that
+// found id directly rather than a reconstructed one.
+[[nodiscard]] ResolvedEntity find_entity_in_voice(const VoiceContent& voice,
+                                                  const std::string&  target) {
+  for (const VoiceEvent& event : voice.events()) {
+    if (event_id(event).to_string() == target) {
+      if (std::holds_alternative<Note>(event)) {
+        return ResolvedEntity{ResolvedEntityKind::kNote, event_id(event)};
+      }
+      if (std::holds_alternative<Chord>(event)) {
+        return ResolvedEntity{ResolvedEntityKind::kChord, event_id(event)};
+      }
+      return ResolvedEntity{ResolvedEntityKind::kRest, event_id(event)};
+    }
+    if (const auto* chord = std::get_if<Chord>(&event)) {
+      for (const ChordNote& chord_note : chord->notes) {
+        if (chord_note.id.to_string() == target) {
+          return ResolvedEntity{ResolvedEntityKind::kChordNote, chord_note.id};
+        }
+      }
+    }
+  }
+  for (const GraceGroup& group : voice.grace_groups()) {
+    for (const GraceNote& grace : group.notes) {
+      if (grace.id.to_string() == target) {
+        return ResolvedEntity{ResolvedEntityKind::kGraceNote, grace.id};
+      }
+    }
+  }
+  return ResolvedEntity{};
+}
+
+// The one voice (of its owning staff's small, fixed set) that actually owns
+// a kNotehead/kEvent hit's semantic entity, plus that entity's resolved
+// kind/id.
+struct ResolvedVoiceEntity {
+  const StaffSystemLayout* staff = nullptr;
+  Voice                    voice;
+  ResolvedEntity           entity;
+};
+
+// Attributes `hit` to the staff that actually owns its semantic entity, by
+// scanning the layout's own staves rather than re-deriving a staff from the
+// click point: `hit_test` already returned the correct HitResult, including
+// for a ledger-line notehead engraved outside resolve_staff_at's own
+// proximity window (that window is a blank-click heuristic, not a bound on
+// how far a real notehead may be engraved from its staff's center), so
+// re-deriving the staff from the point instead of trusting `hit` can
+// discard an otherwise-correct hit. Entity IDs are unique, so scanning
+// every staff this layout has (bounded: systems x staves x StaveVoices'
+// fixed four voices, never a project-wide scan) for the one voice whose
+// content owns hit.semantic_id.value is authoritative rather than a guess.
+[[nodiscard]] std::optional<ResolvedVoiceEntity> resolve_hit_entity(
+    const Project& project, const NotationLayout& layout,
+    const HitResult& hit) {
+  const Node* node = project.find_node(layout.node_id);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  for (const SystemLayout& system : layout.systems) {
+    for (const StaffSystemLayout& staff : system.staves) {
+      const TrackLane* lane = node->lane(staff.track_id);
+      if (lane == nullptr) {
+        continue;
+      }
+      const StaveVoices* voices = lane->stave(staff.stave_id);
+      if (voices == nullptr) {
+        continue;
+      }
+      for (const VoiceLayout& voice_layout : staff.voices) {
+        const ResolvedEntity found = find_entity_in_voice(
+            voices->voice(voice_layout.voice), hit.semantic_id.value);
+        if (found.kind != ResolvedEntityKind::kNone) {
+          return ResolvedVoiceEntity{&staff, voice_layout.voice, found};
+        }
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+// True if `id` (a HitResult::id/HitRegion::id) was built by
+// make_id(<owning entity>, std::string{suffix}) and then wrapped through
+// add_glyph/add_hit's own trailing "/hit" -- i.e. `id` names exactly the
+// region convention `suffix` names, not some other region that happens to
+// share a semantic_id with it. The match is anchored at a "/" path
+// boundary immediately before `suffix`, not a bare substring match: a bare
+// "ends with <suffix>/hit" test would let e.g. kHitSuffixGraceNotehead
+// ("grace-notehead") also satisfy kHitSuffixNotehead ("notehead"), since
+// "grace-notehead" itself ends with "notehead".
+[[nodiscard]] bool hit_id_ends_with(const NotationId& id,
+                                    std::string_view  suffix) {
+  const std::string expected = "/" + std::string(suffix) + "/hit";
+  return id.value.size() >= expected.size() &&
+         id.value.compare(id.value.size() - expected.size(), expected.size(),
+                          expected) == 0;
+}
+
+}  // namespace
+
+std::optional<Selection> resolve_selection_at(const Project&          project,
+                                              const NotationLayout&   layout,
+                                              const NotePaletteState& palette,
+                                              NotationPoint           point) {
+  if (!finite_point(point)) {
+    return std::nullopt;
+  }
+
+  const std::optional<HitResult> hit = layout.hit_test(point);
+  if (hit.has_value()) {
+    if (hit->role == HitRole::kMarking) {
+      // Marking resolution (dynamics, hairpins, slurs, pedal spans,
+      // articulations, ties, tuplets) is a later increment; see
+      // docs/plan/05-notation-editor.md.
+      return std::nullopt;
+    }
+    if (hit->role == HitRole::kNotehead || hit->role == HitRole::kEvent) {
+      const std::optional<ResolvedVoiceEntity> resolved =
+          resolve_hit_entity(project, layout, *hit);
+      if (!resolved.has_value()) {
+        return std::nullopt;
+      }
+      const ResolvedEntity& entity = resolved->entity;
+
+      // Defends against a future emitter silently drifting from the
+      // resolution logic above: each of these checks fails safe (returns
+      // std::nullopt) rather than trusting a hit whose id's own naming
+      // convention disagrees with what it resolved to, e.g. a kNotehead-role
+      // region whose id was not actually built from one of the two
+      // notehead-emitting suffixes, or a "stem" region that somehow
+      // resolved to something other than the Note/Chord a stem is drawn
+      // for. This is deliberately a defensive `if`, not `assert`: an
+      // NDEBUG-only caller would otherwise make hit_id_ends_with itself
+      // dead code (and so, an unused-function warning) in a release build.
+      if (hit->role == HitRole::kNotehead &&
+          !hit_id_ends_with(hit->id, kHitSuffixNotehead) &&
+          !hit_id_ends_with(hit->id, kHitSuffixGraceNotehead)) {
+        return std::nullopt;
+      }
+      if (hit_id_ends_with(hit->id, kHitSuffixStem) &&
+          entity.kind != ResolvedEntityKind::kNote &&
+          entity.kind != ResolvedEntityKind::kChord) {
+        return std::nullopt;
+      }
+      if (hit_id_ends_with(hit->id, kHitSuffixRest) &&
+          entity.kind != ResolvedEntityKind::kRest) {
+        return std::nullopt;
+      }
+
+      const NodeId  node  = layout.node_id;
+      const TrackId track = resolved->staff->track_id;
+      const StaveId stave = resolved->staff->stave_id;
+      const Voice   voice = resolved->voice;
+
+      switch (entity.kind) {
+        case ResolvedEntityKind::kNote:
+        case ResolvedEntityKind::kChordNote:
+        case ResolvedEntityKind::kGraceNote: {
+          // A single top-level Note has no notehead identity distinct from
+          // its own id, so its stem/dot/accidental (kEvent, not kNotehead)
+          // selects the same one notehead a direct kNotehead hit on it
+          // would. A ChordNote's own stem/dot/accidental (the chord's, or
+          // that one notehead's) likewise selects just that notehead --
+          // Chord-level markings belong to the ChordSet arm below instead.
+          std::optional<NoteheadSet> set = NoteheadSet::create(
+              {NoteheadItem{node, track, stave, voice, entity.id}});
+          if (!set.has_value()) {
+            return std::nullopt;
+          }
+          return Selection{*std::move(set)};
+        }
+        case ResolvedEntityKind::kChord: {
+          std::optional<ChordSet> set = ChordSet::create(
+              {ChordItem{node, track, stave, voice, entity.id}});
+          if (!set.has_value()) {
+            return std::nullopt;
+          }
+          return Selection{*std::move(set)};
+        }
+        case ResolvedEntityKind::kRest: {
+          std::optional<RestSet> set =
+              RestSet::create({RestItem{node, track, stave, voice, entity.id}});
+          if (!set.has_value()) {
+            return std::nullopt;
+          }
+          return Selection{*std::move(set)};
+        }
+        case ResolvedEntityKind::kNone:
+          return std::nullopt;
+      }
+    }
+    // Every ResolvedEntityKind enumerator the switch above covers already
+    // returns, so only a hit whose role is none of kNotehead/kEvent/
+    // kMarking (kSystem, kMeasure, kStaff, kVoice today) reaches here and
+    // falls through to insertion-caret resolution below, using the point
+    // the hit occurred at.
+  }
+
+  const std::optional<ResolvedInsertionSite> site =
+      resolve_insertion_site(project, layout, palette.voice(), point);
+  if (!site.has_value()) {
+    return std::nullopt;
+  }
+  // The caret's legality is the domain's own rule
+  // (validate_insertion_caret_set, graphscore/domain/selection.cpp): position
+  // 0, TrackLane::total_length(), or an existing event boundary in the
+  // *armed* voice. resolve_insertion_site's onset is not automatically any
+  // of these -- when the armed voice is empty, the onset it snaps to comes
+  // from a hypothetical measure-aligned rest fill (see that function's own
+  // comment), which is a real onset for a preview but not necessarily one
+  // the domain accepts as a caret before that fill is actually materialized.
+  // Rejecting an illegal onset here, rather than trusting it, is what keeps
+  // every Selection this function returns satisfying
+  // validate_selection(...).empty().
+  const Rational lane_end = site->lane->total_length();
+  if (site->resolved_onset != Rational(0) && site->resolved_onset != lane_end &&
+      !site->voice_content->find_event_index_at(site->resolved_onset)
+           .has_value()) {
+    return std::nullopt;
+  }
+  std::optional<InsertionCaretSet> set =
+      InsertionCaretSet::create({InsertionCaretItem{
+          layout.node_id, site->staff->track_id, site->staff->stave_id,
+          palette.voice(), site->resolved_onset}});
+  if (!set.has_value()) {
+    return std::nullopt;
+  }
+  return Selection{*std::move(set)};
 }
 
 namespace {

@@ -6,6 +6,7 @@ add_executable(graphscore_notation_test
   note_entry_test.cpp
   note_palette_test.cpp
   note_preview_test.cpp
+  selection_resolver_test.cpp
 )
 
 target_compile_features(graphscore_notation_test PRIVATE cxx_std_23)

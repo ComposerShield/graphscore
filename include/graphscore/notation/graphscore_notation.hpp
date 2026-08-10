@@ -806,6 +806,77 @@ struct NotationPreview {
     const Project& project, const NotationLayout& layout,
     const NotePaletteState& palette, NotationPoint point);
 
+// Resolves `point` against `layout` (produced by a prior layout_notation()/
+// NotationLayoutCache::update() call for the same project/node) to the
+// single Selection the composer's click names, for
+// docs/plan/05-notation-editor.md's "Select individual noteheads, whole
+// chord events, rests, markings, ranges, and insertion carets through
+// explicit hit regions." This increment resolves noteheads, chords, rests,
+// and insertion carets; a kMarking hit and every multi-item/range selection
+// are later increments' scope.
+//
+// `palette`'s armed voice is the sole source of truth for which voice an
+// insertion-caret result names, mirroring preview_note_entry's own use of
+// it. A notehead/chord/rest hit instead names whichever staff and voice
+// actually own the hit's entity id, which may differ from the armed voice:
+// clicking an existing note in Voice 2 while Voice 1 is armed still selects
+// that Voice 2 note.
+//
+// Resolution:
+//   kNotehead hit  -- NoteheadSet (one item): the Note, ChordNote, or
+//                     GraceNote the hit names.
+//   kEvent hit     -- ChordSet, RestSet, or NoteheadSet (one item),
+//                     depending on what the hit's semantic entity resolves
+//                     to: a top-level Chord, a top-level Rest, a top-level
+//                     Note, or an embedded ChordNote (a chord notehead's
+//                     own accidental/dot/stem hit region) -- the last two
+//                     both select that one notehead, matching a direct
+//                     kNotehead hit on it. A stemless top-level event -- a
+//                     whole note or whole-note chord, for which the
+//                     engraver draws no stem -- has no kEvent geometry at
+//                     all: its own hit regions are only kNotehead (plus,
+//                     for a chord, its per-notehead dot/accidental regions,
+//                     which carry the owning ChordNote's id, not the
+//                     Chord's). This function can therefore never resolve a
+//                     whole-note Chord to a ChordSet naming the whole
+//                     chord -- only to a NoteheadSet naming whichever
+//                     ChordNote was clicked, exactly as if it were an
+//                     embedded ChordNote hit above. There is currently no
+//                     click that selects "the whole chord" for a stemless
+//                     event.
+//   kMarking hit   -- std::nullopt (marking resolution is a later
+//                     increment; see docs/plan/05-notation-editor.md).
+//   kSystem/kMeasure/kStaff/kVoice hit, or no hit at all -- InsertionCaretSet
+//                     (one item) at the nearest onset in `palette`'s armed
+//                     voice that preview_note_entry would also snap its own
+//                     preview to, filtered by one further check this
+//                     function alone makes: the onset must additionally
+//                     satisfy the domain's own caret-legality rule
+//                     (validate_insertion_caret_set,
+//                     graphscore/domain/selection.cpp) -- position 0,
+//                     TrackLane::total_length(), or an existing event
+//                     boundary in the armed voice. That filter matters
+//                     specifically when the armed voice is empty:
+//                     preview_note_entry's snapped onset can then come from
+//                     a hypothetical measure-aligned rest fill (see its own
+//                     comment) that is a legal preview position but not yet
+//                     a legal caret before that fill is materialized: this
+//                     function returns std::nullopt for such a point rather
+//                     than a Selection validate_selection would reject.
+//
+// Returns std::nullopt when `point` resolves to nothing usable: outside
+// every system/staff, a kMarking hit, a notehead/event hit whose semantic
+// entity cannot be found in any staff's voices in this layout (a stale
+// layout), an insertion-caret attempt preview_note_entry's own resolution
+// would also reject (no measure at that x, no onset in the armed voice's
+// resolved measure, etc.), or an insertion-caret attempt whose
+// otherwise-resolved onset fails the domain's own caret-legality check
+// described above. A pure query: never mutates `project`, `layout`, or
+// `palette`.
+[[nodiscard]] std::optional<Selection> resolve_selection_at(
+    const Project& project, const NotationLayout& layout,
+    const NotePaletteState& palette, NotationPoint point);
+
 // Constructs a reversible domain command for the note-entry pointer action
 // described in docs/plan/05-notation-editor.md ("Clicking an existing
 // rhythmic event in the selected voice changes its selected duration;
