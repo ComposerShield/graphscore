@@ -23,6 +23,10 @@ Provide a polished, directly editable focused notation system inside a node, wit
 > text alone. Do not append evidence parentheticals, test counts, verification
 > results, or implementation summaries to these lines — that belongs in the
 > commit message and the code, where it stays accurate as the code changes.
+>
+> When a bullet is delivered across several increments, split it into indented
+> sub-bullets naming the remaining work and check them off as they land, so a
+> partly-done bullet shows what is left. Keep those bare too.
 
 ### Incremental engraving
 
@@ -45,6 +49,13 @@ Provide a polished, directly editable focused notation system inside a node, wit
 ### Selection and keyboard behavior
 
 - [ ] Select individual noteheads, whole chord events, rests, markings, ranges, and insertion carets through explicit hit regions.
+  - [x] Represent rests and markings in the domain selection model.
+  - [x] Emit stem hit regions so a whole chord event has clickable geometry.
+  - [x] Resolve a pointer position to a notehead, chord, or rest selection.
+  - [x] Resolve a pointer position on blank staff area to an insertion caret.
+  - [ ] Resolve marking hit regions to dynamic, hairpin, slur, pedal span, articulation, tie, and tuplet selections.
+  - [ ] Decide how a stemless whole note or whole-note chord selects its whole event, having no stem to click.
+  - [ ] Resolve range selections through hit regions; the selection tool and measure targets below drive them.
 - [ ] Add a dedicated selection tool whose pointer drag creates a contiguous musical-time selection across the intersected staves/voices rather than selecting engraving glyph bounds individually.
 - [ ] Add measure hit targets/actions for selecting one complete measure on the focused staff/track and extending that aligned measure selection across additional tracks.
 - [ ] Support Shift/keyboard range extension and accessible start/end/staff-scope controls that produce the same selection as pointer dragging.
