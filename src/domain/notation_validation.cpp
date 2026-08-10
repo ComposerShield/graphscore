@@ -96,6 +96,26 @@ void append_articulation_diagnostics_for_events(
       if (is_duration_articulation(articulation))
         ++duration_articulation_count;
     }
+
+    // Articulations are presence-only, so a repeat is meaningless
+    // notation: it engraves one glyph twice in the same place and makes
+    // the (event, Articulation) pair that Selection's MarkingItem uses to
+    // name an articulation ambiguous.
+    bool duplicate = false;
+    for (std::size_t a = 0; !duplicate && a < articulations->size(); ++a) {
+      for (std::size_t b = a + 1; b < articulations->size(); ++b) {
+        if ((*articulations)[a] == (*articulations)[b]) {
+          duplicate = true;
+          break;
+        }
+      }
+    }
+    if (duplicate) {
+      diagnostics.push_back(
+          {event_id(events[i]), NotationDiagnosticCode::kDuplicateArticulation,
+           "the same articulation appears more than once on one event"});
+    }
+
     if (duration_articulation_count > 1) {
       diagnostics.push_back(
           {event_id(events[i]),

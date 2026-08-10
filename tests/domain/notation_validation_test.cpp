@@ -100,6 +100,52 @@ TEST(NotationValidationTest, ConflictingDurationArticulationsAreFlagged) {
   EXPECT_EQ(diagnostics[0].entity_id, event_id(voice.events()[0]));
 }
 
+TEST(NotationValidationTest, DuplicateArticulationOnOneEventIsFlagged) {
+  VoiceContent voice;
+  ASSERT_TRUE(
+      voice
+          .append(make_note(pitch(Letter::kC), quarter(), false,
+                            {Articulation::kAccent, Articulation::kAccent}))
+          .ok());
+
+  const auto diagnostics = validate_voice_references(voice);
+  ASSERT_EQ(diagnostics.size(), 1u);
+  EXPECT_EQ(diagnostics[0].code,
+            NotationDiagnosticCode::kDuplicateArticulation);
+  EXPECT_EQ(diagnostics[0].entity_id, event_id(voice.events()[0]));
+}
+
+TEST(NotationValidationTest, DuplicateDurationArticulationIsFlaggedTwice) {
+  VoiceContent voice;
+  ASSERT_TRUE(
+      voice
+          .append(make_note(pitch(Letter::kC), quarter(), false,
+                            {Articulation::kStaccato, Articulation::kStaccato}))
+          .ok());
+
+  const auto diagnostics = validate_voice_references(voice);
+  ASSERT_EQ(diagnostics.size(), 2u);
+  EXPECT_EQ(diagnostics[0].code,
+            NotationDiagnosticCode::kDuplicateArticulation);
+  EXPECT_EQ(diagnostics[1].code,
+            NotationDiagnosticCode::kConflictingDurationArticulation);
+}
+
+TEST(NotationValidationTest, DistinctArticulationsOnOneChordAreClean) {
+  VoiceContent voice;
+  ASSERT_TRUE(
+      voice
+          .append(make_chord(
+              quarter(),
+              {ChordNote{NotationEntityId::generate(), pitch(Letter::kC)},
+               ChordNote{NotationEntityId::generate(), pitch(Letter::kE)}},
+              {Articulation::kAccent, Articulation::kMarcato,
+               Articulation::kTenuto}))
+          .ok());
+
+  EXPECT_TRUE(validate_voice_references(voice).empty());
+}
+
 // ---- Focused per-family incremental-consumer vs full equality ----
 
 TEST(VoiceValidationStateTest, IncrementalTieDiagnosticsEqualFull) {

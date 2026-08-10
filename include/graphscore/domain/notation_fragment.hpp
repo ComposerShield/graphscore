@@ -288,7 +288,14 @@ struct FragmentExtraction {
 // even on failure.
 //
 // Accepted selection arms: FullMeasureSet and ArbitraryRangeSet only;
-// every other arm fails with kInvalidArgument and no fragment.
+// every other arm fails with kInvalidArgument and no fragment. This is a
+// whitelist, so a new Selection arm is rejected until it is deliberately
+// supported. RestSet and MarkingSet are rejected on purpose rather than
+// pending: a fragment is a contiguous musical-time span with rhythmically
+// complete voices, whereas both of those name individual, possibly
+// discontiguous entities. Copying a run of rests is expressed as the
+// ArbitraryRangeSet covering them; a marking has no time span of its own
+// to paste into.
 //
 // Preconditions (each failing kInvalidArgument, leaving no fragment):
 //   - validate_selection(project, selection) returns no diagnostics.

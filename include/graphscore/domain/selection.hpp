@@ -39,6 +39,93 @@ struct ChordItem {
   [[nodiscard]] bool operator==(const ChordItem&) const = default;
 };
 
+struct RestItem {
+  NodeId           node;
+  TrackId          track;
+  StaveId          stave;
+  Voice            voice;
+  NotationEntityId entity;
+
+  [[nodiscard]] bool operator==(const RestItem&) const = default;
+};
+
+// Which visible marking a MarkingItem names.  Every marking a reader can
+// see is independently selectable and deletable, so this covers the four
+// marking records that carry their own NotationEntityId (dynamic, hairpin,
+// slur, pedal span) as well as the three that do not exist as records at
+// all (articulation, tie, tuplet number) and are addressed by composite
+// key instead — see MarkingItem.
+//
+// BeamOverride is deliberately absent: it has an id, but the engraver
+// emits no hit geometry for it (beams are bare LineCommands), so it cannot
+// be resolved from a pointer position.  Adding it here without engraving
+// support would make a selection that the editor can never produce or
+// indicate.
+enum class MarkingKind : std::uint8_t {
+  kDynamic = 0,
+  kHairpin,
+  kSlur,
+  kPedalSpan,
+  kArticulation,
+  kTie,
+  kTuplet,
+};
+
+// One selected marking, addressed by an *anchor entity id plus a kind
+// discriminator* rather than by an id of its own.
+//
+// Articulations (a plain Articulation in Note/Chord::articulations), ties
+// (a plain bool tied_to_next on Note/ChordNote) and tuplets (a
+// TupletRatio inside Duration) are values, not identified records.  Minting
+// a NotationEntityId for each of them so they could be named directly would
+// change three widely-used aggregates and every persistence, clipboard and
+// remapping path that copies them, for no user-visible gain.  The composite
+// key is unambiguous instead: an event cannot carry the same articulation
+// twice (enforced by validate_voice_references' duplicate-articulation
+// check), a note has at most one tie to the following event, and a tuplet
+// run has exactly one first event.
+//
+// Anchor semantics per kind:
+//   kDynamic, kHairpin, kSlur — the marking record's own id, in the
+//     addressed voice's dynamics()/hairpins()/slurs().
+//   kPedalSpan               — the PedalSpan's own id.  Pedal is scoped
+//     per stave, never per voice (TrackLane::add_pedal_span), so `voice`
+//     is disengaged for this kind and engaged for every other one; that
+//     keeps one pedal span from having four equally valid addresses, which
+//     would defeat MarkingSet's deduplication.
+//   kArticulation            — the *parent event's* id (a top-level Note
+//     or Chord; articulations belong to the chord column, not to a single
+//     ChordNote), plus `articulation` naming which one.  `articulation` is
+//     engaged for this kind and disengaged for every other one.
+//   kTie                     — the id of the Note or ChordNote whose
+//     tied_to_next is set.  A tie is drawn from its origin notehead, and a
+//     chord ties note-by-note, so the origin is the only stable anchor.
+//     This admits an origin whose tie is never painted (target missing or
+//     pitch mismatch), which is safe: validate_voice_references already
+//     flags that project state, and the Phase 2 resolver works from
+//     geometry, so it can never produce such an item.
+//   kTuplet                  — the id of the *first event of the tuplet
+//     run* (the same event validate_voice_references reports an incomplete
+//     run against), which is where the bracket and number are drawn.
+//
+// The shape rules above (`voice`/`articulation` engaged exactly when the
+// kind requires it) are intrinsic and enforced by MarkingSet::create, like
+// ArbitraryRangeItem's span ordering; validate_selection then checks the
+// anchor against the project.
+struct MarkingItem {
+  NodeId  node;
+  TrackId track;
+  StaveId stave;
+  // Engaged for every kind except kPedalSpan (stave-scoped).
+  std::optional<Voice> voice;
+  MarkingKind          kind = MarkingKind::kDynamic;
+  NotationEntityId     anchor;
+  // Engaged if and only if kind == kArticulation.
+  std::optional<Articulation> articulation;
+
+  [[nodiscard]] bool operator==(const MarkingItem&) const = default;
+};
+
 struct FullMeasureItem {
   NodeId      node;
   TrackId     track;
@@ -120,6 +207,49 @@ class ChordSet {
   explicit ChordSet(std::vector<ChordItem> items) : items_(std::move(items)) {}
 
   std::vector<ChordItem> items_;
+};
+
+class RestSet {
+ public:
+  RestSet() = delete;
+
+  [[nodiscard]] static std::optional<RestSet> create(
+      std::vector<RestItem> items);
+
+  [[nodiscard]] const std::vector<RestItem>& items() const noexcept {
+    return items_;
+  }
+
+  [[nodiscard]] bool operator==(const RestSet&) const = default;
+
+ private:
+  explicit RestSet(std::vector<RestItem> items) : items_(std::move(items)) {}
+
+  std::vector<RestItem> items_;
+};
+
+class MarkingSet {
+ public:
+  MarkingSet() = delete;
+
+  // Each item's discriminator fields must match its kind (intrinsic):
+  // `articulation` engaged iff kind == kArticulation, `voice` engaged iff
+  // kind != kPedalSpan.  Empty vectors and duplicate items are also
+  // rejected.
+  [[nodiscard]] static std::optional<MarkingSet> create(
+      std::vector<MarkingItem> items);
+
+  [[nodiscard]] const std::vector<MarkingItem>& items() const noexcept {
+    return items_;
+  }
+
+  [[nodiscard]] bool operator==(const MarkingSet&) const = default;
+
+ private:
+  explicit MarkingSet(std::vector<MarkingItem> items)
+      : items_(std::move(items)) {}
+
+  std::vector<MarkingItem> items_;
 };
 
 class FullMeasureSet {
@@ -235,10 +365,20 @@ class InsertionCaretSet {
 //
 // M03 persistence obligation: ChordNote::id and GraceNote::id (8f-i) are
 // load-bearing — dropping or regenerating them silently breaks every
-// notehead/chord selection and clipboard identity remapping.
+// notehead/chord selection and clipboard identity remapping.  Rest::id and
+// every marking record's own id (DynamicMarking, Hairpin, Slur, PedalSpan)
+// are load-bearing for exactly the same reason now that RestSet and
+// MarkingSet address them; and because MarkingItem names articulations,
+// ties and tuplets by (anchor event, kind) rather than by an id of their
+// own, M03 must also preserve articulation *order-independent membership*,
+// tied_to_next, and tuplet run boundaries — a migration that reorders a
+// tuplet run or drops a tie flag silently invalidates those selections.
+//
+// New arms are appended rather than grouped with their neighbours so that
+// the existing alternatives keep their variant indices.
 using Selection =
     std::variant<NoteheadSet, ChordSet, FullMeasureSet, ArbitraryRangeSet,
-                 NodeSet, ConnectorSet, InsertionCaretSet>;
+                 NodeSet, ConnectorSet, InsertionCaretSet, RestSet, MarkingSet>;
 
 // ---- validation ----
 
@@ -255,6 +395,14 @@ enum class SelectionDiagnosticCode : std::uint8_t {
   kNoTimeline,
   kConnectorNotFound,
   kCaretPositionNotBoundary,
+  // The anchor entity exists and is the right kind, but the marking the
+  // item names is not on it: a tie whose tied_to_next is clear, an
+  // articulation absent from the event's list, or a tuplet on an event
+  // that carries no tuplet ratio (or that is not its run's first event).
+  // Distinct from kWrongEntityKind because it is the code a stale
+  // selection produces after an edit deletes the marking, which callers
+  // recover from by dropping the item rather than by re-resolving it.
+  kMarkingNotPresent,
 };
 
 struct SelectionDiagnostic {
@@ -276,6 +424,18 @@ struct SelectionDiagnostic {
 //   chord         — node/track/stave/lane exists; track is active;
 //                   entity resolves to top-level Chord (not ChordNote,
 //                   Rest, GraceNote, or non-chord entity)
+//   rest          — node/track/stave/lane exists; track is active;
+//                   entity resolves to a top-level Rest (not Note,
+//                   Chord, ChordNote, or GraceNote)
+//   marking       — node/track/stave/lane exists; track is active; the
+//                   anchor exists in the addressed scope (kEntityNotFound
+//                   otherwise) and is the kind the MarkingKind requires
+//                   (kWrongEntityKind otherwise); for kArticulation,
+//                   kTie and kTuplet the named marking is actually
+//                   present on that anchor (kMarkingNotPresent
+//                   otherwise).  The kind/discriminator shape rules are
+//                   intrinsic and enforced by MarkingSet::create, so no
+//                   diagnostic exists for them.
 //   full measure  — node/track/stave exists; track is active; lane
 //                   exists; node has timeline; measure_index <
 //                   measure_count() (kNoTimeline otherwise); pickdown

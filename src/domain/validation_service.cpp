@@ -101,6 +101,8 @@ DiagnosticCode notation_code(const NotationDiagnosticCode code) {
       return DiagnosticCode::kDynamicDanglingReference;
     case NotationDiagnosticCode::kGraceGroupPrincipalNotSounding:
       return DiagnosticCode::kGraceGroupPrincipalNotSounding;
+    case NotationDiagnosticCode::kDuplicateArticulation:
+      return DiagnosticCode::kDuplicateArticulation;
   }
   return DiagnosticCode::kDynamicDanglingReference;
 }

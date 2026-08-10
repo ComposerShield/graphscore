@@ -795,7 +795,10 @@ struct LaneRestoreBundle {
 // named (stave, voice) pairs. Only called after extract_fragment has
 // already succeeded for the same selection, so every lookup here is
 // expected to succeed; std::nullopt is a defensive fallback, not a normal
-// outcome.
+// outcome. The same is true of the arms this function does not handle:
+// extract_fragment's whitelist has already rejected every Selection arm
+// other than these two, so returning std::nullopt for one of them is an
+// unreachable second refusal, not a silent fallthrough.
 [[nodiscard]] inline std::optional<CutTarget> resolve_cut_target(
     const Project& project, const Selection& selection) {
   if (const auto* full_measure = std::get_if<FullMeasureSet>(&selection)) {

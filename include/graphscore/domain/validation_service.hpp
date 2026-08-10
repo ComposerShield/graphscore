@@ -59,6 +59,7 @@ enum class DiagnosticCode : std::uint8_t {
   kInvalidBeamOverride,
   kDynamicDanglingReference,
   kGraceGroupPrincipalNotSounding,
+  kDuplicateArticulation,
 };
 
 // The variant preserves the strong type of every heterogeneous stable entity

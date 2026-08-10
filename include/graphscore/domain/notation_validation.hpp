@@ -32,6 +32,7 @@ enum class NotationDiagnosticCode : std::uint8_t {
   kInvalidBeamOverride,
   kDynamicDanglingReference,
   kGraceGroupPrincipalNotSounding,
+  kDuplicateArticulation,
 };
 
 // One referential validation finding: the offending NotationEntityId (the

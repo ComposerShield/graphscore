@@ -12,6 +12,7 @@
 
 using graphscore::ArbitraryRangeItem;
 using graphscore::ArbitraryRangeSet;
+using graphscore::Articulation;
 using graphscore::ChordItem;
 using graphscore::ChordNote;
 using graphscore::ChordSet;
@@ -21,12 +22,14 @@ using graphscore::ConnectorItem;
 using graphscore::ConnectorSet;
 using graphscore::ConnectorType;
 using graphscore::Duration;
+using graphscore::Dynamic;
 using graphscore::event_id;
 using graphscore::FullMeasureItem;
 using graphscore::FullMeasureSet;
 using graphscore::GraceGroup;
 using graphscore::GraceNote;
 using graphscore::GraceNoteType;
+using graphscore::HairpinDirection;
 using graphscore::InsertionCaretItem;
 using graphscore::InsertionCaretSet;
 using graphscore::KeySignature;
@@ -34,7 +37,14 @@ using graphscore::Letter;
 using graphscore::make_chord;
 using graphscore::make_dynamic_marking;
 using graphscore::make_grace_group;
+using graphscore::make_hairpin;
 using graphscore::make_note;
+using graphscore::make_pedal_span;
+using graphscore::make_rest;
+using graphscore::make_slur;
+using graphscore::MarkingItem;
+using graphscore::MarkingKind;
+using graphscore::MarkingSet;
 using graphscore::Measure;
 using graphscore::MidiChannel;
 using graphscore::MusicalSpan;
@@ -51,6 +61,8 @@ using graphscore::NoteValue;
 using graphscore::Project;
 using graphscore::ProjectId;
 using graphscore::Rational;
+using graphscore::RestItem;
+using graphscore::RestSet;
 using graphscore::Selection;
 using graphscore::SelectionDiagnostic;
 using graphscore::SelectionDiagnosticCode;
@@ -63,6 +75,7 @@ using graphscore::TimeSignature;
 using graphscore::Track;
 using graphscore::TrackId;
 using graphscore::TrackLane;
+using graphscore::TupletRatio;
 using graphscore::validate_selection;
 using graphscore::Voice;
 using graphscore::VoiceContent;
@@ -168,6 +181,114 @@ struct Fixture {
     return gn_id;
   }
 
+  // Appends a quarter-note Rest to (stave, voice), returns its entity id.
+  NotationEntityId add_rest(Voice voice_num = Voice{}) {
+    auto* sv = const_cast<StaveVoices*>(lane->stave(stave_id));
+    assert(sv != nullptr);
+    VoiceEvent       e   = make_rest(quarter());
+    NotationEntityId eid = event_id(e);
+    (void)sv->voice(voice_num).append(std::move(e));
+    return eid;
+  }
+
+  // Appends a quarter-note Note carrying `articulations`, returns its id.
+  NotationEntityId add_articulated_note(std::vector<Articulation> articulations,
+                                        Voice voice_num = Voice{}) {
+    auto* sv = const_cast<StaveVoices*>(lane->stave(stave_id));
+    assert(sv != nullptr);
+    VoiceEvent       e   = make_note(pitch(Letter::kC), quarter(), false,
+                                     std::move(articulations));
+    NotationEntityId eid = event_id(e);
+    (void)sv->voice(voice_num).append(std::move(e));
+    return eid;
+  }
+
+  // Appends two same-pitch quarter notes, the first tied into the second;
+  // returns the tie origin's id.
+  NotationEntityId add_tied_note_pair(Voice voice_num = Voice{}) {
+    auto* sv = const_cast<StaveVoices*>(lane->stave(stave_id));
+    assert(sv != nullptr);
+    VoiceEvent first =
+        make_note(pitch(Letter::kC), quarter(), /*tied_to_next=*/true);
+    VoiceEvent       second = make_note(pitch(Letter::kC), quarter());
+    NotationEntityId eid    = event_id(first);
+    (void)sv->voice(voice_num).append(std::move(first));
+    (void)sv->voice(voice_num).append(std::move(second));
+    return eid;
+  }
+
+  // Appends two identical chords, the first chord's lowest notehead tied
+  // into the second; returns that tied ChordNote's id.
+  NotationEntityId add_tied_chord_pair(Voice voice_num = Voice{}) {
+    auto* sv = const_cast<StaveVoices*>(lane->stave(stave_id));
+    assert(sv != nullptr);
+    auto first = make_chord(
+        quarter(),
+        {ChordNote{NotationEntityId::generate(), pitch(Letter::kC), true},
+         ChordNote{NotationEntityId::generate(), pitch(Letter::kE)}});
+    NotationEntityId       nid = first.notes[0].id;
+    std::vector<ChordNote> continuation{
+        ChordNote{NotationEntityId::generate(), pitch(Letter::kC)},
+        ChordNote{NotationEntityId::generate(), pitch(Letter::kE)}};
+    auto second = make_chord(quarter(), std::move(continuation));
+    (void)sv->voice(voice_num).append(std::move(first));
+    (void)sv->voice(voice_num).append(std::move(second));
+    return nid;
+  }
+
+  // Appends a three-eighth 3:2 tuplet run, returns the ids in voice order.
+  std::vector<NotationEntityId> add_triplet_run(Voice voice_num = Voice{}) {
+    auto* sv = const_cast<StaveVoices*>(lane->stave(stave_id));
+    assert(sv != nullptr);
+    const Duration eighth_triplet =
+        *Duration::create(NoteValue::kEighth, 0, TupletRatio::create(3, 2));
+    std::vector<NotationEntityId> ids;
+    for (int i = 0; i < 3; ++i) {
+      VoiceEvent e = make_note(pitch(Letter::kC), eighth_triplet);
+      ids.push_back(event_id(e));
+      (void)sv->voice(voice_num).append(std::move(e));
+    }
+    return ids;
+  }
+
+  NotationEntityId add_dynamic(NotationEntityId at_event,
+                               Voice            voice_num = Voice{}) {
+    auto* sv = const_cast<StaveVoices*>(lane->stave(stave_id));
+    assert(sv != nullptr);
+    auto             marking = make_dynamic_marking(at_event, Dynamic::kMf);
+    NotationEntityId id      = marking.id;
+    (void)sv->voice(voice_num).add_dynamic(std::move(marking));
+    return id;
+  }
+
+  NotationEntityId add_hairpin(NotationEntityId start, NotationEntityId end,
+                               Voice voice_num = Voice{}) {
+    auto* sv = const_cast<StaveVoices*>(lane->stave(stave_id));
+    assert(sv != nullptr);
+    auto marking = make_hairpin(start, end, HairpinDirection::kCrescendo);
+    NotationEntityId id = marking.id;
+    (void)sv->voice(voice_num).add_hairpin(std::move(marking));
+    return id;
+  }
+
+  NotationEntityId add_slur(NotationEntityId start, NotationEntityId end,
+                            Voice voice_num = Voice{}) {
+    auto* sv = const_cast<StaveVoices*>(lane->stave(stave_id));
+    assert(sv != nullptr);
+    auto             marking = make_slur(start, end);
+    NotationEntityId id      = marking.id;
+    (void)sv->voice(voice_num).add_slur(std::move(marking));
+    return id;
+  }
+
+  NotationEntityId add_pedal_span() {
+    auto span           = make_pedal_span(Rational(0), *Rational::create(1, 2));
+    NotationEntityId id = span.id;
+    (void)const_cast<TrackLane*>(lane)->add_pedal_span(stave_id,
+                                                       std::move(span));
+    return id;
+  }
+
   // Archives the track.
   void archive() { (void)project.archive_track(track_id); }
 
@@ -186,6 +307,17 @@ bool has_diag(const std::vector<SelectionDiagnostic>& diags,
       return true;
   }
   return false;
+}
+
+// A shape-correct MarkingItem in `f`'s scope: voice engaged for every kind
+// but kPedalSpan, articulation engaged only for kArticulation.
+MarkingItem marking(const Fixture& f, MarkingKind kind, NotationEntityId anchor,
+                    std::optional<Articulation> articulation = std::nullopt) {
+  std::optional<Voice> voice;
+  if (kind != MarkingKind::kPedalSpan)
+    voice = Voice{};
+  return MarkingItem{f.node_id, f.track_id, f.stave_id,  voice,
+                     kind,      anchor,     articulation};
 }
 
 }  // namespace
@@ -1458,4 +1590,636 @@ TEST(SelectionTest, ConnectorNotFoundExactDiagnostic) {
   EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kConnectorNotFound);
   EXPECT_EQ(diags[0].item_index, 0u);
   EXPECT_EQ(diags[0].message, "connector not found on node");
+}
+
+// ============================================================
+// RestSet — intrinsic structure
+// ============================================================
+
+TEST(SelectionTest, RestSetRejectsEmpty) {
+  EXPECT_FALSE(RestSet::create({}).has_value());
+}
+
+TEST(SelectionTest, RestSetRejectsDuplicate) {
+  RestItem a{NodeId::generate(), TrackId::generate(), StaveId::generate(),
+             Voice{}, NotationEntityId::generate()};
+  EXPECT_FALSE(RestSet::create({a, a}).has_value());
+}
+
+TEST(SelectionTest, RestSetRoundTripsItems) {
+  RestItem a{NodeId::generate(), TrackId::generate(), StaveId::generate(),
+             Voice{}, NotationEntityId::generate()};
+  RestItem b{a.node, a.track, a.stave, Voice{}, NotationEntityId::generate()};
+  auto     s = RestSet::create({a, b});
+  ASSERT_TRUE(s.has_value());
+  ASSERT_EQ(s->items().size(), 2u);
+  EXPECT_EQ(s->items()[0], a);
+  EXPECT_EQ(s->items()[1], b);
+  EXPECT_EQ(*s, *RestSet::create({a, b}));
+}
+
+TEST(SelectionTest, VariantConstructionFromRestSet) {
+  auto s = RestSet::create(
+      {RestItem{NodeId::generate(), TrackId::generate(), StaveId::generate(),
+                Voice{}, NotationEntityId::generate()}});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(std::holds_alternative<RestSet>(sel));
+}
+
+// ============================================================
+// validate_selection — rest
+// ============================================================
+
+TEST(SelectionTest, ValidateRestValidRest) {
+  Fixture          f;
+  NotationEntityId rest_id = f.add_rest();
+  auto             s       = RestSet::create(
+      {RestItem{f.node_id, f.track_id, f.stave_id, Voice{}, rest_id}});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(validate_selection(f.project, sel).empty());
+}
+
+TEST(SelectionTest, ValidateRestRejectsNote) {
+  Fixture          f;
+  NotationEntityId note_id = f.add_note();
+  auto             s       = RestSet::create(
+      {RestItem{f.node_id, f.track_id, f.stave_id, Voice{}, note_id}});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 1u);
+  EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kWrongEntityKind);
+  EXPECT_EQ(diags[0].message, "entity is not a top-level rest");
+}
+
+TEST(SelectionTest, ValidateRestRejectsChordAndChordNote) {
+  Fixture f;
+  auto    ids = f.add_chord();
+  auto    s   = RestSet::create(
+      {RestItem{f.node_id, f.track_id, f.stave_id, Voice{}, ids.chord_id},
+            RestItem{f.node_id, f.track_id, f.stave_id, Voice{}, ids.note_id}});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  EXPECT_TRUE(has_diag(diags, SelectionDiagnosticCode::kWrongEntityKind, 0));
+  EXPECT_TRUE(has_diag(diags, SelectionDiagnosticCode::kWrongEntityKind, 1));
+}
+
+TEST(SelectionTest, ValidateRestRejectsGraceNote) {
+  Fixture          f;
+  NotationEntityId note_id = f.add_note();
+  NotationEntityId gn_id   = f.add_grace_note(note_id);
+  auto             s       = RestSet::create(
+      {RestItem{f.node_id, f.track_id, f.stave_id, Voice{}, gn_id}});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(has_diag(validate_selection(f.project, sel),
+                       SelectionDiagnosticCode::kWrongEntityKind, 0));
+}
+
+TEST(SelectionTest, ValidateRestEntityNotFound) {
+  Fixture f;
+  (void)f.add_rest();
+  auto s = RestSet::create({RestItem{f.node_id, f.track_id, f.stave_id, Voice{},
+                                     NotationEntityId::generate()}});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(has_diag(validate_selection(f.project, sel),
+                       SelectionDiagnosticCode::kEntityNotFound, 0));
+}
+
+TEST(SelectionTest, ValidateRestPropagatesScopeDiagnostics) {
+  Fixture          f;
+  NotationEntityId rest_id = f.add_rest();
+  auto             s       = RestSet::create(
+      {RestItem{NodeId::generate(), f.track_id, f.stave_id, Voice{}, rest_id}});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(has_diag(validate_selection(f.project, sel),
+                       SelectionDiagnosticCode::kNodeNotFound, 0));
+}
+
+// A rest is still not a notehead and not a chord: the two existing arms
+// are unchanged by the new one.
+TEST(SelectionTest, ValidateNoteheadStillRejectsRestEntity) {
+  Fixture          f;
+  NotationEntityId rest_id = f.add_rest();
+  auto             s       = NoteheadSet::create(
+      {NoteheadItem{f.node_id, f.track_id, f.stave_id, Voice{}, rest_id}});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 1u);
+  EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kWrongEntityKind);
+  EXPECT_EQ(diags[0].message, "entity is not a notehead");
+}
+
+TEST(SelectionTest, ValidateChordStillRejectsRestEntity) {
+  Fixture          f;
+  NotationEntityId rest_id = f.add_rest();
+  auto             s       = ChordSet::create(
+      {ChordItem{f.node_id, f.track_id, f.stave_id, Voice{}, rest_id}});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 1u);
+  EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kWrongEntityKind);
+  EXPECT_EQ(diags[0].message, "entity is not a top-level chord");
+}
+
+// ============================================================
+// MarkingSet — intrinsic structure
+// ============================================================
+
+TEST(SelectionTest, MarkingSetRejectsEmpty) {
+  EXPECT_FALSE(MarkingSet::create({}).has_value());
+}
+
+TEST(SelectionTest, MarkingSetRejectsDuplicate) {
+  Fixture           f;
+  const MarkingItem item =
+      marking(f, MarkingKind::kSlur, NotationEntityId::generate());
+  EXPECT_FALSE(MarkingSet::create({item, item}).has_value());
+}
+
+TEST(SelectionTest, MarkingSetRoundTripsItems) {
+  Fixture           f;
+  const MarkingItem dynamic =
+      marking(f, MarkingKind::kDynamic, NotationEntityId::generate());
+  const MarkingItem pedal =
+      marking(f, MarkingKind::kPedalSpan, NotationEntityId::generate());
+  auto s = MarkingSet::create({dynamic, pedal});
+  ASSERT_TRUE(s.has_value());
+  ASSERT_EQ(s->items().size(), 2u);
+  EXPECT_EQ(s->items()[0], dynamic);
+  EXPECT_EQ(s->items()[1], pedal);
+  EXPECT_FALSE(s->items()[1].voice.has_value());
+  EXPECT_EQ(*s, *MarkingSet::create({dynamic, pedal}));
+}
+
+TEST(SelectionTest, VariantConstructionFromMarkingSet) {
+  Fixture f;
+  auto    s = MarkingSet::create(
+      {marking(f, MarkingKind::kTie, NotationEntityId::generate())});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(std::holds_alternative<MarkingSet>(sel));
+}
+
+TEST(SelectionTest, MarkingSetRejectsArticulationWithoutDiscriminator) {
+  Fixture     f;
+  MarkingItem item =
+      marking(f, MarkingKind::kArticulation, NotationEntityId::generate());
+  ASSERT_FALSE(item.articulation.has_value());
+  EXPECT_FALSE(MarkingSet::create({item}).has_value());
+}
+
+TEST(SelectionTest, MarkingSetAcceptsArticulationWithDiscriminator) {
+  Fixture f;
+  EXPECT_TRUE(MarkingSet::create({marking(f, MarkingKind::kArticulation,
+                                          NotationEntityId::generate(),
+                                          Articulation::kAccent)})
+                  .has_value());
+}
+
+TEST(SelectionTest, MarkingSetRejectsArticulationOnOtherKinds) {
+  Fixture f;
+  for (const MarkingKind kind :
+       {MarkingKind::kDynamic, MarkingKind::kHairpin, MarkingKind::kSlur,
+        MarkingKind::kPedalSpan, MarkingKind::kTie, MarkingKind::kTuplet}) {
+    MarkingItem item  = marking(f, kind, NotationEntityId::generate());
+    item.articulation = Articulation::kStaccato;
+    EXPECT_FALSE(MarkingSet::create({item}).has_value())
+        << "kind " << static_cast<int>(kind);
+  }
+}
+
+TEST(SelectionTest, MarkingSetRejectsPedalSpanWithVoice) {
+  Fixture     f;
+  MarkingItem item =
+      marking(f, MarkingKind::kPedalSpan, NotationEntityId::generate());
+  item.voice = Voice{};
+  EXPECT_FALSE(MarkingSet::create({item}).has_value());
+}
+
+TEST(SelectionTest, MarkingSetRejectsVoicelessNonPedalKinds) {
+  Fixture f;
+  for (const MarkingKind kind :
+       {MarkingKind::kDynamic, MarkingKind::kHairpin, MarkingKind::kSlur,
+        MarkingKind::kTie, MarkingKind::kTuplet}) {
+    MarkingItem item = marking(f, kind, NotationEntityId::generate());
+    item.voice.reset();
+    EXPECT_FALSE(MarkingSet::create({item}).has_value())
+        << "kind " << static_cast<int>(kind);
+  }
+  MarkingItem articulation =
+      marking(f, MarkingKind::kArticulation, NotationEntityId::generate(),
+              Articulation::kTenuto);
+  articulation.voice.reset();
+  EXPECT_FALSE(MarkingSet::create({articulation}).has_value());
+}
+
+// ============================================================
+// validate_selection — marking, each kind accepted when present
+// ============================================================
+
+TEST(SelectionTest, ValidateMarkingDynamic) {
+  Fixture          f;
+  NotationEntityId note_id    = f.add_note();
+  NotationEntityId dynamic_id = f.add_dynamic(note_id);
+  auto s = MarkingSet::create({marking(f, MarkingKind::kDynamic, dynamic_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(validate_selection(f.project, sel).empty());
+}
+
+TEST(SelectionTest, ValidateMarkingHairpin) {
+  Fixture          f;
+  NotationEntityId first      = f.add_note();
+  NotationEntityId second     = f.add_note();
+  NotationEntityId hairpin_id = f.add_hairpin(first, second);
+  auto s = MarkingSet::create({marking(f, MarkingKind::kHairpin, hairpin_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(validate_selection(f.project, sel).empty());
+}
+
+TEST(SelectionTest, ValidateMarkingSlur) {
+  Fixture          f;
+  NotationEntityId first   = f.add_note();
+  NotationEntityId second  = f.add_note();
+  NotationEntityId slur_id = f.add_slur(first, second);
+  auto s = MarkingSet::create({marking(f, MarkingKind::kSlur, slur_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(validate_selection(f.project, sel).empty());
+}
+
+TEST(SelectionTest, ValidateMarkingPedalSpan) {
+  Fixture          f;
+  NotationEntityId pedal_id = f.add_pedal_span();
+  auto s = MarkingSet::create({marking(f, MarkingKind::kPedalSpan, pedal_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(validate_selection(f.project, sel).empty());
+}
+
+TEST(SelectionTest, ValidateMarkingArticulationOnNote) {
+  Fixture          f;
+  NotationEntityId note_id =
+      f.add_articulated_note({Articulation::kAccent, Articulation::kStaccato});
+  auto s = MarkingSet::create({marking(f, MarkingKind::kArticulation, note_id,
+                                       Articulation::kStaccato)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(validate_selection(f.project, sel).empty());
+}
+
+TEST(SelectionTest, ValidateMarkingTieOnNote) {
+  Fixture          f;
+  NotationEntityId origin = f.add_tied_note_pair();
+  auto s = MarkingSet::create({marking(f, MarkingKind::kTie, origin)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(validate_selection(f.project, sel).empty());
+}
+
+TEST(SelectionTest, ValidateMarkingTieOnChordNote) {
+  Fixture          f;
+  NotationEntityId origin = f.add_tied_chord_pair();
+  auto s = MarkingSet::create({marking(f, MarkingKind::kTie, origin)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(validate_selection(f.project, sel).empty());
+}
+
+TEST(SelectionTest, ValidateMarkingTupletOnRunStart) {
+  Fixture    f;
+  const auto ids = f.add_triplet_run();
+  ASSERT_EQ(ids.size(), 3u);
+  auto s = MarkingSet::create({marking(f, MarkingKind::kTuplet, ids[0])});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(validate_selection(f.project, sel).empty());
+}
+
+// ============================================================
+// validate_selection — marking not actually present
+// ============================================================
+
+TEST(SelectionTest, ValidateMarkingTieRejectsUntiedNote) {
+  Fixture          f;
+  NotationEntityId note_id = f.add_note();
+  auto s = MarkingSet::create({marking(f, MarkingKind::kTie, note_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 1u);
+  EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kMarkingNotPresent);
+  EXPECT_EQ(diags[0].message, "note is not tied to the following event");
+}
+
+TEST(SelectionTest, ValidateMarkingTieRejectsUntiedChordNote) {
+  Fixture f;
+  auto    ids = f.add_chord();
+  auto    s = MarkingSet::create({marking(f, MarkingKind::kTie, ids.note_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(has_diag(validate_selection(f.project, sel),
+                       SelectionDiagnosticCode::kMarkingNotPresent, 0));
+}
+
+TEST(SelectionTest, ValidateMarkingArticulationRejectsAbsentArticulation) {
+  Fixture          f;
+  NotationEntityId note_id = f.add_articulated_note({Articulation::kAccent});
+  auto             s       = MarkingSet::create(
+      {marking(f, MarkingKind::kArticulation, note_id, Articulation::kTenuto)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 1u);
+  EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kMarkingNotPresent);
+  EXPECT_EQ(diags[0].message, "event does not carry that articulation");
+}
+
+TEST(SelectionTest, ValidateMarkingTupletRejectsPlainEvent) {
+  Fixture          f;
+  NotationEntityId note_id = f.add_note();
+  auto s = MarkingSet::create({marking(f, MarkingKind::kTuplet, note_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 1u);
+  EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kMarkingNotPresent);
+  EXPECT_EQ(diags[0].message, "event carries no tuplet");
+}
+
+TEST(SelectionTest, ValidateMarkingTupletRejectsMidRunEvent) {
+  Fixture    f;
+  const auto ids = f.add_triplet_run();
+  ASSERT_EQ(ids.size(), 3u);
+  auto s = MarkingSet::create({marking(f, MarkingKind::kTuplet, ids[1]),
+                               marking(f, MarkingKind::kTuplet, ids[2])});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 2u);
+  EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kMarkingNotPresent);
+  EXPECT_EQ(diags[0].message, "event is not the first event of its tuplet run");
+  EXPECT_EQ(diags[1].item_index, 1u);
+  EXPECT_EQ(diags[1].code, SelectionDiagnosticCode::kMarkingNotPresent);
+}
+
+// A run whose ratio changes mid-way starts a new run, so the event where
+// the new ratio begins is itself a valid tuplet anchor.
+TEST(SelectionTest, ValidateMarkingTupletAcceptsSecondRunStart) {
+  Fixture    f;
+  const auto ids = f.add_triplet_run();
+  ASSERT_EQ(ids.size(), 3u);
+  auto*          sv = f.mutable_sv();
+  const Duration quintuplet =
+      *Duration::create(NoteValue::kEighth, 0, TupletRatio::create(5, 4));
+  VoiceEvent       next    = make_note(pitch(Letter::kD), quintuplet);
+  NotationEntityId next_id = event_id(next);
+  ASSERT_TRUE(sv->voice(Voice{}).append(std::move(next)).ok());
+
+  auto s = MarkingSet::create({marking(f, MarkingKind::kTuplet, next_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(validate_selection(f.project, sel).empty());
+}
+
+// ============================================================
+// validate_selection — marking anchor mismatch and lookup failure
+// ============================================================
+
+TEST(SelectionTest, ValidateMarkingDynamicRejectsEventAnchor) {
+  Fixture          f;
+  NotationEntityId note_id = f.add_note();
+  auto s = MarkingSet::create({marking(f, MarkingKind::kDynamic, note_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 1u);
+  EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kWrongEntityKind);
+  EXPECT_EQ(diags[0].message, "anchor is not a dynamic marking");
+}
+
+TEST(SelectionTest, ValidateMarkingHairpinRejectsSlurAnchor) {
+  Fixture          f;
+  NotationEntityId first   = f.add_note();
+  NotationEntityId second  = f.add_note();
+  NotationEntityId slur_id = f.add_slur(first, second);
+  auto s = MarkingSet::create({marking(f, MarkingKind::kHairpin, slur_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 1u);
+  EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kWrongEntityKind);
+  EXPECT_EQ(diags[0].message, "anchor is not a hairpin");
+}
+
+TEST(SelectionTest, ValidateMarkingSlurRejectsHairpinAnchor) {
+  Fixture          f;
+  NotationEntityId first      = f.add_note();
+  NotationEntityId second     = f.add_note();
+  NotationEntityId hairpin_id = f.add_hairpin(first, second);
+  auto s = MarkingSet::create({marking(f, MarkingKind::kSlur, hairpin_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(has_diag(validate_selection(f.project, sel),
+                       SelectionDiagnosticCode::kWrongEntityKind, 0));
+}
+
+TEST(SelectionTest, ValidateMarkingTieRejectsRestAnchor) {
+  Fixture          f;
+  NotationEntityId rest_id = f.add_rest();
+  auto s = MarkingSet::create({marking(f, MarkingKind::kTie, rest_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 1u);
+  EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kWrongEntityKind);
+  EXPECT_EQ(diags[0].message, "anchor is not a note or notehead");
+}
+
+TEST(SelectionTest, ValidateMarkingTieRejectsChordAnchor) {
+  Fixture f;
+  auto    ids = f.add_chord();
+  auto    s = MarkingSet::create({marking(f, MarkingKind::kTie, ids.chord_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 1u);
+  EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kWrongEntityKind);
+  EXPECT_EQ(diags[0].message, "anchor is not a note or notehead");
+}
+
+TEST(SelectionTest, ValidateMarkingArticulationRejectsRestAnchor) {
+  Fixture          f;
+  NotationEntityId rest_id = f.add_rest();
+  auto             s       = MarkingSet::create(
+      {marking(f, MarkingKind::kArticulation, rest_id, Articulation::kAccent)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 1u);
+  EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kWrongEntityKind);
+  EXPECT_EQ(diags[0].message,
+            "anchor is not a top-level note or chord carrying articulations");
+}
+
+// Articulations belong to the chord column, not to one notehead, so a
+// ChordNote id is not an articulation anchor.
+TEST(SelectionTest, ValidateMarkingArticulationRejectsChordNoteAnchor) {
+  Fixture           f;
+  auto              ids  = f.add_chord();
+  const MarkingItem item = marking(f, MarkingKind::kArticulation, ids.note_id,
+                                   Articulation::kAccent);
+  auto              s    = MarkingSet::create({item});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(has_diag(validate_selection(f.project, sel),
+                       SelectionDiagnosticCode::kWrongEntityKind, 0));
+}
+
+TEST(SelectionTest, ValidateMarkingTupletRejectsChordNoteAnchor) {
+  Fixture f;
+  auto    ids = f.add_chord();
+  auto s = MarkingSet::create({marking(f, MarkingKind::kTuplet, ids.note_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 1u);
+  EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kWrongEntityKind);
+  EXPECT_EQ(diags[0].message, "anchor is not a top-level event");
+}
+
+TEST(SelectionTest, ValidateMarkingPedalSpanRejectsEventAnchor) {
+  Fixture          f;
+  NotationEntityId note_id = f.add_note();
+  (void)f.add_pedal_span();
+  auto s = MarkingSet::create({marking(f, MarkingKind::kPedalSpan, note_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 1u);
+  EXPECT_EQ(diags[0].code, SelectionDiagnosticCode::kWrongEntityKind);
+  EXPECT_EQ(diags[0].message, "anchor is not a pedal span");
+}
+
+TEST(SelectionTest, ValidateMarkingUnknownAnchorNotFound) {
+  Fixture f;
+  (void)f.add_note();
+  auto s = MarkingSet::create(
+      {marking(f, MarkingKind::kDynamic, NotationEntityId::generate()),
+       marking(f, MarkingKind::kHairpin, NotationEntityId::generate()),
+       marking(f, MarkingKind::kSlur, NotationEntityId::generate()),
+       marking(f, MarkingKind::kTie, NotationEntityId::generate()),
+       marking(f, MarkingKind::kTuplet, NotationEntityId::generate()),
+       marking(f, MarkingKind::kArticulation, NotationEntityId::generate(),
+               Articulation::kAccent),
+       marking(f, MarkingKind::kPedalSpan, NotationEntityId::generate())});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  auto      diags = validate_selection(f.project, sel);
+  ASSERT_EQ(diags.size(), 7u);
+  for (std::size_t i = 0; i < diags.size(); ++i) {
+    EXPECT_EQ(diags[i].code, SelectionDiagnosticCode::kEntityNotFound)
+        << "item " << i;
+  }
+}
+
+// A marking in voice 1 is not addressable through voice 2.
+TEST(SelectionTest, ValidateMarkingWrongVoiceNotFound) {
+  Fixture          f;
+  NotationEntityId note_id    = f.add_note();
+  NotationEntityId dynamic_id = f.add_dynamic(note_id);
+  MarkingItem      item       = marking(f, MarkingKind::kDynamic, dynamic_id);
+  item.voice                  = *Voice::create(2);
+  auto s                      = MarkingSet::create({item});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(has_diag(validate_selection(f.project, sel),
+                       SelectionDiagnosticCode::kEntityNotFound, 0));
+}
+
+TEST(SelectionTest, ValidateMarkingPropagatesScopeDiagnostics) {
+  Fixture          f;
+  NotationEntityId pedal_id = f.add_pedal_span();
+  MarkingItem      item     = marking(f, MarkingKind::kPedalSpan, pedal_id);
+  item.stave                = StaveId::generate();
+  auto s                    = MarkingSet::create({item});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(has_diag(validate_selection(f.project, sel),
+                       SelectionDiagnosticCode::kStaveNotFound, 0));
+}
+
+TEST(SelectionTest, ValidateMarkingArchivedTrack) {
+  Fixture          f;
+  NotationEntityId note_id    = f.add_note();
+  NotationEntityId dynamic_id = f.add_dynamic(note_id);
+  f.archive();
+  auto s = MarkingSet::create({marking(f, MarkingKind::kDynamic, dynamic_id)});
+  ASSERT_TRUE(s.has_value());
+  Selection sel{*s};
+  EXPECT_TRUE(has_diag(validate_selection(f.project, sel),
+                       SelectionDiagnosticCode::kTrackArchived, 0));
+}
+
+// ============================================================
+// Clipboard consumers reject the new arms loudly
+// ============================================================
+
+TEST(SelectionTest, ExtractFragmentRejectsRestSelection) {
+  Fixture          f;
+  NotationEntityId rest_id = f.add_rest();
+  auto             s       = RestSet::create(
+      {RestItem{f.node_id, f.track_id, f.stave_id, Voice{}, rest_id}});
+  ASSERT_TRUE(s.has_value());
+  const Selection sel{*s};
+  ASSERT_TRUE(validate_selection(f.project, sel).empty());
+  const auto extraction = graphscore::extract_fragment(f.project, sel);
+  EXPECT_EQ(extraction.status.code(), graphscore::ResultCode::kInvalidArgument);
+  EXPECT_FALSE(extraction.fragment.has_value());
+}
+
+TEST(SelectionTest, ExtractFragmentRejectsMarkingSelection) {
+  Fixture          f;
+  NotationEntityId note_id    = f.add_note();
+  NotationEntityId dynamic_id = f.add_dynamic(note_id);
+  auto s = MarkingSet::create({marking(f, MarkingKind::kDynamic, dynamic_id)});
+  ASSERT_TRUE(s.has_value());
+  const Selection sel{*s};
+  ASSERT_TRUE(validate_selection(f.project, sel).empty());
+  const auto extraction = graphscore::extract_fragment(f.project, sel);
+  EXPECT_EQ(extraction.status.code(), graphscore::ResultCode::kInvalidArgument);
+  EXPECT_FALSE(extraction.fragment.has_value());
+}
+
+TEST(SelectionTest, CutFragmentCommandRejectsRestSelection) {
+  Fixture          f;
+  NotationEntityId rest_id = f.add_rest();
+  auto             s       = RestSet::create(
+      {RestItem{f.node_id, f.track_id, f.stave_id, Voice{}, rest_id}});
+  ASSERT_TRUE(s.has_value());
+  graphscore::CutFragmentCommand command{Selection{*s}};
+  EXPECT_EQ(command.execute(f.project).code(),
+            graphscore::ResultCode::kInvalidArgument);
+  EXPECT_FALSE(command.fragment().has_value());
+}
+
+TEST(SelectionTest, CutFragmentCommandRejectsMarkingSelection) {
+  Fixture          f;
+  NotationEntityId note_id    = f.add_note();
+  NotationEntityId dynamic_id = f.add_dynamic(note_id);
+  auto s = MarkingSet::create({marking(f, MarkingKind::kDynamic, dynamic_id)});
+  ASSERT_TRUE(s.has_value());
+  graphscore::CutFragmentCommand command{Selection{*s}};
+  EXPECT_EQ(command.execute(f.project).code(),
+            graphscore::ResultCode::kInvalidArgument);
+  EXPECT_FALSE(command.fragment().has_value());
 }

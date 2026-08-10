@@ -275,6 +275,25 @@ TEST(ValidationServiceTest, RhythmicCompletenessUsesTheNodeTimeline) {
   EXPECT_TRUE(has_code(report, DiagnosticCode::kRhythmIncomplete));
 }
 
+TEST(ValidationServiceTest, DuplicateArticulationSurfacesAsItsOwnCode) {
+  ProjectFixture fixture = make_clean_project();
+  VoiceContent&  voice   = fixture.project.find_node(fixture.node)
+                            ->lane(fixture.track)
+                            ->stave(fixture.stave)
+                            ->voice(*Voice::create(1));
+  voice.clear();
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      voice
+          .append(make_note(pitch(), whole, false,
+                            {Articulation::kAccent, Articulation::kAccent}))
+          .ok());
+
+  const ValidationReport report =
+      ValidationService().validate_complete(fixture.project);
+  EXPECT_TRUE(has_code(report, DiagnosticCode::kDuplicateArticulation));
+}
+
 TEST(ValidationServiceTest,
      UuidUniquenessIncludesArchivedEmbeddedChordGraceAndMarkingIds) {
   ProjectFixture    fixture       = make_clean_project();
