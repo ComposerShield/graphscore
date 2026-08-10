@@ -43,10 +43,15 @@ If it does not declare exactly one mode, stop and request a corrected prompt.
 
 - In `INITIAL_FULL_REVIEW`, audit the complete phase against the milestone plan, `AGENTS.md`,
   ADRs, changed implementation/tests, and the worker's full traceability matrix. Independently
-  run **Tier 2**: canonical debug build with zero warnings, full ctest, and full lint. If there
-  are no findings, continue yourself to the one final exact-tree **Tier 3** gate: Tier 2 plus
-  all seven architecture audits, canonical clang-tidy 18 in `build/tidy`, applicable sanitizer
-  suites, and milestone-specific gates.
+  run **Tier 2** — canonical debug build with zero warnings, full ctest, and full lint —
+  unless the worker's report already shows a clean, recent Tier 2 run (all three reported
+  passing) **and** `git status`/`git diff` confirm the working tree matches what that report
+  describes; in that case, skip re-running Tier 2 and note in your review that you verified
+  the tree against the reported run instead of re-executing it. If the report is missing,
+  stale, ambiguous, or the tree doesn't match, run Tier 2 yourself — do not skip on a hunch.
+  If there are no findings (Tier 2 run or verified-skipped), continue yourself to the one
+  final exact-tree **Tier 3** gate: Tier 2 plus all seven architecture audits, canonical
+  clang-tidy 18 in `build/tidy`, applicable sanitizer suites, and milestone-specific gates.
 - In `TARGETED_REREVIEW`, inspect only the prior findings, fix worker changed paths/delta,
   affected traceability rows, and equivalent defect family. Run only focused **Tier 1** tests
   while findings remain. Do not restart the full phase audit, re-review unaffected
