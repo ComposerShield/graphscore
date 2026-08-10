@@ -22,9 +22,13 @@ using graphscore::ChordNote;
 using graphscore::ChordSet;
 using graphscore::Clef;
 using graphscore::Duration;
+using graphscore::Dynamic;
+using graphscore::DynamicMarking;
 using graphscore::GlyphCommand;
 using graphscore::GlyphMetrics;
 using graphscore::GlyphMetricsValue;
+using graphscore::Hairpin;
+using graphscore::HairpinDirection;
 using graphscore::HitRegion;
 using graphscore::HitResult;
 using graphscore::HitRole;
@@ -34,8 +38,15 @@ using graphscore::KeySignature;
 using graphscore::layout_notation;
 using graphscore::Letter;
 using graphscore::make_chord;
+using graphscore::make_dynamic_marking;
+using graphscore::make_hairpin;
 using graphscore::make_note;
+using graphscore::make_pedal_span;
 using graphscore::make_rest;
+using graphscore::make_slur;
+using graphscore::MarkingItem;
+using graphscore::MarkingKind;
+using graphscore::MarkingSet;
 using graphscore::Measure;
 using graphscore::MidiChannel;
 using graphscore::Node;
@@ -44,6 +55,7 @@ using graphscore::NodeTimeline;
 using graphscore::NotationEntityId;
 using graphscore::NotationId;
 using graphscore::NotationLayout;
+using graphscore::NotationLayoutOptions;
 using graphscore::NotationPoint;
 using graphscore::NotationRect;
 using graphscore::Note;
@@ -52,6 +64,7 @@ using graphscore::NoteheadSet;
 using graphscore::NotePaletteEntryKind;
 using graphscore::NotePaletteState;
 using graphscore::NoteValue;
+using graphscore::PedalSpan;
 using graphscore::Project;
 using graphscore::ProjectId;
 using graphscore::Rational;
@@ -60,11 +73,13 @@ using graphscore::Rest;
 using graphscore::RestItem;
 using graphscore::RestSet;
 using graphscore::Selection;
+using graphscore::Slur;
 using graphscore::SpelledPitch;
 using graphscore::StaffLayout;
 using graphscore::StaveId;
 using graphscore::TimeSignature;
 using graphscore::TrackId;
+using graphscore::TupletRatio;
 using graphscore::validate_selection;
 using graphscore::Voice;
 using graphscore::VoiceContent;
@@ -207,6 +222,20 @@ struct Fixture {
   EXPECT_NE(found, layout.hit_regions.end());
   return NotationPoint{found->bounds.x + found->bounds.width * 0.5,
                        found->bounds.y + found->bounds.height * 0.9};
+}
+
+// Finds a HitRegion by exact id (e.g. a span-family marking's own
+// "<id>/<role>/segment/system-N/hit" region, which -- unlike a glyph's own
+// hit region -- has no single GlyphCommand origin to read a click point
+// from) and returns the center of its bounds.
+[[nodiscard]] NotationPoint hit_region_center(const NotationLayout& layout,
+                                              const std::string&    target) {
+  const auto found = std::ranges::find_if(
+      layout.hit_regions,
+      [&](const HitRegion& region) { return region.id.value == target; });
+  EXPECT_NE(found, layout.hit_regions.end());
+  return NotationPoint{found->bounds.x + found->bounds.width * 0.5,
+                       found->bounds.y + found->bounds.height * 0.5};
 }
 
 // ---- kNotehead hit -> NoteheadSet ----
@@ -444,9 +473,156 @@ TEST(SelectionResolverTest, ClickingAGraceNoteheadSelectsThatGraceNote) {
       }));
 }
 
-// ---- kMarking hit -> std::nullopt (Phase 2b's scope) ----
+// ---- kMarking hit -> MarkingSet, all seven MarkingKinds ----
 
-TEST(SelectionResolverTest, ClickingAnArticulationReturnsNulloptForNow) {
+TEST(SelectionResolverTest, ClickingADynamicMarkingSelectsIt) {
+  Fixture    fixture(1);
+  const Note note = make_note(*SpelledPitch::create(Letter::kC, 4),
+                              *Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(fixture.voice().append(note).ok());
+  const DynamicMarking dynamic = make_dynamic_marking(note.id, Dynamic::kMf);
+  ASSERT_TRUE(fixture.voice().add_dynamic(dynamic).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  // "mf" engraves two glyphs (one per character); both must resolve to the
+  // same MarkingItem.
+  const NotationPoint glyph0 =
+      glyph_origin(layout, dynamic.id.to_string() + "/glyph/0");
+  const NotationPoint glyph1 =
+      glyph_origin(layout, dynamic.id.to_string() + "/glyph/1");
+  ASSERT_TRUE(layout.hit_test(glyph0).has_value());
+  EXPECT_EQ(layout.hit_test(glyph0)->role, HitRole::kMarking);
+
+  const auto selection0 =
+      resolve_selection_at(fixture.project, layout, note_state(), glyph0);
+  const auto selection1 =
+      resolve_selection_at(fixture.project, layout, note_state(), glyph1);
+  ASSERT_TRUE(selection0.has_value());
+  ASSERT_TRUE(selection1.has_value());
+  const auto* set0 = std::get_if<MarkingSet>(&*selection0);
+  const auto* set1 = std::get_if<MarkingSet>(&*selection1);
+  ASSERT_NE(set0, nullptr);
+  ASSERT_NE(set1, nullptr);
+  ASSERT_EQ(set0->items().size(), 1u);
+  const MarkingItem& item = set0->items().front();
+  EXPECT_EQ(item.kind, MarkingKind::kDynamic);
+  EXPECT_EQ(item.anchor, dynamic.id);
+  ASSERT_TRUE(item.voice.has_value());
+  EXPECT_EQ(*item.voice, *Voice::create(1));
+  EXPECT_FALSE(item.articulation.has_value());
+  EXPECT_EQ(item, set1->items().front());
+  EXPECT_TRUE(validate_selection(fixture.project, *selection0).empty());
+}
+
+TEST(SelectionResolverTest, ClickingAHairpinSegmentSelectsTheHairpin) {
+  Fixture    fixture(1);
+  const Note first  = make_note(*SpelledPitch::create(Letter::kC, 4),
+                                *Duration::create(NoteValue::kQuarter, 0));
+  const Note second = make_note(*SpelledPitch::create(Letter::kD, 4),
+                                *Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(fixture.voice().append(first).ok());
+  ASSERT_TRUE(fixture.voice().append(second).ok());
+  const Hairpin hairpin =
+      make_hairpin(first.id, second.id, HairpinDirection::kCrescendo);
+  ASSERT_TRUE(fixture.voice().add_hairpin(hairpin).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint point = hit_region_center(
+      layout, hairpin.id.to_string() + "/hairpin/segment/system-0/hit");
+
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<MarkingSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  ASSERT_EQ(set->items().size(), 1u);
+  const MarkingItem& item = set->items().front();
+  EXPECT_EQ(item.kind, MarkingKind::kHairpin);
+  EXPECT_EQ(item.anchor, hairpin.id);
+  ASSERT_TRUE(item.voice.has_value());
+  EXPECT_EQ(*item.voice, *Voice::create(1));
+  EXPECT_FALSE(item.articulation.has_value());
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+TEST(SelectionResolverTest, ClickingASlurSegmentSelectsTheSlur) {
+  Fixture    fixture(1);
+  const Note first  = make_note(*SpelledPitch::create(Letter::kC, 4),
+                                *Duration::create(NoteValue::kQuarter, 0));
+  const Note second = make_note(*SpelledPitch::create(Letter::kD, 4),
+                                *Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(fixture.voice().append(first).ok());
+  ASSERT_TRUE(fixture.voice().append(second).ok());
+  const Slur slur = make_slur(first.id, second.id);
+  ASSERT_TRUE(fixture.voice().add_slur(slur).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint point = hit_region_center(
+      layout, slur.id.to_string() + "/slur/segment/system-0/hit");
+
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<MarkingSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  ASSERT_EQ(set->items().size(), 1u);
+  const MarkingItem& item = set->items().front();
+  EXPECT_EQ(item.kind, MarkingKind::kSlur);
+  EXPECT_EQ(item.anchor, slur.id);
+  ASSERT_TRUE(item.voice.has_value());
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+TEST(SelectionResolverTest, ClickingAPedalSpanSelectsItWithVoiceDisengaged) {
+  Fixture fixture(1);
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_rest(*Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  auto* lane =
+      fixture.project.find_node(fixture.node_id)->lane(fixture.track_ids[0]);
+  const PedalSpan span = make_pedal_span(Rational(0), Rational(1));
+  ASSERT_TRUE(lane->add_pedal_span(fixture.stave_id(), span).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const std::string   segment = span.id.to_string() + "/pedal/segment/system-0";
+  const NotationPoint down    = glyph_origin(layout, segment + "/down");
+  const NotationPoint up      = glyph_origin(layout, segment + "/up");
+  const NotationPoint main    = hit_region_center(layout, segment + "/hit");
+
+  const auto down_selection =
+      resolve_selection_at(fixture.project, layout, note_state(), down);
+  const auto up_selection =
+      resolve_selection_at(fixture.project, layout, note_state(), up);
+  const auto main_selection =
+      resolve_selection_at(fixture.project, layout, note_state(), main);
+  ASSERT_TRUE(down_selection.has_value());
+  ASSERT_TRUE(up_selection.has_value());
+  ASSERT_TRUE(main_selection.has_value());
+  const auto* down_set = std::get_if<MarkingSet>(&*down_selection);
+  const auto* up_set   = std::get_if<MarkingSet>(&*up_selection);
+  const auto* main_set = std::get_if<MarkingSet>(&*main_selection);
+  ASSERT_NE(down_set, nullptr);
+  ASSERT_NE(up_set, nullptr);
+  ASSERT_NE(main_set, nullptr);
+  const MarkingItem& item = down_set->items().front();
+  EXPECT_EQ(item.kind, MarkingKind::kPedalSpan);
+  EXPECT_EQ(item.anchor, span.id);
+  EXPECT_FALSE(item.voice.has_value());
+  EXPECT_FALSE(item.articulation.has_value());
+  EXPECT_EQ(item, up_set->items().front());
+  EXPECT_EQ(item, main_set->items().front());
+  EXPECT_TRUE(validate_selection(fixture.project, *down_selection).empty());
+}
+
+TEST(SelectionResolverTest, ClickingAnArticulationSelectsThatArticulation) {
   Fixture    fixture(1);
   const Note note = make_note(*SpelledPitch::create(Letter::kC, 4),
                               *Duration::create(NoteValue::kQuarter, 0), false,
@@ -460,6 +636,282 @@ TEST(SelectionResolverTest, ClickingAnArticulationReturnsNulloptForNow) {
       glyph_origin(layout, note.id.to_string() + "/articulation/0");
   ASSERT_TRUE(layout.hit_test(point).has_value());
   EXPECT_EQ(layout.hit_test(point)->role, HitRole::kMarking);
+
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<MarkingSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  ASSERT_EQ(set->items().size(), 1u);
+  const MarkingItem& item = set->items().front();
+  EXPECT_EQ(item.kind, MarkingKind::kArticulation);
+  EXPECT_EQ(item.anchor, note.id);
+  ASSERT_TRUE(item.articulation.has_value());
+  EXPECT_EQ(*item.articulation, Articulation::kAccent);
+  ASSERT_TRUE(item.voice.has_value());
+  EXPECT_EQ(*item.voice, *Voice::create(1));
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+TEST(SelectionResolverTest,
+     ArticulationIndexResolvesTheTrueVectorPositionDespiteAnEmittedGap) {
+  // Two duration articulations (staccato, tenuto) on one event makes the
+  // engraver skip *both* rather than just the extras, so only index 1
+  // (accent) is ever emitted -- a genuine gap in the emitted indices. This
+  // pins that the resolver reads the numeric segment out of the hit id
+  // itself (the true event_articulations() vector position), not a
+  // position among however many glyphs got drawn.
+  Fixture    fixture(1);
+  const Note note = make_note(
+      *SpelledPitch::create(Letter::kC, 4),
+      *Duration::create(NoteValue::kQuarter, 0), false,
+      {Articulation::kStaccato, Articulation::kAccent, Articulation::kTenuto});
+  ASSERT_TRUE(fixture.voice().append(note).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  EXPECT_TRUE(
+      std::ranges::none_of(layout.hit_regions, [&](const HitRegion& region) {
+        return region.id.value == note.id.to_string() + "/articulation/0/hit";
+      }));
+  const NotationPoint point =
+      glyph_origin(layout, note.id.to_string() + "/articulation/1");
+
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<MarkingSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  ASSERT_TRUE(set->items().front().articulation.has_value());
+  EXPECT_EQ(*set->items().front().articulation, Articulation::kAccent);
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+TEST(SelectionResolverTest, ClickingATieSegmentSelectsTheTie) {
+  Fixture            fixture(1);
+  const SpelledPitch pitch = *SpelledPitch::create(Letter::kC, 4);
+  const Note         first =
+      make_note(pitch, *Duration::create(NoteValue::kQuarter, 0), true);
+  const Note second =
+      make_note(pitch, *Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(fixture.voice().append(first).ok());
+  ASSERT_TRUE(fixture.voice().append(second).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint point = hit_region_center(
+      layout, first.id.to_string() + "/tie/segment/system-0/hit");
+  ASSERT_TRUE(layout.hit_test(point).has_value());
+  EXPECT_EQ(layout.hit_test(point)->role, HitRole::kMarking);
+
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<MarkingSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  ASSERT_EQ(set->items().size(), 1u);
+  const MarkingItem& item = set->items().front();
+  EXPECT_EQ(item.kind, MarkingKind::kTie);
+  EXPECT_EQ(item.anchor, first.id);
+  EXPECT_FALSE(item.articulation.has_value());
+  ASSERT_TRUE(item.voice.has_value());
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+TEST(SelectionResolverTest, ClickingATieOnAChordNoteSelectsThatNotesTie) {
+  Fixture            fixture(1);
+  const SpelledPitch tied_pitch = *SpelledPitch::create(Letter::kC, 4);
+  const std::vector<ChordNote> first_notes = {
+      {NotationEntityId::generate(), tied_pitch, true},
+      {NotationEntityId::generate(), *SpelledPitch::create(Letter::kE, 4),
+       false},
+  };
+  const Chord first =
+      make_chord(*Duration::create(NoteValue::kQuarter, 0), first_notes);
+  const std::vector<ChordNote> second_notes = {
+      {NotationEntityId::generate(), tied_pitch, false},
+      {NotationEntityId::generate(), *SpelledPitch::create(Letter::kE, 4),
+       false},
+  };
+  const Chord second =
+      make_chord(*Duration::create(NoteValue::kQuarter, 0), second_notes);
+  ASSERT_TRUE(fixture.voice().append(first).ok());
+  ASSERT_TRUE(fixture.voice().append(second).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint point = hit_region_center(
+      layout, first_notes[0].id.to_string() + "/tie/segment/system-0/hit");
+
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<MarkingSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  const MarkingItem& item = set->items().front();
+  EXPECT_EQ(item.kind, MarkingKind::kTie);
+  EXPECT_EQ(item.anchor, first_notes[0].id);
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+TEST(SelectionResolverTest, ClickingATupletDigitSelectsTheTupletRun) {
+  Fixture            fixture(1);
+  const auto         ratio   = *TupletRatio::create(3, 2);
+  const Duration     triplet = *Duration::create(NoteValue::kEighth, 0, ratio);
+  const SpelledPitch pitch   = *SpelledPitch::create(Letter::kE, 4);
+  std::vector<Note>  notes;
+  for (int index = 0; index < 6; ++index) {
+    notes.push_back(make_note(pitch, triplet));
+    ASSERT_TRUE(fixture.voice().append(notes.back()).ok());
+  }
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint point =
+      glyph_origin(layout, notes[0].id.to_string() + "/tuplet/digit/0");
+  ASSERT_TRUE(layout.hit_test(point).has_value());
+  EXPECT_EQ(layout.hit_test(point)->role, HitRole::kMarking);
+
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<MarkingSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  ASSERT_EQ(set->items().size(), 1u);
+  const MarkingItem& item = set->items().front();
+  EXPECT_EQ(item.kind, MarkingKind::kTuplet);
+  EXPECT_EQ(item.anchor, notes[0].id);
+  EXPECT_FALSE(item.articulation.has_value());
+  ASSERT_TRUE(item.voice.has_value());
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+// ---- HIGH-3 regression: a tuplet run spanning a system break normalizes
+// to the run's true first event, not merely the event the per-system
+// engraver happened to anchor the digit against (see
+// docs/plan/05-notation-editor.md's cross-system tuplet hazard). ----
+
+TEST(SelectionResolverTest,
+     TupletDigitAcrossASystemBreakNormalizesToTheRunsTrueFirstEvent) {
+  Fixture            fixture(2);
+  const auto         ratio   = *TupletRatio::create(3, 2);
+  const Duration     triplet = *Duration::create(NoteValue::kEighth, 0, ratio);
+  const SpelledPitch pitch   = *SpelledPitch::create(Letter::kE, 4);
+  std::vector<Note>  notes;
+  // 12 eighth-note triplets exactly fill measure 0 (12 * 1/12 whole note ==
+  // 1 whole note); 3 more open measure 1 with the same ratio, so the true
+  // run (15 events, a whole multiple of 3) spans the barline. The
+  // engraver's own per-system fragment for measure 1 prepends only measure
+  // 0's own last event (notes[11]) as lookback context, so its local scan
+  // anchors measure 1's digit at notes[11] -- a mid-run event, not the
+  // run's true first event, notes[0].
+  for (int index = 0; index < 15; ++index) {
+    notes.push_back(make_note(pitch, triplet));
+    ASSERT_TRUE(fixture.voice().append(notes.back()).ok());
+  }
+
+  const FixedMetrics    metrics;
+  NotationLayoutOptions options;
+  options.system_width        = 50.0;
+  options.left_margin         = 1.0;
+  options.right_margin        = 1.0;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics, options));
+  ASSERT_EQ(layout.systems.size(), 2u);
+  ASSERT_EQ(layout.systems[1].first_measure, 1u);
+
+  const NotationPoint point =
+      glyph_origin(layout, notes[11].id.to_string() + "/tuplet/digit/0");
+  ASSERT_TRUE(layout.hit_test(point).has_value());
+  EXPECT_EQ(layout.hit_test(point)->role, HitRole::kMarking);
+  EXPECT_EQ(layout.hit_test(point)->semantic_id.value,
+            notes[11].id.to_string());
+
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<MarkingSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  const MarkingItem& item = set->items().front();
+  EXPECT_EQ(item.kind, MarkingKind::kTuplet);
+  EXPECT_EQ(item.anchor, notes[0].id);
+  EXPECT_NE(item.anchor, notes[11].id);
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+// ---- Stale-layout guards: a kMarking hit whose named marking can no
+// longer be found, or no longer carries the shape its kind requires,
+// yields std::nullopt rather than a Selection validate_selection would
+// reject. ----
+
+TEST(SelectionResolverTest,
+     ADynamicMarkingRemovedAfterLayoutBuiltYieldsNoSelection) {
+  Fixture    fixture(1);
+  const Note note = make_note(*SpelledPitch::create(Letter::kC, 4),
+                              *Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(fixture.voice().append(note).ok());
+  const DynamicMarking dynamic = make_dynamic_marking(note.id, Dynamic::kMf);
+  ASSERT_TRUE(fixture.voice().add_dynamic(dynamic).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint point =
+      glyph_origin(layout, dynamic.id.to_string() + "/glyph/0");
+
+  ASSERT_TRUE(fixture.voice().remove_dynamic(dynamic.id).ok());
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(), point);
+  EXPECT_FALSE(selection.has_value());
+}
+
+TEST(SelectionResolverTest,
+     AnArticulationIndexBeyondTheEventsCurrentCountYieldsNoSelection) {
+  Fixture    fixture(1);
+  const Note note = make_note(*SpelledPitch::create(Letter::kC, 4),
+                              *Duration::create(NoteValue::kQuarter, 0), false,
+                              {Articulation::kAccent});
+  ASSERT_TRUE(fixture.voice().append(note).ok());
+
+  const FixedMetrics metrics;
+  NotationLayout     layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const std::string target = note.id.to_string() + "/articulation/0/hit";
+  const auto        found  = std::ranges::find_if(
+      layout.hit_regions,
+      [&](const HitRegion& region) { return region.id.value == target; });
+  ASSERT_NE(found, layout.hit_regions.end());
+  const NotationPoint point{found->bounds.x + found->bounds.width * 0.5,
+                            found->bounds.y + found->bounds.height * 0.5};
+  found->id = NotationId{note.id.to_string() + "/articulation/9/hit"};
+
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(), point);
+  EXPECT_FALSE(selection.has_value());
+}
+
+TEST(SelectionResolverTest, ATieHitRegionOnAnUntiedNoteYieldsNoSelection) {
+  Fixture    fixture(1);
+  const Note note = make_note(*SpelledPitch::create(Letter::kC, 4),
+                              *Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(fixture.voice().append(note).ok());
+
+  const FixedMetrics metrics;
+  NotationLayout     layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint point = notehead_origin(layout, note.id);
+  // Fabricate a "tie segment" hit region over the note's own position,
+  // naming the note as its semantic entity -- something no real emitter
+  // does for an untied note (add_span_segment's tie branch only ever fires
+  // when tied_to_next is set), simulating a future engraver defect.
+  layout.hit_regions.push_back(
+      HitRegion{NotationId{note.id.to_string() + "/tie/segment/system-0/hit"},
+                NotationId{note.id.to_string()}, HitRole::kMarking,
+                NotationRect{point.x - 1.0, point.y - 1.0, 2.0, 2.0}, 100});
 
   const auto selection =
       resolve_selection_at(fixture.project, layout, note_state(), point);

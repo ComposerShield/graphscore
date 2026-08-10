@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <iterator>
@@ -36,13 +37,24 @@ constexpr char32_t kTimeZero = U'\uE080';
 // than requiring an emitter and a separate ad hoc string literal elsewhere
 // to be edited in lockstep. Only the suffixes actually consumed today are
 // named; dot/accidental/flag regions stay inline literals (see
-// resolve_hit_entity's comment). Phase 2b (marking resolution) extends this
-// table with its own kind-specific suffixes (articulation/N,
-// tie/segment/system-N, tuplet/digit/N) rather than restructuring it.
+// resolve_hit_entity's comment).
+//
+// kHitRoleArticulation, kHitRoleTie, and kHitRoleTupletDigit are this same
+// convention applied to the three kMarking hit families that carry no
+// record id of their own (articulation, tie, tuplet number): their
+// semantic_id is an event id, the same space kNotehead/kEvent hits already
+// search, so resolve_selection_at tells them apart by the shape of hit.id
+// itself -- see hit_id_numeric_suffix/hit_id_is_tie_segment below -- rather
+// than by semantic_id or by a project-side lookup, which is how the other
+// four kMarking kinds (dynamic, hairpin, slur, pedal span) are told apart
+// instead.
 constexpr std::string_view kHitSuffixNotehead      = "notehead";
 constexpr std::string_view kHitSuffixGraceNotehead = "grace-notehead";
 constexpr std::string_view kHitSuffixStem          = "stem";
 constexpr std::string_view kHitSuffixRest          = "rest";
+constexpr std::string_view kHitRoleArticulation    = "articulation";
+constexpr std::string_view kHitRoleTie             = "tie";
+constexpr std::string_view kHitRoleTupletDigit     = "tuplet/digit";
 
 [[nodiscard]] NotationId make_id(const std::string& root,
                                  const std::string& role) {
@@ -2009,7 +2021,8 @@ template <typename Record>
             const double y = head_y + (placed.stem_up ? 1.0 : -1.0) * space *
                                           (2.0 + static_cast<double>(index));
             const NotationId id =
-                make_id(entity, "articulation/" + std::to_string(index));
+                make_id(entity, std::string(kHitRoleArticulation) + "/" +
+                                    std::to_string(index));
             if (!builder
                      .add_glyph(id,
                                 smufl_codepoint(articulation_glyph(
@@ -2266,7 +2279,8 @@ template <typename Record>
                 pitch_y(pitch, clef, staff.bounds.y, space) + space;
             add_span_segment(builder, note_id, NotationId{note_id.to_string()},
                              system, {span_x(record.onset), y},
-                             {span_x(end_onset), y}, y, "tie", false, false);
+                             {span_x(end_onset), y}, y,
+                             std::string(kHitRoleTie), false, false);
           }
         }
       }
@@ -2411,9 +2425,9 @@ template <typename Record>
           const char32_t code = smufl_codepoint(SmuflGlyph::kTupletDigit0) +
                                 static_cast<char32_t>(number[digit] - '0');
           if (!builder
-                   .add_glyph(
-                       make_id(id, "tuplet/digit/" + std::to_string(digit)),
-                       code, {x, y}, NotationId{id.to_string()})
+                   .add_glyph(make_id(id, std::string(kHitRoleTupletDigit) +
+                                              "/" + std::to_string(digit)),
+                              code, {x, y}, NotationId{id.to_string()})
                    .has_value()) {
             return false;
           }
@@ -3635,6 +3649,14 @@ enum class ResolvedEntityKind : std::uint8_t {
 struct ResolvedEntity {
   ResolvedEntityKind kind = ResolvedEntityKind::kNone;
   NotationEntityId   id;
+  // The owning top-level VoiceEvent (the Note/Chord/Rest itself for
+  // kNote/kChord/kRest, the parent Chord for kChordNote), or nullptr for
+  // kGraceNote (GraceNote is not a VoiceEvent) or kNone. Only the
+  // kMarking-hit callers below (articulation, tuplet) need this; the
+  // pre-existing kNotehead/kEvent path never reads it. Points into the
+  // VoiceContent `find_entity_in_voice` scanned, which outlives the single
+  // resolve_selection_at call this is used within.
+  const VoiceEvent* event = nullptr;
 };
 
 // Scoped, bounded lookup of the entity `target` (a HitRegion::semantic_id's
@@ -3650,17 +3672,20 @@ struct ResolvedEntity {
   for (const VoiceEvent& event : voice.events()) {
     if (event_id(event).to_string() == target) {
       if (std::holds_alternative<Note>(event)) {
-        return ResolvedEntity{ResolvedEntityKind::kNote, event_id(event)};
+        return ResolvedEntity{ResolvedEntityKind::kNote, event_id(event),
+                              &event};
       }
       if (std::holds_alternative<Chord>(event)) {
-        return ResolvedEntity{ResolvedEntityKind::kChord, event_id(event)};
+        return ResolvedEntity{ResolvedEntityKind::kChord, event_id(event),
+                              &event};
       }
-      return ResolvedEntity{ResolvedEntityKind::kRest, event_id(event)};
+      return ResolvedEntity{ResolvedEntityKind::kRest, event_id(event), &event};
     }
     if (const auto* chord = std::get_if<Chord>(&event)) {
       for (const ChordNote& chord_note : chord->notes) {
         if (chord_note.id.to_string() == target) {
-          return ResolvedEntity{ResolvedEntityKind::kChordNote, chord_note.id};
+          return ResolvedEntity{ResolvedEntityKind::kChordNote, chord_note.id,
+                                &event};
         }
       }
     }
@@ -3676,12 +3701,15 @@ struct ResolvedEntity {
 }
 
 // The one voice (of its owning staff's small, fixed set) that actually owns
-// a kNotehead/kEvent hit's semantic entity, plus that entity's resolved
-// kind/id.
+// a kNotehead/kEvent/kMarking hit's semantic entity, plus that entity's
+// resolved kind/id and the VoiceContent it was found in (kMarking's
+// articulation/tuplet resolution needs the owning voice's full event list,
+// not just the one matched entity).
 struct ResolvedVoiceEntity {
   const StaffSystemLayout* staff = nullptr;
   Voice                    voice;
   ResolvedEntity           entity;
+  const VoiceContent*      content = nullptr;
 };
 
 // Attributes `hit` to the staff that actually owns its semantic entity, by
@@ -3713,10 +3741,12 @@ struct ResolvedVoiceEntity {
         continue;
       }
       for (const VoiceLayout& voice_layout : staff.voices) {
-        const ResolvedEntity found = find_entity_in_voice(
-            voices->voice(voice_layout.voice), hit.semantic_id.value);
+        const VoiceContent&  content = voices->voice(voice_layout.voice);
+        const ResolvedEntity found =
+            find_entity_in_voice(content, hit.semantic_id.value);
         if (found.kind != ResolvedEntityKind::kNone) {
-          return ResolvedVoiceEntity{&staff, voice_layout.voice, found};
+          return ResolvedVoiceEntity{&staff, voice_layout.voice, found,
+                                     &content};
         }
       }
     }
@@ -3741,6 +3771,320 @@ struct ResolvedVoiceEntity {
                           expected) == 0;
 }
 
+// Parses a hit id built as make_id(<anchor>, "<prefix>/" +
+// std::to_string(n)) and then wrapped through add_glyph's own trailing
+// "/hit" -- the shape kHitRoleArticulation ("entity/articulation/N/hit")
+// and kHitRoleTupletDigit ("id/tuplet/digit/N/hit") share, a fixed role
+// prefix followed by one numeric path segment. Returns that segment's
+// value, or std::nullopt on any shape mismatch -- missing "/hit" trailer,
+// no numeric segment immediately before it, a non-numeric or otherwise
+// unparsable segment (e.g. leading '+'/'-', or a value too large for
+// std::size_t), or a prefix that does not end exactly at a "/" path
+// boundary. Never a clamped guess: a stale or hand-built layout with a
+// malformed id must fail resolution outright, matching
+// resolve_selection_at's existing hit_id_ends_with-guarded checks.
+[[nodiscard]] std::optional<std::size_t> hit_id_numeric_suffix(
+    const NotationId& id, std::string_view prefix) {
+  constexpr std::string_view kTrailer = "/hit";
+  if (id.value.size() < kTrailer.size() ||
+      id.value.compare(id.value.size() - kTrailer.size(), kTrailer.size(),
+                       kTrailer) != 0) {
+    return std::nullopt;
+  }
+  const std::string_view body(id.value.data(),
+                              id.value.size() - kTrailer.size());
+  const std::size_t      last_slash = body.rfind('/');
+  if (last_slash == std::string_view::npos) {
+    return std::nullopt;
+  }
+  const std::string_view digits = body.substr(last_slash + 1);
+  if (digits.empty() || !std::ranges::all_of(digits, [](char c) {
+        return c >= '0' && c <= '9';
+      })) {
+    return std::nullopt;
+  }
+  const std::string_view head     = body.substr(0, last_slash);
+  const std::string      expected = "/" + std::string(prefix);
+  if (head.size() < expected.size() ||
+      head.compare(head.size() - expected.size(), expected.size(), expected) !=
+          0) {
+    return std::nullopt;
+  }
+  std::size_t value = 0;
+  const auto [ptr, ec] =
+      std::from_chars(digits.data(), digits.data() + digits.size(), value);
+  if (ec != std::errc() || ptr != digits.data() + digits.size()) {
+    return std::nullopt;
+  }
+  return value;
+}
+
+// True if `id` was built by add_span_segment(builder, ..., role ==
+// kHitRoleTie, ...) and then add_hit's own trailing "/hit" -- i.e. `id`
+// matches ".../tie/segment/system-<N>/hit" at path boundaries, for some
+// non-negative integer N (the fragment's own first_measure). This resolver
+// has no use for N itself, only for the "is this a tie segment" fact, so
+// unlike hit_id_numeric_suffix this returns bool rather than the parsed
+// value.
+[[nodiscard]] bool hit_id_is_tie_segment(const NotationId& id) {
+  constexpr std::string_view kTrailer = "/hit";
+  if (id.value.size() < kTrailer.size() ||
+      id.value.compare(id.value.size() - kTrailer.size(), kTrailer.size(),
+                       kTrailer) != 0) {
+    return false;
+  }
+  const std::string_view body(id.value.data(),
+                              id.value.size() - kTrailer.size());
+  const std::size_t      last_slash = body.rfind('/');
+  if (last_slash == std::string_view::npos) {
+    return false;
+  }
+  const std::string_view     last_segment  = body.substr(last_slash + 1);
+  constexpr std::string_view kSystemPrefix = "system-";
+  if (last_segment.size() <= kSystemPrefix.size() ||
+      last_segment.compare(0, kSystemPrefix.size(), kSystemPrefix) != 0) {
+    return false;
+  }
+  const std::string_view digits = last_segment.substr(kSystemPrefix.size());
+  if (!std::ranges::all_of(digits,
+                           [](char c) { return c >= '0' && c <= '9'; })) {
+    return false;
+  }
+  const std::string_view head     = body.substr(0, last_slash);
+  const std::string      expected = "/" + std::string(kHitRoleTie) + "/segment";
+  return head.size() >= expected.size() &&
+         head.compare(head.size() - expected.size(), expected.size(),
+                      expected) == 0;
+}
+
+// One of the four record-backed kMarking kinds (dynamic, hairpin, slur,
+// pedal span), resolved by looking `target` (a HitRegion::semantic_id's
+// string value, which for these four kinds *is* the record's own id) up
+// against the actual records the layout's node owns -- never by inspecting
+// the hit id's own string, which is how the id-less kinds below are told
+// apart instead. Dynamic/hairpin/slur/pedal span ids occupy the same
+// project-wide NotationEntityId space as every other entity, but this
+// lookup only ever searches the four collections each kind actually lives
+// in, so a match is unambiguous.
+struct ResolvedMarkingRecord {
+  const StaffSystemLayout* staff = nullptr;
+  std::optional<Voice>     voice;
+  MarkingKind              kind = MarkingKind::kDynamic;
+  NotationEntityId         anchor;
+};
+
+[[nodiscard]] std::optional<ResolvedMarkingRecord> resolve_marking_record(
+    const Project& project, const NotationLayout& layout,
+    const std::string& target) {
+  const Node* node = project.find_node(layout.node_id);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  for (const SystemLayout& system : layout.systems) {
+    for (const StaffSystemLayout& staff : system.staves) {
+      const TrackLane* lane = node->lane(staff.track_id);
+      if (lane == nullptr) {
+        continue;
+      }
+      if (const std::vector<PedalSpan>* spans =
+              lane->pedal_spans(staff.stave_id)) {
+        for (const PedalSpan& span : *spans) {
+          if (span.id.to_string() == target) {
+            return ResolvedMarkingRecord{&staff, std::nullopt,
+                                         MarkingKind::kPedalSpan, span.id};
+          }
+        }
+      }
+      const StaveVoices* voices = lane->stave(staff.stave_id);
+      if (voices == nullptr) {
+        continue;
+      }
+      for (const VoiceLayout& voice_layout : staff.voices) {
+        const VoiceContent& content = voices->voice(voice_layout.voice);
+        for (const DynamicMarking& dynamic : content.dynamics()) {
+          if (dynamic.id.to_string() == target) {
+            return ResolvedMarkingRecord{&staff, voice_layout.voice,
+                                         MarkingKind::kDynamic, dynamic.id};
+          }
+        }
+        for (const Hairpin& hairpin : content.hairpins()) {
+          if (hairpin.id.to_string() == target) {
+            return ResolvedMarkingRecord{&staff, voice_layout.voice,
+                                         MarkingKind::kHairpin, hairpin.id};
+          }
+        }
+        for (const Slur& slur : content.slurs()) {
+          if (slur.id.to_string() == target) {
+            return ResolvedMarkingRecord{&staff, voice_layout.voice,
+                                         MarkingKind::kSlur, slur.id};
+          }
+        }
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+// The cross-system tuplet hazard: the engraver's own per-system fragment
+// scan (see the tuplet-digit emission above) prepends only the single
+// immediately-preceding measure's *last* event as lookback context, so a
+// tuplet run that began earlier than that can have its bracket/digits
+// anchored to a mid-run event rather than the run's true first event --
+// exactly what validate_selection's kTuplet check rejects
+// (kMarkingNotPresent, "event is not the first event of its tuplet run").
+// This walks `voice`'s own full, unfragmented event list backward from
+// `anchor` while the preceding event carries an equal TupletRatio, landing
+// on the true first event regardless of which system the click happened
+// in. Returns std::nullopt if `anchor` does not name a voice event, or
+// names one with no tuplet ratio at all (a stale layout).
+[[nodiscard]] std::optional<NotationEntityId> normalize_tuplet_anchor(
+    const VoiceContent& voice, NotationEntityId anchor) {
+  const std::vector<VoiceEvent>& events = voice.events();
+  std::optional<std::size_t>     index;
+  for (std::size_t i = 0; i < events.size(); ++i) {
+    if (event_id(events[i]) == anchor) {
+      index = i;
+      break;
+    }
+  }
+  if (!index.has_value()) {
+    return std::nullopt;
+  }
+  const std::optional<TupletRatio> ratio =
+      event_duration(events[*index]).tuplet();
+  if (!ratio.has_value()) {
+    return std::nullopt;
+  }
+  while (*index > 0) {
+    const std::optional<TupletRatio> previous =
+        event_duration(events[*index - 1]).tuplet();
+    if (!previous.has_value() || *previous != *ratio) {
+      break;
+    }
+    --*index;
+  }
+  return event_id(events[*index]);
+}
+
+// Resolves a kMarking hit to its single MarkingSet selection, covering all
+// seven MarkingKinds: docs/plan/05-notation-editor.md's "Resolve marking
+// hit regions to dynamic, hairpin, slur, pedal span, articulation, tie, and
+// tuplet selections." See resolve_marking_record's own comment for the
+// four record-backed kinds, and hit_id_numeric_suffix/
+// hit_id_is_tie_segment's for the three id-less ones. Returns std::nullopt
+// whenever the named marking cannot actually be found or no longer carries
+// the shape its kind requires -- a stale layout -- rather than a Selection
+// validate_selection would reject.
+[[nodiscard]] std::optional<Selection> resolve_marking_selection(
+    const Project& project, const NotationLayout& layout,
+    const HitResult& hit) {
+  if (const std::optional<ResolvedMarkingRecord> record =
+          resolve_marking_record(project, layout, hit.semantic_id.value);
+      record.has_value()) {
+    std::optional<MarkingSet> set = MarkingSet::create({MarkingItem{
+        layout.node_id, record->staff->track_id, record->staff->stave_id,
+        record->voice, record->kind, record->anchor, std::nullopt}});
+    if (!set.has_value()) {
+      return std::nullopt;
+    }
+    return Selection{*std::move(set)};
+  }
+
+  const std::optional<ResolvedVoiceEntity> resolved =
+      resolve_hit_entity(project, layout, hit);
+  if (!resolved.has_value()) {
+    return std::nullopt;
+  }
+  const ResolvedEntity& entity = resolved->entity;
+  const NodeId          node   = layout.node_id;
+  const TrackId         track  = resolved->staff->track_id;
+  const StaveId         stave  = resolved->staff->stave_id;
+  const Voice           voice  = resolved->voice;
+
+  if (const std::optional<std::size_t> index =
+          hit_id_numeric_suffix(hit.id, kHitRoleArticulation);
+      index.has_value()) {
+    if ((entity.kind != ResolvedEntityKind::kNote &&
+         entity.kind != ResolvedEntityKind::kChord) ||
+        entity.event == nullptr) {
+      return std::nullopt;
+    }
+    const std::vector<Articulation>* articulations =
+        event_articulations(*entity.event);
+    if (articulations == nullptr || *index >= articulations->size()) {
+      return std::nullopt;
+    }
+    std::optional<MarkingSet> set = MarkingSet::create(
+        {MarkingItem{node, track, stave, voice, MarkingKind::kArticulation,
+                     entity.id, (*articulations)[*index]}});
+    if (!set.has_value()) {
+      return std::nullopt;
+    }
+    return Selection{*std::move(set)};
+  }
+
+  if (hit_id_is_tie_segment(hit.id)) {
+    if (entity.kind != ResolvedEntityKind::kNote &&
+        entity.kind != ResolvedEntityKind::kChordNote) {
+      return std::nullopt;
+    }
+    if (entity.event == nullptr) {
+      return std::nullopt;
+    }
+    const std::optional<bool> tied = std::visit(
+        [&](const auto& concrete) -> std::optional<bool> {
+          using Event = std::decay_t<decltype(concrete)>;
+          if constexpr (std::is_same_v<Event, Note>) {
+            return concrete.id == entity.id
+                       ? std::optional<bool>{concrete.tied_to_next}
+                       : std::nullopt;
+          } else if constexpr (std::is_same_v<Event, Chord>) {
+            const auto found =
+                std::ranges::find(concrete.notes, entity.id, &ChordNote::id);
+            return found == concrete.notes.end()
+                       ? std::nullopt
+                       : std::optional<bool>{found->tied_to_next};
+          } else {
+            return std::nullopt;
+          }
+        },
+        *entity.event);
+    if (!tied.has_value() || !*tied) {
+      return std::nullopt;
+    }
+    std::optional<MarkingSet> set = MarkingSet::create(
+        {MarkingItem{node, track, stave, voice, MarkingKind::kTie, entity.id,
+                     std::nullopt}});
+    if (!set.has_value()) {
+      return std::nullopt;
+    }
+    return Selection{*std::move(set)};
+  }
+
+  if (hit_id_numeric_suffix(hit.id, kHitRoleTupletDigit).has_value()) {
+    if ((entity.kind != ResolvedEntityKind::kNote &&
+         entity.kind != ResolvedEntityKind::kChord &&
+         entity.kind != ResolvedEntityKind::kRest) ||
+        resolved->content == nullptr) {
+      return std::nullopt;
+    }
+    const std::optional<NotationEntityId> normalized =
+        normalize_tuplet_anchor(*resolved->content, entity.id);
+    if (!normalized.has_value()) {
+      return std::nullopt;
+    }
+    std::optional<MarkingSet> set = MarkingSet::create(
+        {MarkingItem{node, track, stave, voice, MarkingKind::kTuplet,
+                     *normalized, std::nullopt}});
+    if (!set.has_value()) {
+      return std::nullopt;
+    }
+    return Selection{*std::move(set)};
+  }
+
+  return std::nullopt;
+}
+
 }  // namespace
 
 std::optional<Selection> resolve_selection_at(const Project&          project,
@@ -3754,10 +4098,7 @@ std::optional<Selection> resolve_selection_at(const Project&          project,
   const std::optional<HitResult> hit = layout.hit_test(point);
   if (hit.has_value()) {
     if (hit->role == HitRole::kMarking) {
-      // Marking resolution (dynamics, hairpins, slurs, pedal spans,
-      // articulations, ties, tuplets) is a later increment; see
-      // docs/plan/05-notation-editor.md.
-      return std::nullopt;
+      return resolve_marking_selection(project, layout, *hit);
     }
     if (hit->role == HitRole::kNotehead || hit->role == HitRole::kEvent) {
       const std::optional<ResolvedVoiceEntity> resolved =

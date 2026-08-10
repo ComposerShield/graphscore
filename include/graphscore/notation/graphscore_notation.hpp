@@ -812,8 +812,8 @@ struct NotationPreview {
 // docs/plan/05-notation-editor.md's "Select individual noteheads, whole
 // chord events, rests, markings, ranges, and insertion carets through
 // explicit hit regions." This increment resolves noteheads, chords, rests,
-// and insertion carets; a kMarking hit and every multi-item/range selection
-// are later increments' scope.
+// markings, and insertion carets; every multi-item/range selection is a
+// later increment's scope.
 //
 // `palette`'s armed voice is the sole source of truth for which voice an
 // insertion-caret result names, mirroring preview_note_entry's own use of
@@ -844,8 +844,40 @@ struct NotationPreview {
 //                     embedded ChordNote hit above. There is currently no
 //                     click that selects "the whole chord" for a stemless
 //                     event.
-//   kMarking hit   -- std::nullopt (marking resolution is a later
-//                     increment; see docs/plan/05-notation-editor.md).
+//   kMarking hit   -- MarkingSet (one item) naming the single dynamic,
+//                     hairpin, slur, pedal span, articulation, tie, or
+//                     tuplet the hit's own id and semantic id resolve to.
+//                     Dynamic/hairpin/slur/pedal span are told apart by
+//                     looking the hit's semantic id up against the voice's
+//                     own dynamics()/hairpins()/slurs() or the stave's own
+//                     pedal_spans() -- the semantic id *is* that record's
+//                     own id, and those four id spaces are disjoint, so a
+//                     successful lookup is unambiguous regardless of the
+//                     hit id's own shape. Articulation, tie, and tuplet
+//                     carry no record of their own (an Articulation is a
+//                     value in Note/Chord::articulations, a tie is a bool
+//                     on Note/ChordNote, a tuplet is a TupletRatio inside
+//                     Duration), so their semantic id is instead the
+//                     anchoring event's own id -- the same space
+//                     kNotehead/kEvent hits already search -- and this
+//                     function tells the three apart by the hit id's own
+//                     path shape instead (.../articulation/N/hit,
+//                     .../tie/segment/system-N/hit,
+//                     .../tuplet/digit/N/hit). `voice` is engaged for every
+//                     kind except kPedalSpan, which is stave-scoped rather
+//                     than voice-scoped; `articulation` is engaged if and
+//                     only if the kind is kArticulation, naming the exact
+//                     Articulation the clicked glyph drew. A kTuplet
+//                     selection's anchor is always the tuplet run's true
+//                     first event, never merely the event the clicked
+//                     digit happened to be drawn against: the engraver's
+//                     own per-system layout only prepends one measure of
+//                     lookback context when scanning for a run that began
+//                     earlier, so this function separately walks the
+//                     addressed voice's own full (unfragmented) event list
+//                     backward from the hit's anchor, while the preceding
+//                     event carries an equal TupletRatio, before building
+//                     the selection.
 //   kSystem/kMeasure/kStaff/kVoice hit, or no hit at all -- InsertionCaretSet
 //                     (one item) at the nearest onset in `palette`'s armed
 //                     voice that preview_note_entry would also snap its own
@@ -865,14 +897,17 @@ struct NotationPreview {
 //                     than a Selection validate_selection would reject.
 //
 // Returns std::nullopt when `point` resolves to nothing usable: outside
-// every system/staff, a kMarking hit, a notehead/event hit whose semantic
-// entity cannot be found in any staff's voices in this layout (a stale
-// layout), an insertion-caret attempt preview_note_entry's own resolution
-// would also reject (no measure at that x, no onset in the armed voice's
-// resolved measure, etc.), or an insertion-caret attempt whose
-// otherwise-resolved onset fails the domain's own caret-legality check
-// described above. A pure query: never mutates `project`, `layout`, or
-// `palette`.
+// every system/staff, a notehead/event hit whose semantic entity cannot be
+// found in any staff's voices in this layout (a stale layout), a kMarking
+// hit whose named dynamic/hairpin/slur/pedal span/articulation/tie/tuplet
+// can no longer be found or no longer carries the shape its kind requires
+// (a stale layout -- e.g. an articulation index beyond the event's current
+// articulation count, or a tie hit on a note that is no longer tied), an
+// insertion-caret attempt preview_note_entry's own resolution would also
+// reject (no measure at that x, no onset in the armed voice's resolved
+// measure, etc.), or an insertion-caret attempt whose otherwise-resolved
+// onset fails the domain's own caret-legality check described above. A
+// pure query: never mutates `project`, `layout`, or `palette`.
 [[nodiscard]] std::optional<Selection> resolve_selection_at(
     const Project& project, const NotationLayout& layout,
     const NotePaletteState& palette, NotationPoint point);
