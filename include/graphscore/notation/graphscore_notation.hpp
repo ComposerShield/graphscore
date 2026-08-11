@@ -175,7 +175,41 @@ struct HitRegion {
   NotationId   semantic_id;
   HitRole      role = HitRole::kSystem;
   NotationRect bounds;
-  int          priority = 0;
+
+  // The ladder hit_test() ranks overlapping regions by, highest wins:
+  //
+  //   0  system
+  //   1  measure
+  //   2  staff
+  //   3  voice
+  //   4  notehead column (stemless events only)
+  //   5  every individually engraved glyph that carries a semantic id --
+  //      accidentals, augmentation dots, rests, flags, articulations,
+  //      dynamics, tuplet digits -- plus the stem's own widened region
+  //   6  span segments: hairpin, slur, tie, pedal
+  //   7  noteheads, ordinary and grace
+  //
+  // 0-3 are the containers a click falls through to when it names no
+  // engraved object. 5-7 are the engraved objects themselves, and their
+  // relative order is what makes a click on an object select that object
+  // rather than whatever it was drawn on top of.
+  //
+  // 4 is deliberately a rank of its own between the two groups, holding
+  // exactly one region: the notehead column a stemless event emits in place
+  // of the stem it does not draw (see resolve_selection_at). That column
+  // spans the bounding box of its own noteheads, so it necessarily overlaps
+  // every per-notehead glyph region inside it, and those glyphs must keep
+  // selecting their own notehead. Neither cheaper separation achieves that.
+  // Ranking the column with the glyphs and letting hit_test's smaller-area
+  // tie-break decide would make the outcome depend on the font's glyph
+  // metrics. Relying on the engraver's placement offsets does not work
+  // either: those are measured from the clicked note's own notehead x,
+  // while the column spans every notehead's, and the seconds and
+  // voice-collision rules both displace a notehead far enough to carry the
+  // column out past an accidental or a dot. Only a rank strictly below
+  // every glyph region is unconditionally correct, which is why 4 exists
+  // and why nothing else may be moved into it.
+  int priority = 0;
 
   [[nodiscard]] bool operator==(const HitRegion&) const = default;
 };
@@ -833,17 +867,59 @@ struct NotationPreview {
 //                     both select that one notehead, matching a direct
 //                     kNotehead hit on it. A stemless top-level event -- a
 //                     whole note or whole-note chord, for which the
-//                     engraver draws no stem -- has no kEvent geometry at
-//                     all: its own hit regions are only kNotehead (plus,
-//                     for a chord, its per-notehead dot/accidental regions,
-//                     which carry the owning ChordNote's id, not the
-//                     Chord's). This function can therefore never resolve a
-//                     whole-note Chord to a ChordSet naming the whole
-//                     chord -- only to a NoteheadSet naming whichever
-//                     ChordNote was clicked, exactly as if it were an
-//                     embedded ChordNote hit above. There is currently no
-//                     click that selects "the whole chord" for a stemless
-//                     event.
+//                     engraver draws no stem -- has no stem hit region to
+//                     carry the whole event, so the engraver emits a
+//                     notehead-column region in its place: one kEvent
+//                     region carrying the event's own id, spanning exactly
+//                     the bounding box of the event's noteheads (the union
+//                     of their own kNotehead regions, which for a chord
+//                     additionally covers the vertical gaps between them).
+//                     Clicking a whole-note chord inside that box, where no
+//                     region ranked above the column also covers the click,
+//                     therefore yields the same whole-chord ChordSet that
+//                     clicking a stemmed chord's stem yields.
+//
+//                     The column is the sole occupant of a priority rank of
+//                     its own, above every container region and below every
+//                     region naming an engraved object (see
+//                     HitRegion::priority). Two consequences follow, and
+//                     both hold regardless of the font's glyph metrics and
+//                     of where the engraver placed a glyph. First, a click
+//                     inside the column never falls through to
+//                     insertion-caret resolution: the column outranks every
+//                     container region, and no region that outranks the
+//                     column resolves to a caret either. Second, a click
+//                     that lands on a region ranked above the column
+//                     resolves through that region and not through the
+//                     column -- so for the three per-notehead cases that
+//                     overlap a column in practice (a notehead itself, and
+//                     a chord note's own accidental and augmentation dots)
+//                     the result is a NoteheadSet naming that ChordNote,
+//                     never the enclosing chord. Regions of other kinds
+//                     that outrank the column resolve as they always do,
+//                     which is not necessarily to a ChordNote: an
+//                     articulation, for instance, still yields its own
+//                     MarkingSet.
+//
+//                     A tie is the case where that second consequence bites
+//                     hardest, because a tie's span segment both outranks
+//                     the column and is drawn far larger than the notes it
+//                     joins: the engraver gives it a band four staff-spaces
+//                     tall, a fixed height that does not grow with the
+//                     chord. Wherever that band covers the click, the tie's
+//                     own MarkingSet wins and no ChordSet is produced --
+//                     and for an ordinary close-voiced chord the band
+//                     covers the whole column, so this affordance does not
+//                     reach a tied chord at all. That is the tie region's
+//                     own geometry rather than anything about the column;
+//                     it is a known limitation, pinned by a test for the
+//                     close-voiced case. A chord voiced widely enough to
+//                     put part of its column outside the band is neither
+//                     claimed nor tested here.
+//
+//                     For a stemless single Note the column coincides
+//                     exactly with that note's sole notehead region and is
+//                     fully shadowed by it, so it changes nothing there.
 //   kMarking hit   -- MarkingSet (one item) naming the single dynamic,
 //                     hairpin, slur, pedal span, articulation, tie, or
 //                     tuplet the hit's own id and semantic id resolve to.

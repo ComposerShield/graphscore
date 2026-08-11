@@ -54,7 +54,7 @@ Provide a polished, directly editable focused notation system inside a node, wit
   - [x] Resolve a pointer position to a notehead, chord, or rest selection.
   - [x] Resolve a pointer position on blank staff area to an insertion caret.
   - [x] Resolve marking hit regions to dynamic, hairpin, slur, pedal span, articulation, tie, and tuplet selections.
-  - [ ] Emit a notehead-column hit region, below the noteheads' own priority, so a stemless whole-note chord can select its whole event.
+  - [x] Emit a notehead-column hit region, below the noteheads' own priority, so a stemless whole-note chord can select its whole event.
   - [ ] Resolve range selections through hit regions; the selection tool and measure targets below drive them.
 - [ ] Add a dedicated selection tool whose pointer drag creates a contiguous musical-time selection across the intersected staves/voices rather than selecting engraving glyph bounds individually.
   - [x] Resolve a two-point drag to a contiguous musical-time range selection across the intersected staves and voices.

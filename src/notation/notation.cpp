@@ -48,13 +48,36 @@ constexpr char32_t kTimeZero = U'\uE080';
 // than by semantic_id or by a project-side lookup, which is how the other
 // four kMarking kinds (dynamic, hairpin, slur, pedal span) are told apart
 // instead.
-constexpr std::string_view kHitSuffixNotehead      = "notehead";
-constexpr std::string_view kHitSuffixGraceNotehead = "grace-notehead";
-constexpr std::string_view kHitSuffixStem          = "stem";
-constexpr std::string_view kHitSuffixRest          = "rest";
-constexpr std::string_view kHitRoleArticulation    = "articulation";
-constexpr std::string_view kHitRoleTie             = "tie";
-constexpr std::string_view kHitRoleTupletDigit     = "tuplet/digit";
+//
+// kHitSuffixNoteheadColumn is named for a third reason: nothing inspects it
+// today, but hit_id_ends_with(id, kHitSuffixNotehead) must provably *not*
+// match a notehead-column id -- that helper anchors its match at a "/" path
+// boundary precisely so a longer segment ending in "notehead" cannot satisfy
+// the shorter suffix, and naming both here keeps the two literals visible
+// side by side rather than leaving the non-collision to an inline string.
+constexpr std::string_view kHitSuffixNotehead       = "notehead";
+constexpr std::string_view kHitSuffixNoteheadColumn = "notehead-column";
+constexpr std::string_view kHitSuffixGraceNotehead  = "grace-notehead";
+constexpr std::string_view kHitSuffixStem           = "stem";
+constexpr std::string_view kHitSuffixRest           = "rest";
+constexpr std::string_view kHitRoleArticulation     = "articulation";
+constexpr std::string_view kHitRoleTie              = "tie";
+constexpr std::string_view kHitRoleTupletDigit      = "tuplet/digit";
+
+// Every hit-region priority the engraver emits, named so that no bare
+// integer reaches a HitRegion::priority anywhere in this file and the whole
+// ladder can be read (and re-ordered) in one place. HitRegion::priority in
+// graphscore_notation.hpp documents what each rank means and, in
+// particular, why kHitPriorityNoteheadColumn is a rank of its own that
+// nothing else may be moved into.
+constexpr int kHitPrioritySystem         = 0;
+constexpr int kHitPriorityMeasure        = 1;
+constexpr int kHitPriorityStaff          = 2;
+constexpr int kHitPriorityVoice          = 3;
+constexpr int kHitPriorityNoteheadColumn = 4;
+constexpr int kHitPriorityGlyph          = 5;
+constexpr int kHitPrioritySpanSegment    = 6;
+constexpr int kHitPriorityNotehead       = 7;
 
 [[nodiscard]] NotationId make_id(const std::string& root,
                                  const std::string& role) {
@@ -139,9 +162,12 @@ struct LayoutBuilder {
     output.commands.emplace_back(
         GlyphCommand{id, code_point, origin, glyph_space});
     if (semantic_id.has_value()) {
+      // kHitPriorityGlyph: see HitRegion::priority for the whole ladder.
+      // Callers that want a different role or priority overwrite
+      // hit_regions.back() immediately after this returns.
       output.hit_regions.push_back(HitRegion{make_id(id.value, "hit"),
                                              *semantic_id, HitRole::kEvent,
-                                             hit_bounds, 4});
+                                             hit_bounds, kHitPriorityGlyph});
     }
     return glyph.advance;
   }
@@ -158,7 +184,8 @@ struct LayoutBuilder {
   }
 
   void add_hit(const NotationId& id, const NotationId& semantic_id,
-               HitRole role, NotationRect bounds, int priority = 4) {
+               HitRole role, NotationRect bounds,
+               int priority = kHitPriorityGlyph) {
     output.hit_regions.push_back(HitRegion{
         make_id(id.value, "hit"), semantic_id, role, bounds, priority});
   }
@@ -1651,7 +1678,7 @@ void add_span_segment(LayoutBuilder& builder, const NotationEntityId& id,
       segment, semantic, HitRole::kMarking,
       {std::min(from.x, to.x), lane - builder.options.staff_space * 2.0,
        std::abs(to.x - from.x), builder.options.staff_space * 4.0},
-      5);
+      kHitPrioritySpanSegment);
 }
 
 // Collects unique reference IDs for a system's measure range from
@@ -1856,8 +1883,15 @@ template <typename Record>
         const ClefLane* lane = builder.timeline.clef_lane(staff.stave_id);
         const Clef      clef =
             lane == nullptr ? Clef::kTreble : lane->clef_at(placed.onset);
+        // Half-extents of one notehead's own hit region, named rather than
+        // written inline because the stemless notehead-column region below
+        // is defined as exactly the union of them.
+        constexpr double    kNoteheadHitHalfWidth  = 0.6;
+        constexpr double    kNoteheadHitHalfHeight = 0.225;
         std::vector<double> head_ys;
-        std::size_t         seconds_run = 0;
+        double      column_min_x = std::numeric_limits<double>::infinity();
+        double      column_max_x = -std::numeric_limits<double>::infinity();
+        std::size_t seconds_run  = 0;
         for (std::size_t note_index = 0; note_index < event_pitches.size();
              ++note_index) {
           const auto& [note_id, pitch] = event_pitches[note_index];
@@ -1904,11 +1938,15 @@ template <typename Record>
           }
           if (!builder.output.hit_regions.empty()) {
             builder.output.hit_regions.back().role     = HitRole::kNotehead;
-            builder.output.hit_regions.back().priority = 6;
+            builder.output.hit_regions.back().priority = kHitPriorityNotehead;
             builder.output.hit_regions.back().bounds   = {
-                head_x - space * 0.6, y - space * 0.225, space * 1.2,
-                space * 0.45};
+                head_x - space * kNoteheadHitHalfWidth,
+                y - space * kNoteheadHitHalfHeight,
+                space * kNoteheadHitHalfWidth * 2.0,
+                space * kNoteheadHitHalfHeight * 2.0};
           }
+          column_min_x = std::min(column_min_x, head_x);
+          column_max_x = std::max(column_max_x, head_x);
           add_ledger_lines(builder, note_id, head_x, y, staff.bounds.y);
           const int        pitch_key = diatonic_index(pitch);
           const auto       state     = accidental_state.find(pitch_key);
@@ -1974,10 +2012,11 @@ template <typename Record>
           // A stem's own drawn width (space * 0.12) is too thin to click
           // comfortably; widen the hit target to half a staff-space while
           // staying well short of the notehead's own tightened width
-          // (space * 1.2, priority 6) so an overlap between the two -- the
-          // stem sits right at that notehead's edge, space * 0.65 out from
-          // its head_x versus the notehead's own space * 0.6 half-width --
-          // is resolved by priority, not accidentally avoided by geometry.
+          // (space * 1.2, kHitPriorityNotehead) so an overlap between the
+          // two -- the stem sits right at that notehead's edge, space * 0.65
+          // out from its head_x versus the notehead's own space * 0.6
+          // half-width -- is resolved by priority, not accidentally avoided
+          // by geometry.
           // Role kEvent (not a new HitRole) matches the existing rest/flag
           // convention: kEvent already means "the whole event", which is
           // exactly what clicking a stem (as opposed to one notehead of a
@@ -1989,7 +2028,53 @@ template <typename Record>
           builder.add_hit(stem_id, semantic, HitRole::kEvent,
                           NotationRect{stem_x - space * kStemHitHalfWidth,
                                        stem_top, stem_hit_width, stem_height},
-                          4);
+                          kHitPriorityGlyph);
+        } else {
+          // NoteValue::kWhole is the longest value the enum has (there is no
+          // breve or longa), so "not stemmed" and "whole" are the same
+          // predicate here and this else is exactly the stemless case. A
+          // stemless event has no stem region, and so -- before this region
+          // existed -- no kEvent geometry at all: a whole-note chord could
+          // only ever be clicked into a one-notehead NoteheadSet, never a
+          // ChordSet.
+          //
+          // The substitute is the bounding box of the event's own noteheads,
+          // i.e. the union of their own hit regions, which for a chord
+          // additionally covers the vertical gaps between them.
+          //
+          // kHitPriorityNoteheadColumn is a rank of its own, strictly above
+          // the containers (so a click in the column beats the blank-staff
+          // insertion caret) and strictly below every engraved object (so
+          // each notehead, and each per-notehead accidental and augmentation
+          // dot the column necessarily overlaps, keeps selecting its own
+          // notehead). Neither of the two cheaper separations works here:
+          // the equal-priority smaller-area tie-break would decide those
+          // overlaps by the font's glyph metrics, and geometry cannot
+          // separate them at all, because the seconds rule (space * 0.75)
+          // and the voice-collision rule (space * 0.22) both displace a
+          // notehead horizontally and can carry column_min_x/column_max_x
+          // out past an accidental's own space * 1.3 or a dot's space * 1.2
+          // placement offset. Note that a tie's span segment ranks above the
+          // column, and its region is tall enough to blanket one, so a tied
+          // stemless chord resolves to that tie instead -- see
+          // resolve_selection_at's contract comment.
+          //
+          // head_ys is non-empty here for the same reason the head_y above
+          // may dereference min_element/max_element on it unconditionally.
+          const NotationId column_id =
+              make_id(entity, std::string{kHitSuffixNoteheadColumn});
+          const double column_top = *std::ranges::min_element(head_ys) -
+                                    space * kNoteheadHitHalfHeight;
+          const double column_bottom = *std::ranges::max_element(head_ys) +
+                                       space * kNoteheadHitHalfHeight;
+          builder.add_hit(
+              column_id, semantic, HitRole::kEvent,
+              NotationRect{column_min_x - space * kNoteheadHitHalfWidth,
+                           column_top,
+                           column_max_x - column_min_x +
+                               space * kNoteheadHitHalfWidth * 2.0,
+                           column_bottom - column_top},
+              kHitPriorityNoteheadColumn);
         }
         const bool beamed =
             std::ranges::any_of(beam_pairs, [&](const auto& pair) {
@@ -2315,7 +2400,7 @@ template <typename Record>
           return false;
         }
         builder.output.hit_regions.back().role     = HitRole::kNotehead;
-        builder.output.hit_regions.back().priority = 6;
+        builder.output.hit_regions.back().priority = kHitPriorityNotehead;
         const double grace_space                   = space * 0.65;
         const double stem_x                        = x + grace_space * 0.65;
         const double stem_end                      = y - grace_space * 3.5;
@@ -2528,7 +2613,7 @@ template <typename Record>
     builder.add_hit(segment, semantic, HitRole::kMarking,
                     {x_for(span.start), y - space,
                      x_for(span.end) - x_for(span.start), space * 2.0},
-                    5);
+                    kHitPrioritySpanSegment);
   }
   return true;
 }
@@ -2883,7 +2968,7 @@ NotationLayoutResult layout_internal(
     system.bounds = NotationRect{0.0, system_y, actual_width, system_height};
     builder.output.hit_regions.push_back(
         HitRegion{make_id(system.id.value, "hit"), system.id, HitRole::kSystem,
-                  system.bounds, 0});
+                  system.bounds, kHitPrioritySystem});
     builder.output.commands.emplace_back(ClipCommand{
         make_id(system.id.value, "clip/begin"), system.bounds, true});
 
@@ -2896,7 +2981,7 @@ NotationLayoutResult layout_internal(
       system.measures.push_back(MeasureLayout{index, measure_id, bounds});
       builder.output.hit_regions.push_back(HitRegion{
           make_id(measure_id.value, "system/" + std::to_string(first) + "/hit"),
-          measure_id, HitRole::kMeasure, bounds, 1});
+          measure_id, HitRole::kMeasure, bounds, kHitPriorityMeasure});
       measure_x += widths[index];
     }
 
@@ -2930,7 +3015,7 @@ NotationLayoutResult layout_internal(
         builder.output.hit_regions.push_back(
             HitRegion{make_id(staff.id.value, "hit"),
                       NotationId{stave_definition.id.to_string()},
-                      HitRole::kStaff, staff.bounds, 2});
+                      HitRole::kStaff, staff.bounds, kHitPriorityStaff});
         for (std::uint8_t voice_index = Voice::kMin; voice_index <= Voice::kMax;
              ++voice_index) {
           const Voice      voice    = *Voice::create(voice_index);
@@ -2944,10 +3029,10 @@ NotationLayoutResult layout_internal(
             event_count += indexed_voice.measures[ordinal].size();
           }
           staff.voices.push_back(VoiceLayout{voice, voice_id, event_count});
-          builder.output.hit_regions.push_back(
-              HitRegion{make_id(voice_id.value,
-                                "system/" + std::to_string(first) + "/hit"),
-                        voice_id, HitRole::kVoice, staff.bounds, 3});
+          builder.output.hit_regions.push_back(HitRegion{
+              make_id(voice_id.value,
+                      "system/" + std::to_string(first) + "/hit"),
+              voice_id, HitRole::kVoice, staff.bounds, kHitPriorityVoice});
         }
         for (int line = 0; line < 5; ++line) {
           const double y =
