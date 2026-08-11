@@ -4085,7 +4085,166 @@ struct ResolvedMarkingRecord {
   return std::nullopt;
 }
 
+// The project-wide score order resolve_range_selection's staff-range rule
+// uses: Project::active_tracks() order, then each track's own
+// StaffLayout::staves() order -- the identical order layout_notation itself
+// assigns to every system's own StaffSystemLayout list (see its own
+// "std::size_t stave_ordinal" loop above), so every system carries this
+// exact same ordered staff set project-wide.
+[[nodiscard]] std::vector<std::pair<TrackId, StaveId>> score_ordered_staves(
+    const Project& project) {
+  std::vector<std::pair<TrackId, StaveId>> order;
+  for (const Track& track : project.active_tracks()) {
+    for (const StaveDefinition& stave_definition : track.layout().staves()) {
+      order.emplace_back(track.id(), stave_definition.id);
+    }
+  }
+  return order;
+}
+
+// The grid resolve_range_selection quantizes a raw pixel-derived musical
+// time to -- see that function's own contract comment
+// (graphscore/notation/graphscore_notation.hpp) for the rationale and this
+// grid's limits.
+constexpr std::int64_t kRangeSelectionGridDenominator = 192;
+
+[[nodiscard]] Rational quantize_range_time(double time) noexcept {
+  const double scaled =
+      time * static_cast<double>(kRangeSelectionGridDenominator);
+  const auto numerator = static_cast<std::int64_t>(std::llround(scaled));
+  return Rational(numerator) / Rational(kRangeSelectionGridDenominator);
+}
+
+// Whether `content` has any event whose own [onset, onset + duration)
+// extent overlaps the half-open `span` -- resolve_range_selection's
+// content-driven substitute for voice geometry, which VoiceLayout does not
+// carry (see its own comment in the public header).
+[[nodiscard]] bool voice_overlaps_span(const VoiceContent& content,
+                                       const MusicalSpan&  span) {
+  Rational onset;
+  for (const VoiceEvent& event : content.events()) {
+    const Rational event_end = onset + event_duration(event).resolved();
+    if (onset < span.end && event_end > span.start) {
+      return true;
+    }
+    onset = event_end;
+  }
+  return false;
+}
+
 }  // namespace
+
+std::optional<Selection> resolve_range_selection(const Project&        project,
+                                                 const NotationLayout& layout,
+                                                 NotationPoint         anchor,
+                                                 NotationPoint         focus) {
+  if (!finite_point(anchor) || !finite_point(focus)) {
+    return std::nullopt;
+  }
+
+  const std::optional<ResolvedStaffSite> anchor_site =
+      resolve_staff_at(layout, anchor);
+  const std::optional<ResolvedStaffSite> focus_site =
+      resolve_staff_at(layout, focus);
+  if (!anchor_site.has_value() || !focus_site.has_value()) {
+    return std::nullopt;
+  }
+
+  const MeasureLayout* anchor_measure =
+      resolve_measure_at(*anchor_site->system, anchor);
+  const MeasureLayout* focus_measure =
+      resolve_measure_at(*focus_site->system, focus);
+  if (anchor_measure == nullptr || focus_measure == nullptr) {
+    return std::nullopt;
+  }
+
+  const Node* node = project.find_node(layout.node_id);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  const NodeTimeline* timeline = node->timeline();
+  if (timeline == nullptr) {
+    return std::nullopt;
+  }
+  const MeasureMap& measures = timeline->measures();
+  if (anchor_measure->ordinal >= measures.measure_count() ||
+      focus_measure->ordinal >= measures.measure_count()) {
+    return std::nullopt;
+  }
+
+  const double anchor_staff_space = anchor_site->staff->bounds.height / 4.0;
+  const double focus_staff_space  = focus_site->staff->bounds.height / 4.0;
+  const double anchor_time        = time_at_x(
+      measures, anchor_measure->ordinal, anchor.x, anchor_measure->bounds.x,
+      anchor_measure->bounds.width, anchor_staff_space);
+  const double focus_time = time_at_x(
+      measures, focus_measure->ordinal, focus.x, focus_measure->bounds.x,
+      focus_measure->bounds.width, focus_staff_space);
+
+  const Rational start = quantize_range_time(std::min(anchor_time, focus_time));
+  const Rational end   = quantize_range_time(std::max(anchor_time, focus_time));
+  if (!(start < end)) {
+    return std::nullopt;
+  }
+  const MusicalSpan span{start, end};
+
+  const std::vector<std::pair<TrackId, StaveId>> score_order =
+      score_ordered_staves(project);
+  const auto anchor_position = std::ranges::find(
+      score_order,
+      std::pair{anchor_site->staff->track_id, anchor_site->staff->stave_id});
+  const auto focus_position = std::ranges::find(
+      score_order,
+      std::pair{focus_site->staff->track_id, focus_site->staff->stave_id});
+  if (anchor_position == score_order.end() ||
+      focus_position == score_order.end()) {
+    return std::nullopt;
+  }
+  const auto [lower, upper] = std::minmax(anchor_position, focus_position);
+
+  std::vector<ArbitraryRangeItem> items;
+  for (auto it = lower; it <= upper; ++it) {
+    const auto [track_id, stave_id] = *it;
+    const TrackLane* lane           = node->lane(track_id);
+    // Unlike resolve_insertion_site's identical two checks, a staff in the
+    // resolved range whose own TrackLane/StaveVoices cannot be found is
+    // skipped rather than failing the whole query: a lane==nullptr staff is
+    // unreachable for any layout satisfying this function's own contract
+    // (layout_notation hard-fails with NotationLayoutError::kLaneMissing
+    // before producing such a layout), and voices==nullptr is semantically
+    // empty (layout_notation treats a missing StaveVoices as
+    // kEmptyVoices), so skipping this one staff is equivalent to scanning
+    // its four voices and finding no overlapping content in any of them.
+    if (lane == nullptr) {
+      continue;
+    }
+    const StaveVoices* voices = lane->stave(stave_id);
+    if (voices == nullptr) {
+      continue;
+    }
+    for (std::uint8_t voice_index = Voice::kMin; voice_index <= Voice::kMax;
+         ++voice_index) {
+      // Voice::create fails only when index < kMin || index > kMax
+      // (graphscore/core/voice.hpp), and this loop's own bounds keep
+      // voice_index within [kMin, kMax] throughout, so this can never fail.
+      // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+      const Voice         voice   = *Voice::create(voice_index);
+      const VoiceContent& content = voices->voice(voice);
+      if (!voice_overlaps_span(content, span)) {
+        continue;
+      }
+      items.push_back(
+          ArbitraryRangeItem{layout.node_id, track_id, stave_id, voice, span});
+    }
+  }
+
+  std::optional<ArbitraryRangeSet> set =
+      ArbitraryRangeSet::create(std::move(items));
+  if (!set.has_value()) {
+    return std::nullopt;
+  }
+  return Selection{*std::move(set)};
+}
 
 std::optional<Selection> resolve_selection_at(const Project&          project,
                                               const NotationLayout&   layout,

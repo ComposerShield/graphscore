@@ -912,6 +912,91 @@ struct NotationPreview {
     const Project& project, const NotationLayout& layout,
     const NotePaletteState& palette, NotationPoint point);
 
+// Resolves a pointer drag from `anchor` to `focus` against `layout`
+// (produced by a prior layout_notation()/NotationLayoutCache::update() call
+// for the same project/node) to the single ArbitraryRangeSet Selection a
+// dedicated range-selection tool's drag names, for
+// docs/plan/05-notation-editor.md's "Add a dedicated selection tool whose
+// pointer drag creates a contiguous musical-time selection across the
+// intersected staves/voices rather than selecting engraving glyph bounds
+// individually."
+//
+// Deliberately takes no NotePaletteState: unlike resolve_selection_at and
+// preview_note_entry, this is a range-selection tool, distinct from note
+// entry, so the composer's armed voice must never filter which voices the
+// drag selects -- every voice with overlapping content is included below
+// regardless of what is currently armed.
+//
+// Staff range: `anchor` and `focus` are each resolved to a staff via the
+// same resolve_staff_at logic resolve_selection_at itself consumes. Every
+// (track, stave) between the two resolved staves, inclusive, in score
+// order -- Project::active_tracks() order, then each track's own
+// StaffLayout::staves() order, the identical order layout_notation itself
+// assigns to every system's own StaffSystemLayout list -- is included.
+// This is anchor-to-focus by that global order, not a rectangle
+// intersection test: a drag spanning a system break covers different
+// staves in each system it touches, while every system carries the
+// identical ordered staff set project-wide, so score order is the only
+// unambiguous way to name "the staves this drag crosses".
+//
+// Voices: VoiceLayout carries no geometry of its own (see its own comment
+// above), so which voices a drag crosses cannot be answered geometrically.
+// Instead, for each staff in the resolved range, a voice is included iff
+// at least one of its own events' own [onset, onset + duration) extent
+// overlaps the resolved span below. A voice with no overlapping content is
+// excluded outright, so a single-voice score never produces the other
+// three voices' own empty items.
+//
+// Span: each endpoint's x is mapped to a musical time via the same
+// unsnapped time_at_x inverse mapping resolve_insertion_site consumes,
+// evaluated against the measure resolved at that endpoint's own point.
+// start is the smaller of the two resulting times and end the larger, so a
+// backwards or upward drag produces the identical span a forward drag over
+// the same two points would, and a drag spanning a system break still
+// produces one contiguous span, since musical time is global across the
+// node. Every emitted item shares this one span exactly, satisfying
+// extract_arbitrary_range's own same-span requirement
+// (src/domain/notation_fragment.cpp).
+//
+// Quantization: time_at_x returns a continuous double; MusicalSpan needs an
+// exact Rational. Each endpoint's time is rounded to the nearest multiple
+// of 1/kRangeSelectionGridDenominator (192 = lcm(64, 3)) of a whole note --
+// a grid fine enough to land exactly on every plain binary subdivision
+// through a sixty-fourth note and every plain triplet subdivision. A drag
+// endpoint that should land exactly on a dotted-sixty-fourth boundary (e.g.
+// a single dot's 3/128, or a double dot's 7/256), on a quintuplet/
+// septuplet/etc. division, or on any other boundary this grid does not
+// exactly represent still only resolves to the nearest 1/192, up to half a
+// 192nd note (1/384 of a whole note) off that boundary;
+// kRangeSelectionGridDenominator (src/notation/notation.cpp) is trivially
+// widened to also cover a specific such family if that error ever matters.
+// This is acceptable specifically because this quantization only ever
+// affects the drag endpoint's own position, never rhythmic content: this
+// never snaps to an event onset, unlike resolve_selection_at's
+// insertion-caret arm, so the domain's own clipping rules
+// (docs/plan/02-domain-model.md R1-R12) -- which exist specifically to
+// handle a span whose boundary straddles an event -- still apply exactly
+// regardless of where within an event the quantized boundary lands.
+//
+// Returns std::nullopt when either point is non-finite, when either point
+// fails to resolve to a staff (resolve_staff_at) or to a measure within
+// that staff's own system (resolve_measure_at), when either resolved
+// measure's ordinal is not within the node's own NodeTimeline (or the node
+// has no NodeTimeline at all), when either resolved staff cannot be found
+// in the project's own score-ordered staff list, when the quantized span is
+// zero-length (start == end -- a click, not a drag, is resolve_selection_at's
+// own job), or when no voice anywhere in the resolved staff range has any
+// overlapping content at all (ArbitraryRangeSet::create itself rejects an
+// empty item vector). A staff within the resolved range whose own
+// TrackLane/StaveVoices cannot be found is skipped rather than treated as a
+// nullopt-triggering failure -- see the implementation's own comment where
+// it does so.
+//
+// A pure query: never mutates `project`, `layout`, or any cache.
+[[nodiscard]] std::optional<Selection> resolve_range_selection(
+    const Project& project, const NotationLayout& layout, NotationPoint anchor,
+    NotationPoint focus);
+
 // Constructs a reversible domain command for the note-entry pointer action
 // described in docs/plan/05-notation-editor.md ("Clicking an existing
 // rhythmic event in the selected voice changes its selected duration;
