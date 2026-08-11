@@ -14,6 +14,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -4759,6 +4760,157 @@ std::optional<NoteAuditionRequest> audition_for_note_entry(
   const auto duplicates = std::ranges::unique(request.pitches);
   request.pitches.erase(duplicates.begin(), duplicates.end());
   return request;
+}
+
+// ---- SelectionDragState: dedicated-selection-tool pointer-drag lifecycle ----
+
+bool SelectionDragState::begin(ActiveTool tool, NotationPoint anchor) noexcept {
+  if (tool != ActiveTool::kSelection) {
+    return false;
+  }
+  // A non-finite anchor produces a nullopt from update() rather than
+  // silently entering a drag that can never resolve.
+  if (!std::isfinite(anchor.x) || !std::isfinite(anchor.y)) {
+    return false;
+  }
+  cancel();  // Discard any in-progress drag without touching
+             // committed_selection_.
+  active_tool_ = tool;
+  anchor_      = anchor;
+  dragging_    = true;
+  return true;
+}
+
+std::optional<Selection> SelectionDragState::update(
+    const Project& project, const NotationLayout& layout, NotationPoint focus) {
+  if (!dragging_) {
+    return std::nullopt;
+  }
+  live_extent_ = resolve_range_selection(project, layout, anchor_, focus);
+  return live_extent_;
+}
+
+std::optional<Selection> SelectionDragState::commit() noexcept {
+  if (!dragging_) {
+    return std::nullopt;
+  }
+  committed_selection_ = std::move(live_extent_);
+  live_extent_.reset();
+  dragging_ = false;
+  return committed_selection_;
+}
+
+void SelectionDragState::cancel() noexcept {
+  dragging_ = false;
+  anchor_   = {};
+  live_extent_.reset();
+  // committed_selection_ is untouched: its previous value persists until the
+  // next commit().
+}
+
+// ---- build_range_highlight_rects -------------------------------------------
+
+std::vector<NotationRect> build_range_highlight_rects(
+    const Selection& selection, const Project& project,
+    const NotationLayout& layout) {
+  const auto* range_set = std::get_if<ArbitraryRangeSet>(&selection);
+  if (range_set == nullptr || range_set->items().empty()) {
+    return {};
+  }
+
+  const Node* node = project.find_node(layout.node_id);
+  if (node == nullptr) {
+    return {};
+  }
+  const NodeTimeline* timeline = node->timeline();
+  if (timeline == nullptr) {
+    return {};
+  }
+  const MeasureMap& measures = timeline->measures();
+
+  // Accumulate span intervals per (system, staff, measure).  Multiple items
+  // (e.g. two voices on the same staff, both selected) project through the
+  // same measure.  Intervals that are identical, overlapping, or touching
+  // are coalesced to avoid duplicate translucent geometry; disjoint intervals
+  // produce separate rectangles so gaps are not filled.
+  using Key = std::tuple<std::size_t, std::size_t, std::size_t>;
+  std::map<Key, std::vector<std::pair<double, double>>> intervals;
+
+  for (std::size_t sys_idx = 0; sys_idx < layout.systems.size(); ++sys_idx) {
+    const SystemLayout& system = layout.systems[sys_idx];
+    for (std::size_t staff_idx = 0; staff_idx < system.staves.size();
+         ++staff_idx) {
+      const StaffSystemLayout& staff = system.staves[staff_idx];
+      for (const ArbitraryRangeItem& item : range_set->items()) {
+        if (item.node != layout.node_id) {
+          continue;
+        }
+        if (item.track != staff.track_id || item.stave != staff.stave_id) {
+          continue;
+        }
+
+        const MusicalSpan& span        = item.span;
+        const double       staff_space = staff.bounds.height / 4.0;
+        for (const MeasureLayout& measure : system.measures) {
+          if (measure.ordinal >= measures.measure_count()) {
+            continue;
+          }
+          const Rational measure_start =
+              measures.measure_start(measure.ordinal);
+          const Rational measure_end =
+              measure_start + measures.measure_length(measure.ordinal);
+          if (!(measure_start < span.end) || !(span.start < measure_end)) {
+            continue;
+          }
+
+          const Rational clamped_start = std::max(span.start, measure_start);
+          const Rational clamped_end   = std::min(span.end, measure_end);
+          const double   start_x =
+              position_x(measures, measure.ordinal, measure.bounds.width,
+                         clamped_start, measure.bounds.x, staff_space);
+          const double end_x =
+              position_x(measures, measure.ordinal, measure.bounds.width,
+                         clamped_end, measure.bounds.x, staff_space);
+
+          const Key key{sys_idx, staff_idx, measure.ordinal};
+          intervals[key].emplace_back(start_x, end_x);
+        }
+      }
+    }
+  }
+
+  // Coalesce overlapping or touching intervals per key into disjoint rects.
+  std::vector<NotationRect> rects;
+  for (auto& [key, raw] : intervals) {
+    // Sort by start_x, then end_x for determinism.
+    std::ranges::sort(raw);
+
+    // Coalesce: merge intervals that overlap or touch.
+    std::vector<std::pair<double, double>> coalesced;
+    for (const auto& [start_x, end_x] : raw) {
+      if (coalesced.empty()) {
+        coalesced.emplace_back(start_x, end_x);
+      } else {
+        auto& last = coalesced.back();
+        if (start_x <= last.second) {
+          // Overlapping or touching: extend the last interval.
+          last.second = std::max(last.second, end_x);
+        } else {
+          // Disjoint: start a new interval.
+          coalesced.emplace_back(start_x, end_x);
+        }
+      }
+    }
+
+    const std::size_t        sys_idx   = std::get<0>(key);
+    const std::size_t        staff_idx = std::get<1>(key);
+    const StaffSystemLayout& staff = layout.systems[sys_idx].staves[staff_idx];
+    for (const auto& [start_x, end_x] : coalesced) {
+      rects.push_back(NotationRect{start_x, staff.bounds.y, end_x - start_x,
+                                   staff.bounds.height});
+    }
+  }
+  return rects;
 }
 
 }  // namespace graphscore

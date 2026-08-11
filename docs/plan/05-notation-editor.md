@@ -56,10 +56,10 @@ Provide a polished, directly editable focused notation system inside a node, wit
   - [x] Resolve marking hit regions to dynamic, hairpin, slur, pedal span, articulation, tie, and tuplet selections.
   - [x] Emit a notehead-column hit region, below the noteheads' own priority, so a stemless whole-note chord can select its whole event.
   - [ ] Resolve range selections through hit regions; the selection tool and measure targets below drive them.
-- [ ] Add a dedicated selection tool whose pointer drag creates a contiguous musical-time selection across the intersected staves/voices rather than selecting engraving glyph bounds individually.
+- [x] Add a dedicated selection tool whose pointer drag creates a contiguous musical-time selection across the intersected staves/voices rather than selecting engraving glyph bounds individually.
   - [x] Resolve a two-point drag to a contiguous musical-time range selection across the intersected staves and voices.
-  - [ ] Hold drag state and the active tool at the app layer, and wire pointer press/move/release to the resolver.
-  - [ ] Show a live selection extent during and after the drag.
+  - [x] Hold drag state and the active tool at the app layer, and wire pointer press/move/release to the resolver.
+  - [x] Show a live selection extent during and after the drag.
 - [ ] Add measure hit targets/actions for selecting one complete measure on the focused staff/track and extending that aligned measure selection across additional tracks.
 - [ ] Support Shift/keyboard range extension and accessible start/end/staff-scope controls that produce the same selection as pointer dragging.
 - [ ] Up/Down moves a selected notehead one diatonic staff step and preserves its accidental.

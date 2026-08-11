@@ -1073,6 +1073,121 @@ struct NotationPreview {
     const Project& project, const NotationLayout& layout, NotationPoint anchor,
     NotationPoint focus);
 
+// Produces the visual highlight geometry for a range selection against
+// `layout`.  Returns layout-space rectangles, one per (system, staff,
+// measure) that the selection's musical span overlaps.  Each rectangle spans
+// the staff height and the portion of the measure whose musical time falls
+// within the span.  The rectangles are in the same coordinate space as
+// NotationLayout::bounds, so they can be overdrawn directly without further
+// coordinate transformation.  The caller (the writer shell) renders them
+// with a semi-transparent highlight colour.
+//
+// `selection` must be an ArbitraryRangeSet; any other arm returns an empty
+// vector.  `project` provides the MeasureMap the x↔time mapping needs; it
+// must be the same project `layout` was produced from, or the result is
+// unspecified.
+//
+// A pure query: never mutates `project` or `layout`.
+[[nodiscard]] std::vector<NotationRect> build_range_highlight_rects(
+    const Selection& selection, const Project& project,
+    const NotationLayout& layout);
+
+// The writer's active tool discriminator.  Range selection occurs only when
+// the active tool is kSelection; any other pointer-drag path must not
+// accidentally produce an ArbitraryRangeSet.  Individual-notehead/chord/rest
+// single-click resolution (resolve_selection_at) is not gated by this --
+// only the dedicated selection-tool drag is.
+//
+// The startup tool is application policy, not determined by enum order.
+// The current temporary M05 app (graphscore_writer_app) starts kSelection
+// until the note-palette and pointer-entry phases wire kNoteEntry; kNoteEntry
+// is the eventual long-term default.  The two tools are mutually exclusive:
+// switching from one to the other cancels any in-progress state (drag,
+// preview) the departing tool owned.
+enum class ActiveTool : std::uint8_t {
+  kNoteEntry,  // Note-entry pointer tool (eventual long-term default).
+  kSelection,  // Dedicated range-selection pointer tool (M05 temporary
+               // default).
+};
+
+// The lifecycle of one dedicated-selection-tool pointer drag.  Owned by the
+// application assembly layer (graphscore_writer_app); holds only
+// GraphScore-owned value types and never stores references to Project or
+// NotationLayout.  Every method is a pure query over the supplied arguments
+// -- no allocation, no mutation of project or layout, no platform type.
+//
+// Lifecycle:
+//   begin()     -- pointer press with ActiveTool::kSelection armed.
+//   update()    -- pointer move while dragging (is_dragging() == true).
+//   commit()    -- pointer release; clears drag state and returns the final
+//                  committed Selection.
+//   cancel()    -- discard the in-progress drag without committing.
+//
+// Tool change or a new begin() while dragging cancels the current drag
+// before starting the new one.  A non-kSelection tool begin() returns false
+// and leaves no stale state.
+class SelectionDragState {
+ public:
+  SelectionDragState() = default;
+
+  // Pointer press with `tool`.  Returns true when tool == kSelection and
+  // anchor is a non-NaN point; the caller must resolve validity with
+  // update() -- begin() itself does not look at project or layout.  If a
+  // drag is already in progress, calling begin() cancels it first.
+  [[nodiscard]] bool begin(ActiveTool tool, NotationPoint anchor) noexcept;
+
+  // Advance the live extent for the current pointer position.  Calls
+  // resolve_range_selection(anchor_, focus) with the commit-c252fbe
+  // semantics preserved exactly.  Returns nullopt when the resolution fails
+  // (off-stave, zero-length span, etc.) or when no drag is in progress.
+  // Stores the resolved Selection as live_extent() for the caller to render
+  // as a live visual highlight.
+  [[nodiscard]] std::optional<Selection> update(const Project&        project,
+                                                const NotationLayout& layout,
+                                                NotationPoint         focus);
+
+  // Commit the final selection and clear drag state.  Returns the Selection
+  // most recently resolved by update() (which is the caller's live extent),
+  // or nullopt when no valid drag was in progress or update() never
+  // resolved a valid extent.  Also moves the result to
+  // committed_selection() so the caller can reread it without repeating the
+  // resolution.  After commit(), is_dragging() returns false.
+  [[nodiscard]] std::optional<Selection> commit() noexcept;
+
+  // Discard the current drag without committing.  Clears is_dragging(),
+  // anchor, live extent -- committed_selection is untouched (its previous
+  // value persists until the next commit).
+  void cancel() noexcept;
+
+  [[nodiscard]] bool is_dragging() const noexcept { return dragging_; }
+
+  // The Selection most recently resolved by update(), or nullopt.  Valid
+  // only while is_dragging() and after at least one successful update().
+  [[nodiscard]] const std::optional<Selection>& live_extent() const noexcept {
+    return live_extent_;
+  }
+
+  // The Selection committed by the most recent commit(), or nullopt.
+  // Survives cancel() and begin() -- only commit() writes it.
+  [[nodiscard]] const std::optional<Selection>& committed_selection()
+      const noexcept {
+    return committed_selection_;
+  }
+
+  // The drag anchor set by the most recent successful begin().
+  [[nodiscard]] NotationPoint anchor() const noexcept { return anchor_; }
+
+  // The active tool in effect for the current or most recent drag.
+  [[nodiscard]] ActiveTool active_tool() const noexcept { return active_tool_; }
+
+ private:
+  ActiveTool               active_tool_ = ActiveTool::kSelection;
+  bool                     dragging_    = false;
+  NotationPoint            anchor_;
+  std::optional<Selection> live_extent_;
+  std::optional<Selection> committed_selection_;
+};
+
 // Constructs a reversible domain command for the note-entry pointer action
 // described in docs/plan/05-notation-editor.md ("Clicking an existing
 // rhythmic event in the selected voice changes its selected duration;

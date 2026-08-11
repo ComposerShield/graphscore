@@ -38,6 +38,14 @@ target_link_libraries(graphscore_writer_app
     graphscore_core
 )
 
+# The pinned Bravura font path (ADR 0002 §A4) is only known when the writer
+# dependencies were fetched. With -DGRAPHSCORE_BUILD_WRITER=OFF the macro is
+# undefined; the app's headless test path uses SelfTestMetrics instead.
+if (GRAPHSCORE_BUILD_WRITER)
+  target_compile_definitions(graphscore_writer_app PRIVATE
+    "GRAPHSCORE_BRAVURA_FONT_PATH=\"${GRAPHSCORE_BRAVURA_FONT_PATH}\"")
+endif()
+
 # --- writer-only resource install (ADR 0002 §A4, §5) -----------------------
 #
 # The Bravura SMuFL font, its own OFL text, and the full third-party notice
