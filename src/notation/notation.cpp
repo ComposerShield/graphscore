@@ -4865,6 +4865,9 @@ std::optional<NoteAuditionRequest> audition_for_note_entry(
 // ---- SelectionDragState: dedicated-selection-tool pointer-drag lifecycle ----
 
 bool SelectionDragState::begin(ActiveTool tool, NotationPoint anchor) noexcept {
+  // Cancel any in-progress drag before validating — a rejected begin()
+  // must leave no stale drag state.  committed_selection_ is preserved.
+  cancel();
   if (tool != ActiveTool::kSelection) {
     return false;
   }
@@ -4873,8 +4876,6 @@ bool SelectionDragState::begin(ActiveTool tool, NotationPoint anchor) noexcept {
   if (!std::isfinite(anchor.x) || !std::isfinite(anchor.y)) {
     return false;
   }
-  cancel();  // Discard any in-progress drag without touching
-             // committed_selection_.
   active_tool_ = tool;
   anchor_      = anchor;
   dragging_    = true;

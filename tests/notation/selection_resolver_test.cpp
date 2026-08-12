@@ -3048,6 +3048,94 @@ TEST(SelectionDragLifecycleTest, CommittedSelectionPersistsAcrossToolChanges) {
   EXPECT_EQ(*drag.committed_selection(), *first);
 }
 
+TEST(SelectionDragLifecycleTest,
+     BeginWithNonSelectionToolWhileDraggingCancelsDrag) {
+  Fixture        fixture(1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint anchor = measure_left_edge(layout, 0, 0, 0);
+
+  SelectionDragState drag;
+  ASSERT_TRUE(drag.begin(ActiveTool::kSelection, anchor));
+  ASSERT_TRUE(drag.is_dragging());
+
+  // A begin() with a non-Selection tool cancels the drag and returns false.
+  EXPECT_FALSE(drag.begin(ActiveTool::kNoteEntry, anchor));
+  EXPECT_FALSE(drag.is_dragging());
+  EXPECT_FALSE(drag.live_extent().has_value());
+  // committed_selection_ was never set — remains nullopt.
+  EXPECT_FALSE(drag.committed_selection().has_value());
+}
+
+TEST(SelectionDragLifecycleTest,
+     BeginWithNonFiniteAnchorWhileDraggingCancelsDrag) {
+  Fixture        fixture(1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint anchor     = measure_left_edge(layout, 0, 0, 0);
+  const NotationPoint nan_anchor = {std::numeric_limits<double>::quiet_NaN(),
+                                    0.0};
+
+  SelectionDragState drag;
+  ASSERT_TRUE(drag.begin(ActiveTool::kSelection, anchor));
+  ASSERT_TRUE(drag.is_dragging());
+
+  // A begin() with a non-finite anchor cancels the drag and returns false.
+  EXPECT_FALSE(drag.begin(ActiveTool::kSelection, nan_anchor));
+  EXPECT_FALSE(drag.is_dragging());
+  EXPECT_FALSE(drag.live_extent().has_value());
+  // committed_selection_ was never set — remains nullopt.
+  EXPECT_FALSE(drag.committed_selection().has_value());
+}
+
+TEST(SelectionDragLifecycleTest,
+     RejectedBeginWhileDraggingPreservesCommittedSelection) {
+  Fixture        fixture(1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint anchor = measure_left_edge(layout, 0, 0, 0);
+  const NotationPoint focus  = measure_right_edge(layout, 0, 0, 0);
+
+  SelectionDragState drag;
+  // First drag: begin, update, commit — produces a committed selection.
+  ASSERT_TRUE(drag.begin(ActiveTool::kSelection, anchor));
+  ASSERT_TRUE(drag.update(fixture.project, layout, focus).has_value());
+  const std::optional<Selection> committed = drag.commit();
+  ASSERT_TRUE(committed.has_value());
+
+  // Second drag: begin.
+  ASSERT_TRUE(drag.begin(ActiveTool::kSelection, anchor));
+  ASSERT_TRUE(drag.is_dragging());
+
+  // Rejected begin() with a non-Selection tool cancels the drag and
+  // preserves the first drag's committed selection.
+  EXPECT_FALSE(drag.begin(ActiveTool::kNoteEntry, anchor));
+  EXPECT_FALSE(drag.is_dragging());
+  ASSERT_TRUE(drag.committed_selection().has_value());
+  EXPECT_EQ(*drag.committed_selection(), *committed);
+}
+
 // ---- build_range_highlight_rects -------------------------------------------
 
 TEST(HighlightRectsTest, EmptyOnNonRangeSelection) {

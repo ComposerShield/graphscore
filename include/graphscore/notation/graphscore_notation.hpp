@@ -1220,17 +1220,19 @@ enum class ActiveTool : std::uint8_t {
 //                  committed Selection.
 //   cancel()    -- discard the in-progress drag without committing.
 //
-// Tool change or a new begin() while dragging cancels the current drag
-// before starting the new one.  A non-kSelection tool begin() returns false
-// and leaves no stale state.
+// Every begin() call cancels any in-progress drag before validating its
+// arguments.  A non-kSelection tool, a non-finite anchor, or any other
+// reason to return false leaves no stale drag state — only
+// committed_selection_ (if any) persists.
 class SelectionDragState {
  public:
   SelectionDragState() = default;
 
-  // Pointer press with `tool`.  Returns true when tool == kSelection and
-  // anchor is a non-NaN point; the caller must resolve validity with
-  // update() -- begin() itself does not look at project or layout.  If a
-  // drag is already in progress, calling begin() cancels it first.
+  // Pointer press with `tool`.  Always cancels any in-progress drag first
+  // (preserving committed_selection_), then validates.  Returns true when
+  // tool == kSelection and anchor is a non-NaN point; the caller must
+  // resolve validity with update() -- begin() itself does not look at
+  // project or layout.
   [[nodiscard]] bool begin(ActiveTool tool, NotationPoint anchor) noexcept;
 
   // Advance the live extent for the current pointer position.  Calls

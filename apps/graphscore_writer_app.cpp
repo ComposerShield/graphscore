@@ -251,14 +251,11 @@ class SelectionToolHandler final : public graphscore::InputHandler {
     if (event.button != graphscore::PointerButton::kPrimary) {
       return;
     }
-    if (active_tool_ != graphscore::ActiveTool::kSelection) {
-      return;
-    }
     const graphscore::NotationPoint point{event.x, event.y};
-    if (!std::isfinite(point.x) || !std::isfinite(point.y)) {
-      return;
-    }
     if (!drag_.begin(active_tool_, point)) {
+      // begin() cancels any prior drag and returns false; committed_selection_
+      // persists.  Show whatever highlight fits (committed, if any, or clear).
+      update_highlight();
       return;
     }
     initiating_button_ = event.button;
@@ -1008,6 +1005,49 @@ int selection_tool_test() {
     handler.on_cancel();
   }
   shell.set_test_dpi_scale(0.0);
+
+  // --- test 15: non-finite primary re-press while dragging cancels ----
+  // Start a valid selection drag, then issue a primary press with NaN
+  // coordinates.  The handler must cancel the drag via begin(), so a
+  // subsequent release does not commit a stale extent.
+  handler.set_active_tool(graphscore::ActiveTool::kSelection);
+  {
+    const double press_x = layout.systems[0].measures[0].bounds.x;
+    const double press_y = layout.systems[0].staves[0].bounds.y +
+                           layout.systems[0].staves[0].bounds.height * 0.5;
+    const double move_x = layout.systems[0].measures[0].bounds.x +
+                          layout.systems[0].measures[0].bounds.width;
+
+    // Start a valid drag.
+    shell.dispatch_test_pointer_event(0, make_event(press_x, press_y));
+    shell.dispatch_test_pointer_event(1, make_event(move_x, press_y));
+    if (!handler.drag_state().is_dragging()) {
+      std::fprintf(stderr,
+                   "selection-tool-test: drag not active before NaN repress\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // Re-press with NaN coordinates — handler must cancel the drag.
+    shell.dispatch_test_pointer_event(
+        0, make_event(std::numeric_limits<double>::quiet_NaN(), press_y));
+    if (handler.drag_state().is_dragging()) {
+      std::fprintf(stderr,
+                   "selection-tool-test: drag survived NaN primary repress\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // A subsequent primary release must not commit (drag is already gone).
+    shell.dispatch_test_pointer_event(2, make_event(move_x, press_y));
+    if (handler.drag_state().is_dragging()) {
+      std::fprintf(stderr,
+                   "selection-tool-test: release after NaN repress started "
+                   "a new drag\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+  }
 
   std::printf("selection-tool-test: ok\n");
   return 0;

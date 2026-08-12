@@ -118,6 +118,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [x] &nbsp;&nbsp;Marking selection-resolver increment completed
 - [x] &nbsp;&nbsp;Pointer-drag range-resolver increment completed
 - [x] &nbsp;&nbsp;Stemless notehead-column hit-region increment completed
+- [x] &nbsp;&nbsp;Range-selection hit-region integration increment completed
 - [x] &nbsp;&nbsp;Dedicated pointer-range selection-tool increment completed
 - [x] &nbsp;&nbsp;Per-staff measure hit-region increment completed
 - [ ] Whole-measure selection and copy/paste completed
