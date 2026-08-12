@@ -19,15 +19,6 @@ Provide a polished, directly editable focused notation system inside a node, wit
 
 ## Deliverables
 
-> **This is a checklist, not a changelog.** Check the box and leave the bullet
-> text alone. Do not append evidence parentheticals, test counts, verification
-> results, or implementation summaries to these lines — that belongs in the
-> commit message and the code, where it stays accurate as the code changes.
->
-> When a bullet is delivered across several increments, split it into indented
-> sub-bullets naming the remaining work and check them off as they land, so a
-> partly-done bullet shows what is left. Keep those bare too.
-
 ### Incremental engraving
 
 - [x] Lay out all active tracks and their one-or-more staves against the node's common measure timeline.

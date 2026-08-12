@@ -239,6 +239,34 @@ the model, assistant, or vendor used to produce the change — including names
 such as Claude, ChatGPT, GPT, Copilot, Anthropic, or OpenAI — and must never
 add an AI-generated attribution trailer (e.g. `Co-Authored-By: <assistant>`).
 
+## Plan and checklist maintenance
+
+`docs/plan/CHECKLIST.md` and the milestone files (`docs/plan/<NN>-*.md`) are
+checklists, not changelogs. This section is the only place these rules live;
+do not restate them in the plan documents themselves, where they drift.
+
+- Check the box and leave the line alone. Never append evidence
+  parentheticals, test counts, verification results, or implementation
+  summaries to a checklist line or a milestone bullet. That belongs in the
+  commit message and the code, where it stays accurate as the code changes.
+- When a bullet is delivered across several increments, split it into
+  indented sub-bullets naming the remaining work and check them off as they
+  land, so a partly-delivered bullet shows what is left. Keep those bare
+  too. An unchecked box with no sub-entries means no work has landed.
+- A forward obligation that outlives the increment which found it — a
+  deferral, a known limitation, a bug discovered but not fixed — does not go
+  in the checklist. It goes in the milestone file that owns it, where that
+  milestone's own worker will read it.
+- Acceptance and test boxes are checked before the milestone-complete box.
+
+`docs/plan/M02_HANDOFF.md` and `docs/plan/M0_STATUS.md` are a different
+genre: living status documents that must get *smaller* as work completes.
+Each carries its own maintenance rule; honour it.
+
+`docs/plan/02-domain-model.md` still contains per-phase implementation
+summaries predating these rules. It is a completed milestone and is
+deliberately left alone; do not treat it as the pattern to follow.
+
 ## Runtime packaging
 
 `graphscore_runtime` installs and exports as the `GraphScoreRuntime` CMake
@@ -347,14 +375,8 @@ rationale.
 - [docs/plan/README.md](docs/plan/README.md) — product vision, locked
   decisions, milestone roadmap.
 - [docs/plan/CHECKLIST.md](docs/plan/CHECKLIST.md) — source-controlled
-  execution checklist; check a step box once every detailed deliverable in
-  its linked section is done, and record completed increments short of that
-  as bare checked indented sub-entries so partial progress stays visible.
-  It is a checklist, not a changelog: never append evidence parentheticals,
-  test counts, or verification results to a line there or in a milestone
-  file — that is what the commit message is for. A forward obligation that
-  outlives its increment (a deferral, a known limitation, a bug found but
-  not fixed) goes in the owning milestone file, not the checklist.
+  execution checklist, the one-page cross-milestone status index. See "Plan
+  and checklist maintenance" above before editing it or any milestone file.
 - [docs/plan/01-toolchain-ci.md](docs/plan/01-toolchain-ci.md) — this
   milestone's deliverables and acceptance criteria in full.
 - [docs/decisions/0003-architecture-target-dag.md](docs/decisions/0003-architecture-target-dag.md)

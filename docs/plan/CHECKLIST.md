@@ -2,25 +2,8 @@
 
 This source-controlled checklist is the one-page cross-milestone status index. A
 step box is checked when every detailed deliverable in its linked section is
-complete.
-
-> **This is a checklist, not a changelog.** Check the box and leave the line
-> alone. Do not append evidence parentheticals, test counts, verification
-> results, or implementation summaries — that belongs in the commit message and
-> the code, where it stays accurate as the code changes. The same rule governs
-> the milestone files themselves.
->
-> Progress short of a full step is recorded as a bare **indented sub-entry**
-> naming the increment, checked in its own right, so a partly-delivered step
-> does not read as untouched. An unchecked box with no sub-entries means no work
-> has landed.
->
-> A forward obligation that outlives the increment which found it — a deferral,
-> a known limitation, a bug discovered but not fixed — does **not** belong here.
-> It goes in the owning milestone file, where the milestone's own worker will
-> read it.
-
-Acceptance and test boxes must be checked before the milestone-complete box.
+complete. Maintenance rules live in [AGENTS.md](../../AGENTS.md) under "Plan and
+checklist maintenance".
 
 **Execution order:** milestones are listed below by identity, not by the order
 they are worked. **Milestone 05 runs before 03 and 04** — see the Execution
