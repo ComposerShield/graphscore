@@ -61,6 +61,8 @@ Provide a polished, directly editable focused notation system inside a node, wit
   - [x] Hold drag state and the active tool at the app layer, and wire pointer press/move/release to the resolver.
   - [x] Show a live selection extent during and after the drag.
 - [ ] Add measure hit targets/actions for selecting one complete measure on the focused staff/track and extending that aligned measure selection across additional tracks.
+  - [ ] Emit a per-staff measure hit region and resolve a pointer position on it to a one-measure full-measure selection on that staff/track.
+  - [ ] Extend an aligned measure selection across additional chosen tracks/staves.
 - [ ] Support Shift/keyboard range extension and accessible start/end/staff-scope controls that produce the same selection as pointer dragging.
 - [ ] Up/Down moves a selected notehead one diatonic staff step and preserves its accidental.
 - [ ] `-` and `=` step through double-flat, flat, natural, sharp, and double-sharp.
