@@ -29,6 +29,8 @@ using graphscore::Duration;
 using graphscore::Dynamic;
 using graphscore::DynamicMarking;
 using graphscore::extend_measure_selection;
+using graphscore::extend_range_selection;
+using graphscore::extend_range_selection_staff_scope;
 using graphscore::extract_fragment;
 using graphscore::FragmentExtraction;
 using graphscore::FullMeasureItem;
@@ -79,9 +81,12 @@ using graphscore::PedalSpan;
 using graphscore::preview_note_entry;
 using graphscore::Project;
 using graphscore::ProjectId;
+using graphscore::RangeEdge;
+using graphscore::RangeSelectionSpec;
 using graphscore::Rational;
 using graphscore::resolve_measure_selection_at;
 using graphscore::resolve_range_selection;
+using graphscore::resolve_range_selection_spec;
 using graphscore::resolve_selection_at;
 using graphscore::Rest;
 using graphscore::RestItem;
@@ -4619,6 +4624,1067 @@ TEST(RangeSelectionTest,
   std::ranges::sort(part_voices);
   EXPECT_EQ(part_voices,
             (std::vector<Voice>{*Voice::create(1), *Voice::create(2)}));
+}
+
+// ---- resolve_range_selection_spec: musical-coordinate equivalent of a
+//      pointer-drag range selection -----------------------------------
+
+[[nodiscard]] std::vector<std::pair<TrackId, StaveId>> test_score_order(
+    const Project& project) {
+  std::vector<std::pair<TrackId, StaveId>> order;
+  for (const auto& track : project.active_tracks()) {
+    for (const auto& stave : track.layout().staves()) {
+      order.emplace_back(track.id(), stave.id);
+    }
+  }
+  return order;
+}
+
+struct RangeExtent {
+  MusicalSpan  span;
+  MeasureScope first_staff;
+  MeasureScope last_staff;
+};
+
+// Derives the span and score-order staff endpoints from a resolved
+// ArbitraryRangeSet the way a real caller would: read the result of a
+// pointer drag back out, then feed it into resolve_range_selection_spec.
+// This is the equivalence property's own test machinery, not production
+// code -- it deliberately does not call any private notation.cpp helper.
+[[nodiscard]] RangeExtent range_extent(const Project&           project,
+                                       const ArbitraryRangeSet& set) {
+  const auto                 order = test_score_order(project);
+  std::optional<std::size_t> lower;
+  std::optional<std::size_t> upper;
+  for (const auto& item : set.items()) {
+    const auto position =
+        std::ranges::find(order, std::pair{item.track, item.stave});
+    EXPECT_NE(position, order.end());
+    const auto index = static_cast<std::size_t>(position - order.begin());
+    if (!lower.has_value() || index < *lower) {
+      lower = index;
+    }
+    if (!upper.has_value() || index > *upper) {
+      upper = index;
+    }
+  }
+  return RangeExtent{set.items().front().span,
+                     MeasureScope{order[*lower].first, order[*lower].second},
+                     MeasureScope{order[*upper].first, order[*upper].second}};
+}
+
+TEST(RangeSpecTest, EquivalenceWithSingleStaffPointerDrag) {
+  Fixture        fixture(1);
+  const Duration quarter = *Duration::create(NoteValue::kQuarter, 0);
+  for (int index = 0; index < 4; ++index) {
+    ASSERT_TRUE(
+        fixture.voice()
+            .append(make_note(*SpelledPitch::create(Letter::kC, 4), quarter))
+            .ok());
+  }
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint anchor = measure_left_edge(layout, 0, 0, 0);
+  const NotationPoint focus  = measure_right_edge(layout, 0, 0, 0);
+
+  const auto drag_selection =
+      resolve_range_selection(fixture.project, layout, anchor, focus);
+  ASSERT_TRUE(drag_selection.has_value());
+  const auto* drag_set = std::get_if<ArbitraryRangeSet>(&*drag_selection);
+  ASSERT_NE(drag_set, nullptr);
+
+  const RangeExtent extent         = range_extent(fixture.project, *drag_set);
+  const auto        spec_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, extent.span, extent.first_staff,
+                         extent.last_staff});
+  ASSERT_TRUE(spec_selection.has_value());
+  EXPECT_EQ(*drag_selection, *spec_selection);
+}
+
+TEST(RangeSpecTest, EquivalenceWithMultiStaffMultiTrackPointerDrag) {
+  Fixture        fixture({StaffLayout::single_staff(Clef::kTreble),
+                          StaffLayout::single_staff(Clef::kBass)},
+                         1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice(1, 0)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 5), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1, 1)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 3), whole))
+          .ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint anchor = measure_left_edge(layout, 0, 0, 0);
+  const NotationPoint focus  = measure_right_edge(layout, 0, 1, 0);
+
+  const auto drag_selection =
+      resolve_range_selection(fixture.project, layout, anchor, focus);
+  ASSERT_TRUE(drag_selection.has_value());
+  const auto* drag_set = std::get_if<ArbitraryRangeSet>(&*drag_selection);
+  ASSERT_NE(drag_set, nullptr);
+
+  const RangeExtent extent         = range_extent(fixture.project, *drag_set);
+  const auto        spec_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, extent.span, extent.first_staff,
+                         extent.last_staff});
+  ASSERT_TRUE(spec_selection.has_value());
+  EXPECT_EQ(*drag_selection, *spec_selection);
+}
+
+TEST(RangeSpecTest, EquivalenceWithASystemBreakSpanningPointerDrag) {
+  Fixture        fixture(2);
+  const Duration quarter = *Duration::create(NoteValue::kQuarter, 0);
+  for (int index = 0; index < 8; ++index) {
+    ASSERT_TRUE(
+        fixture.voice()
+            .append(make_note(*SpelledPitch::create(Letter::kC, 4), quarter))
+            .ok());
+  }
+
+  const FixedMetrics    metrics;
+  NotationLayoutOptions options;
+  options.system_width        = 50.0;
+  options.left_margin         = 1.0;
+  options.right_margin        = 1.0;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics, options));
+  ASSERT_EQ(layout.systems.size(), 2u);
+  const NotationPoint anchor = measure_left_edge(layout, 0, 0, 0);
+  const NotationPoint focus  = measure_right_edge(layout, 1, 0, 0);
+
+  const auto drag_selection =
+      resolve_range_selection(fixture.project, layout, anchor, focus);
+  ASSERT_TRUE(drag_selection.has_value());
+  const auto* drag_set = std::get_if<ArbitraryRangeSet>(&*drag_selection);
+  ASSERT_NE(drag_set, nullptr);
+
+  const RangeExtent extent         = range_extent(fixture.project, *drag_set);
+  const auto        spec_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, extent.span, extent.first_staff,
+                         extent.last_staff});
+  ASSERT_TRUE(spec_selection.has_value());
+  EXPECT_EQ(*drag_selection, *spec_selection);
+}
+
+TEST(RangeSpecTest, EquivalenceWithABackwardDragUsingSwappedStaffOrder) {
+  Fixture        fixture({StaffLayout::single_staff(Clef::kTreble),
+                          StaffLayout::single_staff(Clef::kTreble),
+                          StaffLayout::single_staff(Clef::kTreble)},
+                         1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice(1, 0)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1, 1)
+          .append(make_note(*SpelledPitch::create(Letter::kE, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1, 2)
+          .append(make_note(*SpelledPitch::create(Letter::kG, 4), whole))
+          .ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint staff2_left  = measure_left_edge(layout, 0, 2, 0);
+  const NotationPoint staff0_right = measure_right_edge(layout, 0, 0, 0);
+
+  const auto drag_selection = resolve_range_selection(
+      fixture.project, layout, staff2_left, staff0_right);
+  ASSERT_TRUE(drag_selection.has_value());
+  const auto* drag_set = std::get_if<ArbitraryRangeSet>(&*drag_selection);
+  ASSERT_NE(drag_set, nullptr);
+
+  const RangeExtent extent = range_extent(fixture.project, *drag_set);
+  // Deliberately swap first_staff/last_staff relative to `extent` --
+  // order-insensitivity means this still yields the identical selection.
+  const auto swapped_spec_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, extent.span, extent.last_staff,
+                         extent.first_staff});
+  ASSERT_TRUE(swapped_spec_selection.has_value());
+  EXPECT_EQ(*drag_selection, *swapped_spec_selection);
+}
+
+TEST(RangeSpecTest, ZeroLengthSpanYieldsNoSelection) {
+  Fixture fixture(1);
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(0)},
+                         staff, staff});
+  EXPECT_FALSE(selection.has_value());
+}
+
+TEST(RangeSpecTest, NegativeSpanStartYieldsNoSelection) {
+  Fixture fixture(1);
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id,
+                         MusicalSpan{*Rational::create(-1, 4), Rational(1)},
+                         staff, staff});
+  EXPECT_FALSE(selection.has_value());
+}
+
+TEST(RangeSpecTest, SpanBeyondTheTimelinesTotalLengthYieldsNoSelection) {
+  Fixture fixture(1);
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(2)},
+                         staff, staff});
+  EXPECT_FALSE(selection.has_value());
+}
+
+TEST(RangeSpecTest, UnknownNodeYieldsNoSelection) {
+  Fixture            fixture(1);
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{NodeId::generate(),
+                         MusicalSpan{Rational(0), Rational(1)}, staff, staff});
+  EXPECT_FALSE(selection.has_value());
+}
+
+TEST(RangeSpecTest, NodeWithoutATimelineYieldsNoSelection) {
+  Fixture            fixture(1);
+  const NodeId       bare_node = fixture.project.add_node("Bare");
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{bare_node, MusicalSpan{Rational(0), Rational(1)},
+                         staff, staff});
+  EXPECT_FALSE(selection.has_value());
+}
+
+TEST(RangeSpecTest, StaffEndpointNotInScoreOrderYieldsNoSelection) {
+  Fixture fixture(1);
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  const MeasureScope unknown{TrackId::generate(), StaveId::generate()};
+  const auto         selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         unknown, unknown});
+  EXPECT_FALSE(selection.has_value());
+}
+
+TEST(RangeSpecTest, ArchivedTrackStaffEndpointYieldsNoSelection) {
+  Fixture fixture({StaffLayout::single_staff(Clef::kTreble),
+                   StaffLayout::single_staff(Clef::kBass)},
+                  1);
+  ASSERT_TRUE(fixture.voice(1, 0)
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  // Read both staves before archiving: Fixture::stave_id indexes into
+  // Project::active_tracks(), which archive_track shrinks.
+  const MeasureScope active{fixture.track_ids[0], fixture.stave_id(0)};
+  const MeasureScope archived{fixture.track_ids[1], fixture.stave_id(1)};
+  ASSERT_TRUE(fixture.project.archive_track(fixture.track_ids[1]).ok());
+  const auto selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         active, archived});
+  EXPECT_FALSE(selection.has_value());
+}
+
+TEST(RangeSpecTest, StaveBelongingToADifferentTrackYieldsNoSelection) {
+  Fixture fixture({StaffLayout::single_staff(Clef::kTreble),
+                   StaffLayout::single_staff(Clef::kBass)},
+                  1);
+  ASSERT_TRUE(fixture.voice(1, 0)
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  // stave1 belongs to track 1's own layout, but the endpoint pairs it with
+  // track 0.
+  const MeasureScope mismatched{fixture.track_ids[0], fixture.stave_id(1)};
+  const auto         selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         mismatched, mismatched});
+  EXPECT_FALSE(selection.has_value());
+}
+
+TEST(RangeSpecTest, NoVoiceOverlappingTheSpanAnywhereYieldsNoSelection) {
+  Fixture fixture(2);
+  ASSERT_TRUE(fixture.voice(1)
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(1), Rational(2)},
+                         staff, staff});
+  EXPECT_FALSE(selection.has_value());
+}
+
+TEST(RangeSpecTest, SingleVoiceScoreNeverProducesTheOtherThreeVoicesItems) {
+  Fixture fixture(1);
+  ASSERT_TRUE(fixture.voice(1)
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff, staff});
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<ArbitraryRangeSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  ASSERT_EQ(set->items().size(), 1u);
+  EXPECT_EQ(set->items().front().voice, *Voice::create(1));
+}
+
+// Mirrors resolve_range_selection's own
+// VoiceContentOutsideTheDraggedSpanIsExcludedEvenThoughNonEmpty: a voice
+// whose only content ends exactly at the query span's own start is
+// excluded, per the half-open [onset, onset+duration) overlap rule.
+//
+// The mirror case -- a voice whose content *starts* exactly at the query
+// span's own end -- is not independently constructible as a distinct test
+// here: VoiceContent packs events contiguously from onset 0 (see
+// voice_overlaps_span, notation.cpp), so an event with onset > 0 always
+// implies some earlier event in the *same* voice already occupies
+// [0, onset), and that earlier event necessarily overlaps any span
+// touching that region too. The two symmetric halves of the half-open
+// rule therefore collapse into this one observable test for any span
+// that (like every span this or resolve_range_selection can produce)
+// begins within already-filled voice content.
+TEST(RangeSpecTest, EventEndingExactlyAtSpanStartIsExcluded) {
+  Fixture        fixture(2);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice(1)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(1), Rational(2)},
+                         staff, staff});
+  EXPECT_FALSE(selection.has_value());
+}
+
+TEST(RangeSpecTest, ItemOrderIsScoreOrderRegardlessOfCallerEndpointOrder) {
+  Fixture        fixture({StaffLayout::single_staff(Clef::kTreble),
+                          StaffLayout::single_staff(Clef::kBass),
+                          StaffLayout::single_staff(Clef::kTreble)},
+                         1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  for (std::size_t track = 0; track < 3; ++track) {
+    ASSERT_TRUE(
+        fixture.voice(1, track)
+            .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+            .ok());
+  }
+  const MeasureScope first{fixture.track_ids[0], fixture.stave_id(0)};
+  const MeasureScope last{fixture.track_ids[2], fixture.stave_id(2)};
+
+  const auto forward = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         first, last});
+  const auto reversed = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         last, first});
+  ASSERT_TRUE(forward.has_value());
+  ASSERT_TRUE(reversed.has_value());
+  EXPECT_EQ(*forward, *reversed);
+
+  const auto* set = std::get_if<ArbitraryRangeSet>(&*forward);
+  ASSERT_NE(set, nullptr);
+  ASSERT_EQ(set->items().size(), 3u);
+  EXPECT_EQ(set->items()[0].track, fixture.track_ids[0]);
+  EXPECT_EQ(set->items()[1].track, fixture.track_ids[1]);
+  EXPECT_EQ(set->items()[2].track, fixture.track_ids[2]);
+}
+
+// ---- extend_range_selection: Shift/keyboard time-edge extension --------
+
+TEST(RangeExtensionTest, MovingKStartWidensTheSpanKeepingEndFixed) {
+  Fixture        fixture(2);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice(1)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1)
+          .append(make_note(*SpelledPitch::create(Letter::kD, 4), whole))
+          .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(1), Rational(2)},
+                         staff, staff});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+
+  const auto extended = extend_range_selection(fixture.project, *existing_set,
+                                               RangeEdge::kStart, Rational(0));
+  ASSERT_TRUE(extended.has_value());
+  const auto* extended_set = std::get_if<ArbitraryRangeSet>(&*extended);
+  ASSERT_NE(extended_set, nullptr);
+  ASSERT_EQ(extended_set->items().size(), 1u);
+  EXPECT_EQ(extended_set->items().front().span,
+            (MusicalSpan{Rational(0), Rational(2)}));
+}
+
+TEST(RangeExtensionTest, MovingKEndWidensTheSpanKeepingStartFixed) {
+  Fixture        fixture(2);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice(1)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1)
+          .append(make_note(*SpelledPitch::create(Letter::kD, 4), whole))
+          .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff, staff});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+
+  const auto extended = extend_range_selection(fixture.project, *existing_set,
+                                               RangeEdge::kEnd, Rational(2));
+  ASSERT_TRUE(extended.has_value());
+  const auto* extended_set = std::get_if<ArbitraryRangeSet>(&*extended);
+  ASSERT_NE(extended_set, nullptr);
+  ASSERT_EQ(extended_set->items().size(), 1u);
+  EXPECT_EQ(extended_set->items().front().span,
+            (MusicalSpan{Rational(0), Rational(2)}));
+}
+
+TEST(RangeExtensionTest, MovingTheStartPastTheCurrentEndSwaps) {
+  Fixture        fixture(2);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice(1)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1)
+          .append(make_note(*SpelledPitch::create(Letter::kD, 4), whole))
+          .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff, staff});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+
+  // kStart moves to 2, past the current end (1) -- the span swaps to
+  // [1, 2) rather than being rejected.
+  const auto extended = extend_range_selection(fixture.project, *existing_set,
+                                               RangeEdge::kStart, Rational(2));
+  ASSERT_TRUE(extended.has_value());
+  const auto* extended_set = std::get_if<ArbitraryRangeSet>(&*extended);
+  ASSERT_NE(extended_set, nullptr);
+  EXPECT_EQ(extended_set->items().front().span,
+            (MusicalSpan{Rational(1), Rational(2)}));
+}
+
+TEST(RangeExtensionTest, MovingTheEndBeforeTheCurrentStartSwaps) {
+  Fixture        fixture(2);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice(1)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1)
+          .append(make_note(*SpelledPitch::create(Letter::kD, 4), whole))
+          .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(1), Rational(2)},
+                         staff, staff});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+
+  const auto extended = extend_range_selection(fixture.project, *existing_set,
+                                               RangeEdge::kEnd, Rational(0));
+  ASSERT_TRUE(extended.has_value());
+  const auto* extended_set = std::get_if<ArbitraryRangeSet>(&*extended);
+  ASSERT_NE(extended_set, nullptr);
+  EXPECT_EQ(extended_set->items().front().span,
+            (MusicalSpan{Rational(0), Rational(1)}));
+}
+
+// Because VoiceContent packs events contiguously from onset 0 with no
+// gaps (see voice_overlaps_span, notation.cpp), a fully-packed voice
+// overlaps a query span [S, E) exactly when S is less than that voice's
+// own total content length -- E plays no part once S already reaches
+// it. Consequently a newly *end*-widened span can never newly capture a
+// voice a narrower span already missed (only a start-narrowed span can
+// newly *exclude* one, and only a start-widened, i.e. earlier, span can
+// newly *include* one): this test moves kStart earlier to demonstrate the
+// inclusion side.
+TEST(RangeExtensionTest, WideningTheSpanAddsANewlyOverlappingVoice) {
+  Fixture        fixture(2);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice(1)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1)
+          .append(make_note(*SpelledPitch::create(Letter::kD, 4), whole))
+          .ok());
+  // Voice 2's only content is measure 0's own span, [0, 1) -- it ends
+  // exactly where the existing span begins, so it starts out excluded.
+  ASSERT_TRUE(
+      fixture.voice(2)
+          .append(make_note(*SpelledPitch::create(Letter::kG, 3), whole))
+          .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(1), Rational(2)},
+                         staff, staff});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+  ASSERT_EQ(existing_set->items().size(), 1u);  // voice 1 only
+
+  const auto extended = extend_range_selection(fixture.project, *existing_set,
+                                               RangeEdge::kStart, Rational(0));
+  ASSERT_TRUE(extended.has_value());
+  const auto* extended_set = std::get_if<ArbitraryRangeSet>(&*extended);
+  ASSERT_NE(extended_set, nullptr);
+  ASSERT_EQ(extended_set->items().size(), 2u);
+  std::vector<Voice> voices;
+  for (const auto& item : extended_set->items()) {
+    voices.push_back(item.voice);
+  }
+  std::ranges::sort(voices);
+  EXPECT_EQ(voices, (std::vector<Voice>{*Voice::create(1), *Voice::create(2)}));
+}
+
+TEST(RangeExtensionTest, NarrowingTheSpanDropsAVoiceThatNoLongerOverlaps) {
+  Fixture        fixture(2);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice(1)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  ASSERT_TRUE(fixture.voice(2).append(make_rest(whole)).ok());
+  ASSERT_TRUE(
+      fixture.voice(2)
+          .append(make_note(*SpelledPitch::create(Letter::kG, 3), whole))
+          .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(2)},
+                         staff, staff});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+  ASSERT_EQ(existing_set->items().size(), 2u);
+
+  const auto narrowed = extend_range_selection(fixture.project, *existing_set,
+                                               RangeEdge::kStart, Rational(1));
+  ASSERT_TRUE(narrowed.has_value());
+  const auto* narrowed_set = std::get_if<ArbitraryRangeSet>(&*narrowed);
+  ASSERT_NE(narrowed_set, nullptr);
+  ASSERT_EQ(narrowed_set->items().size(), 1u);
+  EXPECT_EQ(narrowed_set->items().front().voice, *Voice::create(2));
+}
+
+TEST(RangeExtensionTest, NarrowingUntilNoVoiceOverlapsYieldsNoSelection) {
+  Fixture fixture(1);
+  ASSERT_TRUE(fixture.voice(1)
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kQuarter, 0)))
+                  .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff, staff});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+
+  EXPECT_FALSE(extend_range_selection(fixture.project, *existing_set,
+                                      RangeEdge::kStart,
+                                      *Rational::create(1, 2))
+                   .has_value());
+}
+
+TEST(RangeExtensionTest, MovingAnEdgeOntoTheFixedEdgeYieldsNoSelection) {
+  Fixture fixture(1);
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff, staff});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+
+  EXPECT_FALSE(extend_range_selection(fixture.project, *existing_set,
+                                      RangeEdge::kStart, Rational(1))
+                   .has_value());
+}
+
+TEST(RangeExtensionTest,
+     MovingAnEdgeBeyondTheTimelinesTotalLengthYieldsNoSelection) {
+  Fixture fixture(1);
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff, staff});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+
+  EXPECT_FALSE(extend_range_selection(fixture.project, *existing_set,
+                                      RangeEdge::kEnd, Rational(2))
+                   .has_value());
+}
+
+TEST(RangeExtensionTest, MovingAnEdgeBelowZeroYieldsNoSelection) {
+  Fixture fixture(1);
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff, staff});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+
+  EXPECT_FALSE(extend_range_selection(fixture.project, *existing_set,
+                                      RangeEdge::kStart,
+                                      *Rational::create(-1, 4))
+                   .has_value());
+}
+
+// Pins a documented limitation (extend_range_selection's own contract
+// comment, graphscore_notation.hpp): the staff range extend_range_selection
+// holds fixed is reconstructed from `existing`'s own items, so a staff at
+// the extreme of the originally resolved range is recoverable through an
+// edge-only extension only if it happened to contribute an item at initial
+// resolution -- regardless of whether its content overlaps the widened
+// span. Track 2 here is built to make that discriminating: its own whole
+// note occupies [0, 1), and the extension below widens the span to
+// [0, 2), which *does* overlap it. An implementation that instead held the
+// full, originally resolved [staff0, staff2] range fixed (rather than
+// reconstructing it from items) would therefore include a track 2 item in
+// the extended result. Track 2's absence below is attributable to the
+// reconstruction discarding staff 2 at initial resolution -- it
+// contributed no item to the original span [1, 2), which ends exactly
+// where track 2's own note ends -- not to track 2 lacking overlapping
+// content once the span widens. This pins that intentional, lossy behavior
+// exactly as documented, not a desirable property: a caller that must
+// preserve such a staff has to track the staff endpoints alongside the
+// Selection itself rather than reconstructing them from items, per that
+// same comment.
+TEST(RangeExtensionTest,
+     AStaffWithNoOverlappingVoiceIsNotPreservedThroughEdgeExtension) {
+  Fixture        fixture({StaffLayout::single_staff(Clef::kTreble),
+                          StaffLayout::single_staff(Clef::kTreble),
+                          StaffLayout::single_staff(Clef::kTreble)},
+                         2);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice(1, 0)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1, 0)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1, 1)
+          .append(make_note(*SpelledPitch::create(Letter::kD, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1, 1)
+          .append(make_note(*SpelledPitch::create(Letter::kD, 4), whole))
+          .ok());
+  // Track 2's only content is measure 0's own span, [0, 1) -- it ends
+  // exactly where the existing span begins, so it starts out excluded,
+  // exactly like voice 2 in WideningTheSpanAddsANewlyOverlappingVoice above.
+  ASSERT_TRUE(
+      fixture.voice(1, 2)
+          .append(make_note(*SpelledPitch::create(Letter::kG, 3), whole))
+          .ok());
+  const MeasureScope staff0{fixture.track_ids[0], fixture.stave_id(0)};
+  const MeasureScope staff2{fixture.track_ids[2], fixture.stave_id(2)};
+
+  const auto existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(1), Rational(2)},
+                         staff0, staff2});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+  // Staff 2 already contributes no item at initial resolution -- the loss
+  // this test pins starts here, before extend_range_selection is involved.
+  ASSERT_EQ(existing_set->items().size(), 2u);
+  for (const auto& item : existing_set->items()) {
+    EXPECT_NE(item.track, fixture.track_ids[2]);
+  }
+
+  // Widening the span's start reconstructs the "fixed" staff range as
+  // [staff0, staff1] -- the score-order extent of the *items*, not the
+  // originally resolved [staff0, staff2] range -- so staff 2 stays
+  // unreachable even though the new span [0, 2) does overlap its content.
+  const auto extended = extend_range_selection(fixture.project, *existing_set,
+                                               RangeEdge::kStart, Rational(0));
+  ASSERT_TRUE(extended.has_value());
+  const auto* extended_set = std::get_if<ArbitraryRangeSet>(&*extended);
+  ASSERT_NE(extended_set, nullptr);
+  for (const auto& item : extended_set->items()) {
+    EXPECT_NE(item.track, fixture.track_ids[2]);
+  }
+}
+
+TEST(RangeExtensionTest, MisalignedExistingSetIsRejected) {
+  Fixture fixture(1);
+  ASSERT_TRUE(fixture.voice(1)
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  ASSERT_TRUE(fixture.voice(2)
+                  .append(make_note(*SpelledPitch::create(Letter::kG, 3),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  // Hand-built set whose two items disagree on span -- never produced by
+  // resolve_range_selection or resolve_range_selection_spec.
+  const auto misaligned = ArbitraryRangeSet::create(
+      {ArbitraryRangeItem{fixture.node_id, fixture.track_ids[0],
+                          fixture.stave_id(), *Voice::create(1),
+                          MusicalSpan{Rational(0), Rational(1)}},
+       ArbitraryRangeItem{fixture.node_id, fixture.track_ids[0],
+                          fixture.stave_id(), *Voice::create(2),
+                          MusicalSpan{*Rational::create(1, 4), Rational(1)}}});
+  ASSERT_TRUE(misaligned.has_value());
+
+  EXPECT_FALSE(extend_range_selection(fixture.project, *misaligned,
+                                      RangeEdge::kStart, Rational(0))
+                   .has_value());
+}
+
+TEST(RangeExtensionTest, ExistingSetNamingAnUnknownNodeIsRejected) {
+  Fixture    fixture(1);
+  const auto fabricated = ArbitraryRangeSet::create({ArbitraryRangeItem{
+      NodeId::generate(), fixture.track_ids[0], fixture.stave_id(),
+      *Voice::create(1), MusicalSpan{Rational(0), Rational(1)}}});
+  ASSERT_TRUE(fabricated.has_value());
+  EXPECT_FALSE(extend_range_selection(fixture.project, *fabricated,
+                                      RangeEdge::kStart, Rational(0))
+                   .has_value());
+}
+
+TEST(RangeExtensionTest, ExistingSetNamingANodeWithoutATimelineIsRejected) {
+  Fixture      fixture(1);
+  const NodeId bare_node  = fixture.project.add_node("Bare");
+  const auto   fabricated = ArbitraryRangeSet::create({ArbitraryRangeItem{
+      bare_node, fixture.track_ids[0], fixture.stave_id(), *Voice::create(1),
+      MusicalSpan{Rational(0), Rational(1)}}});
+  ASSERT_TRUE(fabricated.has_value());
+  EXPECT_FALSE(extend_range_selection(fixture.project, *fabricated,
+                                      RangeEdge::kStart, Rational(0))
+                   .has_value());
+}
+
+// ---- extend_range_selection_staff_scope: Shift/keyboard staff-axis
+//      extension --------------------------------------------------------
+
+TEST(RangeStaffScopeExtensionTest, WideningAcrossTracksAddsFurtherStaves) {
+  Fixture        fixture({StaffLayout::single_staff(Clef::kTreble),
+                          StaffLayout::single_staff(Clef::kTreble),
+                          StaffLayout::single_staff(Clef::kTreble)},
+                         1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  for (std::size_t track = 0; track < 3; ++track) {
+    ASSERT_TRUE(
+        fixture.voice(1, track)
+            .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+            .ok());
+  }
+  const MeasureScope staff0{fixture.track_ids[0], fixture.stave_id(0)};
+  const MeasureScope staff2{fixture.track_ids[2], fixture.stave_id(2)};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff0, staff0});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+  ASSERT_EQ(existing_set->items().size(), 1u);
+
+  const auto widened = extend_range_selection_staff_scope(
+      fixture.project, *existing_set, staff0, staff2);
+  ASSERT_TRUE(widened.has_value());
+  const auto* widened_set = std::get_if<ArbitraryRangeSet>(&*widened);
+  ASSERT_NE(widened_set, nullptr);
+  ASSERT_EQ(widened_set->items().size(), 3u);
+  std::vector<TrackId> tracks;
+  for (const auto& item : widened_set->items()) {
+    tracks.push_back(item.track);
+  }
+  EXPECT_NE(std::ranges::find(tracks, fixture.track_ids[0]), tracks.end());
+  EXPECT_NE(std::ranges::find(tracks, fixture.track_ids[1]), tracks.end());
+  EXPECT_NE(std::ranges::find(tracks, fixture.track_ids[2]), tracks.end());
+}
+
+TEST(RangeStaffScopeExtensionTest, ContractingRemovesTrailingStaves) {
+  Fixture        fixture({StaffLayout::single_staff(Clef::kTreble),
+                          StaffLayout::single_staff(Clef::kTreble),
+                          StaffLayout::single_staff(Clef::kTreble)},
+                         1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  for (std::size_t track = 0; track < 3; ++track) {
+    ASSERT_TRUE(
+        fixture.voice(1, track)
+            .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+            .ok());
+  }
+  const MeasureScope staff0{fixture.track_ids[0], fixture.stave_id(0)};
+  const MeasureScope staff1{fixture.track_ids[1], fixture.stave_id(1)};
+  const MeasureScope staff2{fixture.track_ids[2], fixture.stave_id(2)};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff0, staff2});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+  ASSERT_EQ(existing_set->items().size(), 3u);
+
+  const auto contracted = extend_range_selection_staff_scope(
+      fixture.project, *existing_set, staff0, staff1);
+  ASSERT_TRUE(contracted.has_value());
+  const auto* contracted_set = std::get_if<ArbitraryRangeSet>(&*contracted);
+  ASSERT_NE(contracted_set, nullptr);
+  ASSERT_EQ(contracted_set->items().size(), 2u);
+  std::vector<TrackId> tracks;
+  for (const auto& item : contracted_set->items()) {
+    tracks.push_back(item.track);
+  }
+  EXPECT_EQ(std::ranges::find(tracks, fixture.track_ids[2]), tracks.end());
+}
+
+TEST(RangeStaffScopeExtensionTest, OrderInsensitivityOfTheTwoEndpoints) {
+  Fixture        fixture({StaffLayout::single_staff(Clef::kTreble),
+                          StaffLayout::single_staff(Clef::kBass)},
+                         1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice(1, 0)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1, 1)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 3), whole))
+          .ok());
+  const MeasureScope staff0{fixture.track_ids[0], fixture.stave_id(0)};
+  const MeasureScope staff1{fixture.track_ids[1], fixture.stave_id(1)};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff0, staff0});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+
+  const auto forward = extend_range_selection_staff_scope(
+      fixture.project, *existing_set, staff0, staff1);
+  const auto reversed = extend_range_selection_staff_scope(
+      fixture.project, *existing_set, staff1, staff0);
+  ASSERT_TRUE(forward.has_value());
+  ASSERT_TRUE(reversed.has_value());
+  EXPECT_EQ(*forward, *reversed);
+}
+
+TEST(RangeStaffScopeExtensionTest, IdempotenceOnAnUnchangedEndpoint) {
+  Fixture        fixture({StaffLayout::single_staff(Clef::kTreble),
+                          StaffLayout::single_staff(Clef::kBass)},
+                         1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice(1, 0)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1, 1)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 3), whole))
+          .ok());
+  const MeasureScope staff0{fixture.track_ids[0], fixture.stave_id(0)};
+  const MeasureScope staff1{fixture.track_ids[1], fixture.stave_id(1)};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff0, staff1});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+
+  const auto repeated = extend_range_selection_staff_scope(
+      fixture.project, *existing_set, staff0, staff1);
+  ASSERT_TRUE(repeated.has_value());
+  EXPECT_EQ(*existing_selection, *repeated);
+}
+
+TEST(RangeStaffScopeExtensionTest, MisalignedExistingSetIsRejected) {
+  Fixture fixture(1);
+  ASSERT_TRUE(fixture.voice(1)
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  ASSERT_TRUE(fixture.voice(2)
+                  .append(make_note(*SpelledPitch::create(Letter::kG, 3),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  const auto misaligned = ArbitraryRangeSet::create(
+      {ArbitraryRangeItem{fixture.node_id, fixture.track_ids[0],
+                          fixture.stave_id(), *Voice::create(1),
+                          MusicalSpan{Rational(0), Rational(1)}},
+       ArbitraryRangeItem{fixture.node_id, fixture.track_ids[0],
+                          fixture.stave_id(), *Voice::create(2),
+                          MusicalSpan{*Rational::create(1, 4), Rational(1)}}});
+  ASSERT_TRUE(misaligned.has_value());
+
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  EXPECT_FALSE(extend_range_selection_staff_scope(fixture.project, *misaligned,
+                                                  staff, staff)
+                   .has_value());
+}
+
+TEST(RangeStaffScopeExtensionTest, UnknownStaffEndpointIsRejected) {
+  Fixture fixture(1);
+  ASSERT_TRUE(fixture.voice()
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff, staff});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+
+  const MeasureScope unknown{TrackId::generate(), StaveId::generate()};
+  EXPECT_FALSE(extend_range_selection_staff_scope(fixture.project,
+                                                  *existing_set, staff, unknown)
+                   .has_value());
+}
+
+TEST(RangeStaffScopeExtensionTest,
+     NoOverlapInTheNewStaffRangeYieldsNoSelection) {
+  Fixture fixture({StaffLayout::single_staff(Clef::kTreble),
+                   StaffLayout::single_staff(Clef::kBass)},
+                  1);
+  ASSERT_TRUE(fixture.voice(1, 0)
+                  .append(make_note(*SpelledPitch::create(Letter::kC, 4),
+                                    *Duration::create(NoteValue::kWhole, 0)))
+                  .ok());
+  // Track 1's stave carries no content at all.
+  const MeasureScope staff0{fixture.track_ids[0], fixture.stave_id(0)};
+  const MeasureScope staff1{fixture.track_ids[1], fixture.stave_id(1)};
+  const auto         existing_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff0, staff0});
+  ASSERT_TRUE(existing_selection.has_value());
+  const auto* existing_set =
+      std::get_if<ArbitraryRangeSet>(&*existing_selection);
+  ASSERT_NE(existing_set, nullptr);
+
+  EXPECT_FALSE(extend_range_selection_staff_scope(fixture.project,
+                                                  *existing_set, staff1, staff1)
+                   .has_value());
+}
+
+TEST(RangeStaffScopeExtensionTest,
+     ExistingSetNamingANodeWithoutATimelineIsRejected) {
+  Fixture      fixture(1);
+  const NodeId bare_node  = fixture.project.add_node("Bare");
+  const auto   fabricated = ArbitraryRangeSet::create({ArbitraryRangeItem{
+      bare_node, fixture.track_ids[0], fixture.stave_id(), *Voice::create(1),
+      MusicalSpan{Rational(0), Rational(1)}}});
+  ASSERT_TRUE(fabricated.has_value());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  EXPECT_FALSE(extend_range_selection_staff_scope(fixture.project, *fabricated,
+                                                  staff, staff)
+                   .has_value());
 }
 
 // ---- SelectionDragState lifecycle -------------------------------------

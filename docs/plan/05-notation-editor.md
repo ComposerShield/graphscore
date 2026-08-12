@@ -57,6 +57,8 @@ Provide a polished, directly editable focused notation system inside a node, wit
   - [x] M5-phase-18a Emit a per-staff measure hit region and resolve a pointer position on it to a one-measure full-measure selection on that staff/track.
   - [x] M5-phase-18b Extend an aligned measure selection across additional chosen tracks/staves.
 - [ ] M5-phase-19 Support Shift/keyboard range extension and accessible start/end/staff-scope controls that produce the same selection as pointer dragging.
+  - [x] M5-phase-19a Resolve keyboard range extension and explicit start/end/staff-scope controls in the notation layer from musical coordinates, through the same resolution the pointer drag uses.
+  - [ ] M5-phase-19b Wire platform-neutral key events through the writer shell and app so Shift extension and the accessible controls drive those resolvers.
 - [ ] M5-phase-20 Up/Down moves a selected notehead one diatonic staff step and preserves its accidental.
 - [ ] M5-phase-21 `-` and `=` step through double-flat, flat, natural, sharp, and double-sharp.
 - [ ] M5-phase-22 Delete removes the selected notehead and selects the prior onset in the same voice/staff; when none exists it leaves an insertion caret at the deleted onset. Removing the last chord pitch leaves a normalized rest.

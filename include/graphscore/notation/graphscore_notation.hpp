@@ -1241,9 +1241,225 @@ struct MeasureScope {
 // it does so.
 //
 // A pure query: never mutates `project`, `layout`, or any cache.
+//
+// The staff-range rule, the voice-inclusion rule, the lane/voices-missing
+// skip behavior, and the final ArbitraryRangeSet construction described
+// above -- everything below "each endpoint's x is mapped to a musical time"
+// -- are factored into a private helper (notation.cpp) shared with
+// resolve_range_selection_spec, extend_range_selection, and
+// extend_range_selection_staff_scope below: those three reach the identical
+// rules from a resolved MusicalSpan and a pair of score-order staff
+// endpoints supplied directly, rather than derived from a pointer drag.
+// This function's own observable behavior is unchanged by that sharing.
 [[nodiscard]] std::optional<Selection> resolve_range_selection(
     const Project& project, const NotationLayout& layout, NotationPoint anchor,
     NotationPoint focus);
+
+// Names an explicit musical-coordinate range selection for
+// resolve_range_selection_spec below: which node, the exact musical span,
+// and the two (order-insensitive) staff endpoints it covers.
+struct RangeSelectionSpec {
+  NodeId       node_id;
+  MusicalSpan  span;
+  MeasureScope first_staff;
+  MeasureScope last_staff;
+};
+
+// The explicit musical-coordinate equivalent of a dedicated-selection-tool
+// pointer drag, for docs/plan/05-notation-editor.md's "accessible start/
+// end/staff-scope controls that produce the same selection as pointer
+// dragging." `span` and the two staff endpoints are supplied directly by
+// the caller -- no geometry, no NotationLayout, no NotationPoint -- so a
+// keyboard or assistive-technology control can name "start", "end", and
+// "staff scope" as independent, explicit values.
+//
+// first_staff/last_staff reuse MeasureScope (above) rather than a
+// parallel type; like resolve_range_selection's own anchor/focus staff
+// pair, they are order-insensitive -- resolved via std::minmax over the
+// project's score order exactly as resolve_range_selection's own anchor/
+// focus staves are, so first_staff naming the later staff and last_staff
+// the earlier one produces the identical result as the reverse.
+//
+// Quantization: deliberately none. resolve_range_selection quantizes
+// because a pixel-derived double must be snapped to some exact Rational
+// before it can become a MusicalSpan; kRangeSelectionGridDenominator picks
+// that grid. `spec.span` here is already an exact caller-supplied
+// Rational -- there is no continuous value to snap, and rounding an
+// already-exact dotted-sixty-fourth-note or quintuplet-division boundary
+// onto the pointer path's 1/192 grid would make the keyboard/accessible
+// path strictly less precise than the composer's own notated rhythm.
+// Consequently, this function and resolve_range_selection agree exactly
+// whenever the pointer path's own quantized output is fed back into
+// `spec.span` -- the equivalence the plan bullet actually asks for -- and
+// this function can additionally express spans resolve_range_selection's
+// 192nds-of-a-whole-note grid cannot land on exactly.
+//
+// Empty/zero-length span: rejected with std::nullopt, exactly like
+// resolve_range_selection's own `start == end` rejection -- a single
+// instant, not a range, is a caret concern, not this function's.
+//
+// Bounds: like every pointer drag resolve_range_selection can ever
+// produce (each endpoint is resolved from a rendered, on-screen measure,
+// which is always node.timeline()'s main-region material -- see
+// resolve_measure_selection_at's own comment above on why a pickdown
+// ordinal is unreachable from it), `spec.span` here must fall entirely
+// within the main region: 0 <= span.start and span.end <=
+// node.timeline()->measures().total_length(). A span reaching past that
+// bound is rejected with std::nullopt rather than silently accepted into
+// the pickdown region a pointer drag could never select. This is a
+// deliberate difference from validate_selection: validate_selection
+// performs no span-range check at all for an ArbitraryRangeSet (it invokes
+// NodeTimeline::classify only for reachability and discards the result --
+// see validate_arbitrary_range_set, src/domain/selection.cpp), so this
+// main-region-only bound is this function's own, applied specifically to
+// keep this function's own result set equivalent to what a drag could
+// produce.
+//
+// Validation: the resulting Selection is run through
+// validate_selection(project, selection) before being returned; a
+// non-empty diagnostic list rejects it with std::nullopt, exactly like
+// extend_measure_selection.
+//
+// Returns std::nullopt when: node_id does not name a node in `project`;
+// that node has no NodeTimeline; span.start is not strictly less than
+// span.end; span.start is negative or span.end exceeds the timeline's own
+// main-region total_length(); first_staff or last_staff does not name an
+// active track and one of its own staves in the project's score order
+// (this single check is what rejects an unknown track, an archived/
+// inactive track, and a stave id that exists but not on the named track --
+// score_ordered_staves(project) only ever enumerates active tracks' own
+// staves, so none of those three ever appears in it); or no voice anywhere
+// in the resolved staff range has any content overlapping `span`
+// (ArbitraryRangeSet::create itself rejects an empty item vector). A
+// staff within the resolved range whose own TrackLane/StaveVoices cannot
+// be found is skipped rather than treated as a nullopt-triggering failure,
+// exactly as in resolve_range_selection. `spec`'s Rational fields carry no
+// separate "non-finite" failure mode: Rational is always an exact,
+// finitely-representable value once constructed (Rational::create rejects
+// only a zero denominator), unlike NotationPoint's double coordinates.
+//
+// A pure query: never mutates `project`.
+[[nodiscard]] std::optional<Selection> resolve_range_selection_spec(
+    const Project& project, const RangeSelectionSpec& spec);
+
+// Which end of an ArbitraryRangeSet's shared musical span
+// extend_range_selection moves.
+enum class RangeEdge : std::uint8_t {
+  kStart,
+  kEnd,
+};
+
+// Moves one edge of `existing`'s shared musical span to `time`, holding
+// the other edge fixed, for docs/plan/05-notation-editor.md's "Shift/
+// keyboard range extension" -- the primitive a Shift+arrow-style action
+// calls with a freshly computed target time. This function deliberately
+// takes an explicit target Rational rather than a step size: how far one
+// keyboard press moves (a diatonic step, a beat, a measure, ...) is a
+// product decision for the action table docs/plan/05-notation-editor.md's
+// M5-phase-26/M5-phase-27 own, not something this notation-layer primitive
+// bakes in.
+//
+// `existing` must be an aligned ArbitraryRangeSet: every item shares one
+// NodeId and one MusicalSpan -- what resolve_range_selection,
+// resolve_range_selection_spec, and this function itself all produce. A
+// misaligned set (different nodes or spans across items) is rejected with
+// std::nullopt rather than silently normalized, exactly like
+// extend_measure_selection's own alignment precondition on FullMeasureSet.
+//
+// The staff range held fixed is derived from `existing`'s own items: the
+// lowest and highest score-order position among all of `existing`'s own
+// (track, stave) pairs. This reconstruction is unique to this function --
+// extend_range_selection_staff_scope deliberately takes both endpoints
+// explicitly rather than reconstructing them, for exactly the reason given
+// on its own declaration below. It carries a documented limitation: a
+// staff at the extreme of the originally resolved range whose own voices
+// happened to carry no overlapping content contributes no item, so it
+// cannot be recovered as part of the "fixed" staff range here either. A
+// caller that must preserve such a staff through an edge-only extension
+// should track the staff endpoints alongside the Selection rather than
+// reconstructing them from items.
+//
+// edge == kStart moves the span's start to `time`; edge == kEnd moves the
+// end. When the moved edge would cross the fixed one (a kStart move past
+// the current end, or a kEnd move before the current start), the two are
+// swapped rather than rejected, so "extend the start past the end" reads
+// as "the selection now runs the other way" -- consistent with
+// resolve_range_selection's own anchor/focus order-insensitivity. Moving
+// an edge exactly onto the fixed edge produces a zero-length span, which
+// is rejected below like every other zero-length span.
+//
+// Bounds and validation follow resolve_range_selection_spec exactly: the
+// new span must satisfy 0 <= start < end <= node.timeline()->measures().
+// total_length(), and the resulting Selection must pass
+// validate_selection(project, selection) before being returned.
+//
+// Returns std::nullopt when: `existing` is misaligned; the node named by
+// `existing`'s own items cannot be found in `project`, or has no
+// NodeTimeline; the new span is zero-length after the move/swap above, or
+// falls outside [0, total_length()]; any (track, stave) pair in
+// `existing`'s own items cannot be found in the project's score order (a
+// stale/fabricated `existing`); or no voice anywhere in the held-fixed
+// staff range has any content overlapping the new span.
+//
+// A pure query: never mutates `project`.
+[[nodiscard]] std::optional<Selection> extend_range_selection(
+    const Project& project, const ArbitraryRangeSet& existing, RangeEdge edge,
+    Rational time);
+
+// Replaces the staff scope of an existing ArbitraryRangeSet with the score-
+// order range spanning `first_staff` and `last_staff`, holding the shared
+// musical span fixed, for docs/plan/05-notation-editor.md's "Shift/
+// keyboard range extension" applied to the staff axis rather than the time
+// axis -- the sibling of extend_range_selection above.
+//
+// Unlike extend_range_selection's single-edge-plus-target shape, this
+// function takes both new staff endpoints explicitly (reusing MeasureScope,
+// order-insensitive via std::minmax, exactly like
+// resolve_range_selection_spec's own first_staff/last_staff fields) rather
+// than holding one of the two current endpoints implicitly fixed. Two
+// reasons: first, unlike a musical-time edge, the staff range's own current
+// endpoints are not reliably recoverable from `existing`'s items alone (see
+// extend_range_selection's own comment on that limitation) -- there is no
+// dependable "fixed" endpoint to hold. Second, this shape covers both a
+// single-step keyboard extension (the caller recomputes the moving
+// endpoint from the score order and passes the other one back unchanged)
+// and an explicit accessible staff-scope control (the caller names both
+// endpoints directly) with one function rather than two, and both widening
+// and contracting the staff range are ordinary calls rather than a special
+// case: `first_staff`/`last_staff` simply name the new range, regardless
+// of whether it is wider or narrower than the current one.
+//
+// The shared musical span is taken from `existing`'s own items, which must
+// be aligned (one NodeId, one MusicalSpan) exactly as
+// extend_range_selection requires.
+//
+// Bounds and validation: the node named by `existing` must exist and carry
+// a NodeTimeline (the span itself is unchanged, so no total_length() bound
+// re-check applies -- an already-valid span stays valid). That reasoning
+// holds for any `existing` this file's own API can produce; it does not
+// hold for a caller-fabricated `existing` carrying a span already outside
+// the main region, since neither this function nor
+// validate_selection/validate_arbitrary_range_set re-derive that bound --
+// the latter invokes NodeTimeline::classify(item.span) only to confirm the
+// span is reachable, not to reject an out-of-bounds one. This is
+// asymmetric with extend_range_selection, which does bound-check its own
+// (caller-supplied target time, not caller-supplied span) new span. The
+// resulting Selection is run through validate_selection(project, selection)
+// before being returned.
+//
+// Returns std::nullopt when: `existing` is misaligned or empty; the node
+// named by `existing` cannot be found in `project`, or has no
+// NodeTimeline; first_staff or last_staff does not name an active track
+// and one of its own staves in the project's score order (subsuming an
+// unknown track, an archived/inactive track, and a stave id absent from
+// the named track -- see resolve_range_selection_spec's own comment on
+// this same check); or no voice anywhere in the resulting staff range has
+// any content overlapping the unchanged span.
+//
+// A pure query: never mutates `project`.
+[[nodiscard]] std::optional<Selection> extend_range_selection_staff_scope(
+    const Project& project, const ArbitraryRangeSet& existing,
+    MeasureScope first_staff, MeasureScope last_staff);
 
 // Produces the visual highlight geometry for a range selection against
 // `layout`.  Returns layout-space rectangles, one per (system, staff,
