@@ -40,39 +40,39 @@ harnesses around disposable code.
 
 ### Permissive dependency policy — COMPLETE
 
-- [x] Confirm Apache-2.0 project licensing and contribution headers/policy.
-- [x] Create a dependency acceptance checklist covering source license,
+- [x] `M0-phase-1` Confirm Apache-2.0 project licensing and contribution headers/policy.
+- [x] `M0-phase-2` Create a dependency acceptance checklist covering source license,
       transitive licenses, patent terms, notices, FetchContent support, platform
       support, and redistribution.
-- [x] Evaluate a permissive writer shell (SDL3, AccessKit, HarfBuzz/FreeType,
+- [x] `M0-phase-3` Evaluate a permissive writer shell (SDL3, AccessKit, HarfBuzz/FreeType,
       audio device library, MIDI utility library).
-- [x] Verify that no selected default-build dependency introduces GPL/AGPL or
+- [x] `M0-phase-4` Verify that no selected default-build dependency introduces GPL/AGPL or
       mandatory commercial licensing.
-- [x] Record exact revisions and identify dependencies needing CMake adapters.
+- [x] `M0-phase-5` Record exact revisions and identify dependencies needing CMake adapters.
 
 Recorded in ADR 0001 and ADR 0002.
 
 ### Architectural boundaries — COMPLETE
 
-- [x] Domain and command model.
-- [x] Notation layout, hit testing, and toolkit-neutral drawing commands.
-- [x] Adaptive playback scheduler and MIDI model.
-- [x] Runtime C ABI and cooked-asset loader.
-- [x] Writer platform shell, accessibility bridge, audio devices, VST3 adapter.
-- [x] Plugin scanner helper and game-engine wrappers.
+- [x] `M0-phase-6` Domain and command model.
+- [x] `M0-phase-7` Notation layout, hit testing, and toolkit-neutral drawing commands.
+- [x] `M0-phase-8` Adaptive playback scheduler and MIDI model.
+- [x] `M0-phase-9` Runtime C ABI and cooked-asset loader.
+- [x] `M0-phase-10` Writer platform shell, accessibility bridge, audio devices, VST3 adapter.
+- [x] `M0-phase-11` Plugin scanner helper and game-engine wrappers.
 
 The domain, scheduler, persistence, and C ABI must build without UI,
 audio-device, or VST3 dependencies. Recorded in ADR 0003.
 
 ### Rendering and accessibility spike — COMPLETE (macOS)
 
-- [x] Open a native window and render a zoomable graph with notation staves
+- [x] `M0-phase-12` Open a native window and render a zoomable graph with notation staves
       using a SMuFL-compatible font.
-- [x] Demonstrate transforms, clipping, text shaping, hit testing, and rounded
+- [x] `M0-phase-13` Demonstrate transforms, clipping, text shaping, hit testing, and rounded
       orthogonal paths.
-- [x] Expose representative graph nodes, connectors, measures, notes, controls,
+- [x] `M0-phase-14` Expose representative graph nodes, connectors, measures, notes, controls,
       selection, and actions to VoiceOver.
-- [x] Confirm trackpad pan/pinch fidelity and native-handle access for plugin
+- [x] `M0-phase-15` Confirm trackpad pan/pinch fidelity and native-handle access for plugin
       editors.
 
 Recorded in ADR 0004.
@@ -84,14 +84,14 @@ canvas can be made screen-reader navigable at all, and macOS answered it.
 
 ### Engraving-engine decision — COMPLETE
 
-- [x] Time-boxed license/API survey of embeddable engraving engines.
-- [x] Record the owned semantic-layout direction using SMuFL glyphs and a
+- [x] `M0-phase-16` Time-boxed license/API survey of embeddable engraving engines.
+- [x] `M0-phase-17` Record the owned semantic-layout direction using SMuFL glyphs and a
       toolkit-neutral render list.
 
 Recorded in ADR 0005. No permissively licensed embeddable interactive engraving
 engine exists; GraphScore owns its layout.
 
-- [x] Delete or quarantine `spikes/m0/engraving-engine/` — the decision is made
+- [x] `M0-phase-18` Delete or quarantine `spikes/m0/engraving-engine/` — the decision is made
       and the proof code is no longer load-bearing. Source, tests, and CMake
       removed 2026-07-21; evidence logs and README retained as ADR citations.
 
@@ -103,12 +103,12 @@ export, and full bounds validation on hostile input. Schema-generated formats
 fight all four. This is a design decision, not an empirical unknown, and
 Milestone 03 is a cheap place to discover it was wrong.
 
-- [x] Write ADR 0006 selecting a cooked-format direction. **Decided: GraphScore
+- [x] `M0-phase-19` Write ADR 0006 selecting a cooked-format direction. **Decided: GraphScore
       owns its binary format.** FlatBuffers rejected on allocator control,
       byte-determinism cost, and the no-third-party-types rule.
-- [x] Record the fallback if the selected direction fails in Milestone 03 —
+- [x] `M0-phase-20` Record the fallback if the selected direction fails in Milestone 03 —
       FlatBuffers confined behind the owned reader API in one library.
-- [x] Delete `spikes/m0/cooked-format/` — stub scaffold removed 2026-07-21.
+- [x] `M0-phase-21` Delete `spikes/m0/cooked-format/` — stub scaffold removed 2026-07-21.
 
 **Time box: 2 hours, documentation only.** No format is implemented in M0.
 Round-trip and malformed-buffer tests belong to Milestone 03, where the format
@@ -122,19 +122,19 @@ are real risks that cannot be resolved on paper.
 
 **Time box: one working day.**
 
-- [x] Verify the VST3 SDK license directly against upstream. **Confirmed
+- [x] `M0-phase-22` Verify the VST3 SDK license directly against upstream. **Confirmed
       2026-07-21**: MIT across the root repo and all core submodules, including
       `pluginterfaces`, which carried the former GPLv3 + Steinberg proprietary
       dual license. VSTGUI is BSD-3-clause-style and is not required — it must
       stay disabled so it never enters the dependency closure. Full record in
       `spikes/m0/vst3-hosting/README.md`.
-- [x] Confirm FetchContent integration at a pinned immutable commit.
-- [x] Instantiate one test instrument and one test effect on macOS arm64.
-- [x] Process a MIDI/audio block, save and restore opaque state, query latency
+- [x] `M0-phase-23` Confirm FetchContent integration at a pinned immutable commit.
+- [x] `M0-phase-24` Instantiate one test instrument and one test effect on macOS arm64.
+- [x] `M0-phase-25` Process a MIDI/audio block, save and restore opaque state, query latency
       and tail.
-- [x] Attach, resize, and focus a native plugin editor. **Human-observed PASS
+- [x] `M0-phase-26` Attach, resize, and focus a native plugin editor. **Human-observed PASS
       on all four criteria**; see `spikes/m0/vst3-hosting/EDITOR-GATE.md`.
-- [x] Scan plugins in a helper process and survive a deliberately crashed or
+- [x] `M0-phase-27` Scan plugins in a helper process and survive a deliberately crashed or
       hung scan with a timeout and a diagnostic.
 
 Scope notes:
@@ -152,16 +152,16 @@ Recorded in ADR 0007.
 
 ## Acceptance Criteria
 
-- [x] Written decisions select a permissive UI/render/audio/MIDI baseline
+- [x] `M0-phase-28` Written decisions select a permissive UI/render/audio/MIDI baseline
       (ADR 0002) and a cooked-format direction (ADR 0006).
-- [x] A fallback is recorded for every rejected or not-yet-proven dependency.
-- [x] The VST3 prototype completes instantiate → process → state → editor →
+- [x] `M0-phase-29` A fallback is recorded for every rejected or not-yet-proven dependency.
+- [x] `M0-phase-30` The VST3 prototype completes instantiate → process → state → editor →
       helper-process scan on macOS arm64, or its failure and fallback are
       recorded.
-- [x] The target dependency graph prevents writer-only libraries from entering
+- [x] `M0-phase-31` The target dependency graph prevents writer-only libraries from entering
       the runtime (ADR 0003).
-- [x] No production milestone is blocked on an unresolved licensing assumption.
-- [ ] All spike directories under `spikes/m0/` are deleted or explicitly
+- [x] `M0-phase-32` No production milestone is blocked on an unresolved licensing assumption.
+- [ ] `M0-phase-33` All spike directories under `spikes/m0/` are deleted or explicitly
       quarantined.
 
 ## Exit Decision

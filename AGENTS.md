@@ -259,6 +259,13 @@ do not restate them in the plan documents themselves, where they drift.
   milestone's own worker will read it.
 - Acceptance and test boxes are checked before the milestone-complete box.
 
+Checklist entries in each detailed milestone file use stable hierarchical IDs
+immediately after the checkbox marker: `M<milestone>-phase-<number>` for a
+direct entry, `M<milestone>-phase-<number><letter>` for its sub-phase, and
+`M<milestone>-phase-<number><letter>-<roman>` for a sub-sub-phase. For example,
+`M2-phase-1a-ii` identifies the second sub-sub-phase of sub-phase `a` under
+phase 1 of Milestone 2. Omit suffixes for levels that do not exist.
+
 `docs/plan/M0_STATUS.md` is a different genre: a living status document that
 must get *smaller* as work completes. It carries its own maintenance rule;
 honour it. Such a document is deleted once its milestone stops being the
