@@ -184,9 +184,9 @@ struct LayoutBuilder {
       // kHitPriorityGlyph: see HitRegion::priority for the whole ladder.
       // Callers that want a different role or priority overwrite
       // hit_regions.back() immediately after this returns.
-      output.hit_regions.push_back(HitRegion{make_id(id.value, "hit"),
-                                             *semantic_id, HitRole::kEvent,
-                                             hit_bounds, kHitPriorityGlyph});
+      output.hit_regions.push_back(
+          HitRegion{make_id(id.value, "hit"), *semantic_id, HitRole::kEvent,
+                    hit_bounds, kHitPriorityGlyph, std::nullopt, std::nullopt});
     }
     return glyph.advance;
   }
@@ -205,8 +205,9 @@ struct LayoutBuilder {
   void add_hit(const NotationId& id, const NotationId& semantic_id,
                HitRole role, NotationRect bounds,
                int priority = kHitPriorityGlyph) {
-    output.hit_regions.push_back(HitRegion{
-        make_id(id.value, "hit"), semantic_id, role, bounds, priority});
+    output.hit_regions.push_back(HitRegion{make_id(id.value, "hit"),
+                                           semantic_id, role, bounds, priority,
+                                           std::nullopt, std::nullopt});
   }
 };
 
@@ -1662,6 +1663,19 @@ void add_ledger_lines(LayoutBuilder& builder, const NotationEntityId& id,
   }
 }
 
+// Evaluates a cubic Bézier at parameter t ∈ [0, 1].
+[[nodiscard]] NotationPoint bezier_point(NotationPoint p0, NotationPoint p1,
+                                         NotationPoint p2, NotationPoint p3,
+                                         double t) {
+  const double t1 = 1.0 - t;
+  return {
+      t1 * t1 * t1 * p0.x + 3.0 * t1 * t1 * t * p1.x + 3.0 * t1 * t * t * p2.x +
+          t * t * t * p3.x,
+      t1 * t1 * t1 * p0.y + 3.0 * t1 * t1 * t * p1.y + 3.0 * t1 * t * t * p2.y +
+          t * t * t * p3.y,
+  };
+}
+
 void add_span_segment(LayoutBuilder& builder, const NotationEntityId& id,
                       const NotationId& semantic, const SystemLayout& system,
                       NotationPoint from, NotationPoint to, double lane,
@@ -1693,11 +1707,80 @@ void add_span_segment(LayoutBuilder& builder, const NotationEntityId& id,
   }
   builder.output.commands.emplace_back(
       ClipCommand{make_id(segment.value, "clip/end"), system.bounds, false});
-  builder.add_hit(
-      segment, semantic, HitRole::kMarking,
-      {std::min(from.x, to.x), lane - builder.options.staff_space * 2.0,
-       std::abs(to.x - from.x), builder.options.staff_space * 4.0},
-      kHitPrioritySpanSegment);
+  const double space = builder.options.staff_space;
+  if (role == std::string(kHitRoleTie)) {
+    // Tight hit regions bound to the actual tie curve rather than a
+    // universal four-staff-space band.  The tie is a cubic bezier arching
+    // from (from.x, lane) to (to.x, lane) via control points at
+    // y = lane - arch where arch = space * 1.2, stroked at space * 0.12.
+    // The curve is subdivided into 8 segments; each segment's own
+    // expanded rect is clipped to system.bounds.  A half-space tolerance
+    // on each side of the visual extent keeps the drawn curve selectable
+    // while leaving the notehead column and articulation glyphs on the
+    // same chord reachable away from it.
+    constexpr int       kSubdivs    = 8;
+    const double        arch        = space * 1.2;
+    const double        half_stroke = space * 0.06;
+    const double        tolerance   = space * 0.5;
+    const double        dx          = to.x - from.x;
+    const NotationPoint cp1{from.x + dx / 3.0, lane - arch};
+    const NotationPoint cp2{from.x + dx * 2.0 / 3.0, lane - arch};
+
+    // Evaluate at kSubdivs+1 equally-spaced points along the curve.
+    std::vector<NotationPoint> eval;
+    eval.reserve(kSubdivs + 1);
+    for (std::size_t i = 0; i <= static_cast<std::size_t>(kSubdivs); ++i) {
+      const double t = static_cast<double>(i) / kSubdivs;
+      eval.push_back(bezier_point(from, cp1, cp2, to, t));
+    }
+
+    for (std::size_t i = 0; i < static_cast<std::size_t>(kSubdivs); ++i) {
+      const NotationPoint& seg_a = eval[i];
+      const NotationPoint& seg_b = eval[i + 1];
+
+      // y-extent: endpoints, plus the global apex y(0.5)=lane-0.9*space
+      // when this segment spans t=0.5.
+      double       seg_min_y = std::min(seg_a.y, seg_b.y);
+      const double seg_max_y = std::max(seg_a.y, seg_b.y);
+      if (static_cast<double>(i) / kSubdivs <= 0.5 &&
+          0.5 <= static_cast<double>(i + 1) / kSubdivs) {
+        const double apex_y = lane - 0.75 * arch;
+        seg_min_y           = std::min(seg_min_y, apex_y);
+      }
+
+      const NotationRect seg_rect{
+          std::min(seg_a.x, seg_b.x) - tolerance,
+          seg_min_y - half_stroke,
+          std::abs(seg_b.x - seg_a.x) + tolerance * 2.0,
+          seg_max_y - seg_min_y + half_stroke * 2.0,
+      };
+
+      // Clip to system bounds so a tie extending past a system edge
+      // cannot produce a hit region outside the visible system.
+      const double clipped_left  = std::max(seg_rect.x, system.bounds.x);
+      const double clipped_top   = std::max(seg_rect.y, system.bounds.y);
+      const double clipped_right = std::min(
+          seg_rect.x + seg_rect.width, system.bounds.x + system.bounds.width);
+      const double clipped_bottom = std::min(
+          seg_rect.y + seg_rect.height, system.bounds.y + system.bounds.height);
+      if (clipped_left >= clipped_right || clipped_top >= clipped_bottom) {
+        continue;
+      }
+
+      const NotationId sub_id =
+          make_id(segment.value, "sub/" + std::to_string(i));
+      builder.add_hit(
+          sub_id, semantic, HitRole::kMarking,
+          NotationRect{clipped_left, clipped_top, clipped_right - clipped_left,
+                       clipped_bottom - clipped_top},
+          kHitPrioritySpanSegment);
+    }
+  } else {
+    builder.add_hit(segment, semantic, HitRole::kMarking,
+                    {std::min(from.x, to.x), lane - space * 2.0,
+                     std::abs(to.x - from.x), space * 4.0},
+                    kHitPrioritySpanSegment);
+  }
 }
 
 // Collects unique reference IDs for a system's measure range from
@@ -2073,10 +2156,12 @@ template <typename Record>
           // and the voice-collision rule (space * 0.22) both displace a
           // notehead horizontally and can carry column_min_x/column_max_x
           // out past an accidental's own space * 1.3 or a dot's space * 1.2
-          // placement offset. Note that a tie's span segment ranks above the
-          // column, and its region is tall enough to blanket one, so a tied
-          // stemless chord resolves to that tie instead -- see
-          // resolve_selection_at's contract comment.
+          // placement offset. A tie's span segment ranks above the column
+          // (kHitPrioritySpanSegment > kHitPriorityNoteheadColumn), but its
+          // hit region is now tight to the actual drawn tie curve
+          // (add_span_segment, kHitRoleTie branch), not a universal
+          // four-staff-space band, so a close-voiced tied stemless chord's
+          // column affordance is no longer shadowed away from the curve.
           //
           // head_ys is non-empty here for the same reason the head_y above
           // may dereference min_element/max_element on it unconditionally.
@@ -2094,6 +2179,8 @@ template <typename Record>
                                space * kNoteheadHitHalfWidth * 2.0,
                            column_bottom - column_top},
               kHitPriorityNoteheadColumn);
+          builder.output.hit_regions.back().owner_system_id = system.id;
+          builder.output.hit_regions.back().owner_staff_id  = staff.id;
         }
         const bool beamed =
             std::ranges::any_of(beam_pairs, [&](const auto& pair) {
@@ -2985,9 +3072,9 @@ NotationLayoutResult layout_internal(
     system.first_measure = first;
     system.id            = make_id(node_id, "system/" + std::to_string(first));
     system.bounds = NotationRect{0.0, system_y, actual_width, system_height};
-    builder.output.hit_regions.push_back(
-        HitRegion{make_id(system.id.value, "hit"), system.id, HitRole::kSystem,
-                  system.bounds, kHitPrioritySystem});
+    builder.output.hit_regions.push_back(HitRegion{
+        make_id(system.id.value, "hit"), system.id, HitRole::kSystem,
+        system.bounds, kHitPrioritySystem, std::nullopt, std::nullopt});
     builder.output.commands.emplace_back(ClipCommand{
         make_id(system.id.value, "clip/begin"), system.bounds, true});
 
@@ -3000,7 +3087,8 @@ NotationLayoutResult layout_internal(
       system.measures.push_back(MeasureLayout{index, measure_id, bounds});
       builder.output.hit_regions.push_back(HitRegion{
           make_id(measure_id.value, "system/" + std::to_string(first) + "/hit"),
-          measure_id, HitRole::kMeasure, bounds, kHitPriorityMeasure});
+          measure_id, HitRole::kMeasure, bounds, kHitPriorityMeasure,
+          std::nullopt, std::nullopt});
       measure_x += widths[index];
     }
 
@@ -3033,15 +3121,15 @@ NotationLayoutResult layout_internal(
           staff.measure_bounds.push_back(measure_staff_bounds);
           const NotationId staff_measure_id =
               staff_measure_semantic_id(staff.id, measure.ordinal);
-          builder.output.hit_regions.push_back(
-              HitRegion{make_id(staff_measure_id.value, "hit"),
-                        staff_measure_id, HitRole::kStaffMeasure,
-                        measure_staff_bounds, kHitPriorityStaffMeasure});
+          builder.output.hit_regions.push_back(HitRegion{
+              make_id(staff_measure_id.value, "hit"), staff_measure_id,
+              HitRole::kStaffMeasure, measure_staff_bounds,
+              kHitPriorityStaffMeasure, std::nullopt, std::nullopt});
         }
-        builder.output.hit_regions.push_back(
-            HitRegion{make_id(staff.id.value, "hit"),
-                      NotationId{stave_definition.id.to_string()},
-                      HitRole::kStaff, staff.bounds, kHitPriorityStaff});
+        builder.output.hit_regions.push_back(HitRegion{
+            make_id(staff.id.value, "hit"),
+            NotationId{stave_definition.id.to_string()}, HitRole::kStaff,
+            staff.bounds, kHitPriorityStaff, std::nullopt, std::nullopt});
         for (std::uint8_t voice_index = Voice::kMin; voice_index <= Voice::kMax;
              ++voice_index) {
           const Voice      voice    = *Voice::create(voice_index);
@@ -3055,10 +3143,11 @@ NotationLayoutResult layout_internal(
             event_count += indexed_voice.measures[ordinal].size();
           }
           staff.voices.push_back(VoiceLayout{voice, voice_id, event_count});
-          builder.output.hit_regions.push_back(HitRegion{
-              make_id(voice_id.value,
-                      "system/" + std::to_string(first) + "/hit"),
-              voice_id, HitRole::kVoice, staff.bounds, kHitPriorityVoice});
+          builder.output.hit_regions.push_back(
+              HitRegion{make_id(voice_id.value,
+                                "system/" + std::to_string(first) + "/hit"),
+                        voice_id, HitRole::kVoice, staff.bounds,
+                        kHitPriorityVoice, std::nullopt, std::nullopt});
         }
         for (int line = 0; line < 5; ++line) {
           const double y =
@@ -3817,11 +3906,103 @@ struct ResolvedEntity {
 // articulation/tuplet resolution needs the owning voice's full event list,
 // not just the one matched entity).
 struct ResolvedVoiceEntity {
-  const StaffSystemLayout* staff = nullptr;
+  const SystemLayout*      system = nullptr;
+  const StaffSystemLayout* staff  = nullptr;
   Voice                    voice;
   ResolvedEntity           entity;
   const VoiceContent*      content = nullptr;
 };
+
+// Owner-constrained column resolution: given a HitRegion's
+// owner_system_id/owner_staff_id, locates the actual SystemLayout and
+// StaffSystemLayout in the layout, resolves the semantic entity only within
+// the named staff's own voices, and verifies the entity's onset falls
+// within the system's actual measure range.  Rejects absent/nonexistent/
+// inconsistent owner metadata so a stale or synthetic region that copies
+// the winner's owner IDs but names a chord from a different staff/system
+// cannot pass the column-disambiguation owner checks below.  This is used
+// for both the winner and alternatives in armed-column disambiguation; the
+// generic resolve_hit_entity (below) is preserved for non-column/direct
+// hits that have no owner metadata to validate.
+[[nodiscard]] std::optional<ResolvedVoiceEntity> resolve_entity_constrained(
+    const Project& project, const NotationLayout& layout,
+    const HitRegion& region) {
+  if (!region.owner_system_id.has_value() ||
+      !region.owner_staff_id.has_value()) {
+    return std::nullopt;
+  }
+  const SystemLayout* owner_system = nullptr;
+  for (const SystemLayout& sys : layout.systems) {
+    if (sys.id == *region.owner_system_id) {
+      owner_system = &sys;
+      break;
+    }
+  }
+  if (owner_system == nullptr) {
+    return std::nullopt;
+  }
+  const StaffSystemLayout* owner_staff = nullptr;
+  for (const StaffSystemLayout& st : owner_system->staves) {
+    if (st.id == *region.owner_staff_id) {
+      owner_staff = &st;
+      break;
+    }
+  }
+  if (owner_staff == nullptr) {
+    return std::nullopt;
+  }
+  const Node* node = project.find_node(layout.node_id);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  const TrackLane* lane = node->lane(owner_staff->track_id);
+  if (lane == nullptr) {
+    return std::nullopt;
+  }
+  const StaveVoices* voices = lane->stave(owner_staff->stave_id);
+  if (voices == nullptr) {
+    return std::nullopt;
+  }
+  const NodeTimeline* timeline = node->timeline();
+  if (timeline == nullptr) {
+    return std::nullopt;
+  }
+  const MeasureMap& measures     = timeline->measures();
+  const std::size_t system_start = owner_system->first_measure;
+  const std::size_t system_end   = system_start + owner_system->measures.size();
+
+  const std::string& target = region.semantic_id.value;
+  for (const VoiceLayout& voice_layout : owner_staff->voices) {
+    const VoiceContent&  content = voices->voice(voice_layout.voice);
+    const ResolvedEntity found   = find_entity_in_voice(content, target);
+    if (found.kind == ResolvedEntityKind::kNone) {
+      continue;
+    }
+    if (found.event == nullptr) {
+      continue;
+    }
+    Rational onset;
+    bool     onset_found = false;
+    for (const VoiceEvent& ev : content.events()) {
+      if (&ev == found.event) {
+        onset_found = true;
+        break;
+      }
+      onset = onset + event_duration(ev).resolved();
+    }
+    if (!onset_found) {
+      continue;
+    }
+    const auto measure_opt = measures.measure_index_at(onset);
+    if (!measure_opt.has_value() || *measure_opt < system_start ||
+        *measure_opt >= system_end) {
+      continue;
+    }
+    return ResolvedVoiceEntity{owner_system, owner_staff, voice_layout.voice,
+                               found, &content};
+  }
+  return std::nullopt;
+}
 
 // Attributes `hit` to the staff that actually owns its semantic entity, by
 // scanning the layout's own staves rather than re-deriving a staff from the
@@ -3856,7 +4037,7 @@ struct ResolvedVoiceEntity {
         const ResolvedEntity found =
             find_entity_in_voice(content, hit.semantic_id.value);
         if (found.kind != ResolvedEntityKind::kNone) {
-          return ResolvedVoiceEntity{&staff, voice_layout.voice, found,
+          return ResolvedVoiceEntity{&system, &staff, voice_layout.voice, found,
                                      &content};
         }
       }
@@ -3932,11 +4113,12 @@ struct ResolvedVoiceEntity {
 
 // True if `id` was built by add_span_segment(builder, ..., role ==
 // kHitRoleTie, ...) and then add_hit's own trailing "/hit" -- i.e. `id`
-// matches ".../tie/segment/system-<N>/hit" at path boundaries, for some
-// non-negative integer N (the fragment's own first_measure). This resolver
-// has no use for N itself, only for the "is this a tie segment" fact, so
-// unlike hit_id_numeric_suffix this returns bool rather than the parsed
-// value.
+// matches ".../tie/segment/system-<N>/hit" or its subdivided form
+// ".../tie/segment/system-<N>/sub/<M>/hit" at path boundaries, for some
+// non-negative integers N (the fragment's own first_measure) and M (the
+// subdivision index). This resolver has no use for either integer, only
+// for the "is this a tie segment" fact, so unlike hit_id_numeric_suffix
+// this returns bool rather than the parsed value.
 [[nodiscard]] bool hit_id_is_tie_segment(const NotationId& id) {
   constexpr std::string_view kTrailer = "/hit";
   if (id.value.size() < kTrailer.size() ||
@@ -3944,9 +4126,22 @@ struct ResolvedVoiceEntity {
                        kTrailer) != 0) {
     return false;
   }
-  const std::string_view body(id.value.data(),
-                              id.value.size() - kTrailer.size());
-  const std::size_t      last_slash = body.rfind('/');
+  std::string_view body(id.value.data(), id.value.size() - kTrailer.size());
+
+  // Strip optional trailing "/sub/<M>" suffix (subdivided tie curve).
+  const std::size_t slash = body.rfind('/');
+  if (slash != std::string_view::npos) {
+    const std::string_view last = body.substr(slash + 1);
+    if (!last.empty() && std::ranges::all_of(last, [](char c) {
+          return c >= '0' && c <= '9';
+        })) {
+      if (slash >= 4 && body.substr(slash - 4, 4) == "/sub") {
+        body = body.substr(0, slash - 4);
+      }
+    }
+  }
+
+  const std::size_t last_slash = body.rfind('/');
   if (last_slash == std::string_view::npos) {
     return false;
   }
@@ -4377,6 +4572,162 @@ std::optional<Selection> resolve_selection_at(const Project&          project,
         return std::nullopt;
       }
       const ResolvedEntity& entity = resolved->entity;
+
+      // When two stemless chords in different voices share the same
+      // onset, they emit overlapping notehead-column regions.
+      // hit_test breaks the tie by priority first, then area, then
+      // semantic_id order -- and that last tie-break depends on UUID
+      // ordering, which is not deterministic across IDs.
+      //
+      // Armed-voice preference applies only among candidates that are
+      // truly tied at the UUID-order stage: same priority, equal area
+      // (exact equality, matching hit_test's own area comparison), same
+      // staff/system, and same musical onset.  When priority or area
+      // distinguishes the candidates, hit_test's own order is
+      // deterministically correct regardless of UUID values, and this
+      // function preserves the winning column as-is.  Direct
+      // notehead/glyph hits are also unaffected: they resolve through
+      // kNotehead or kMarking, not through this kEvent column branch.
+      if (hit->role == HitRole::kEvent &&
+          hit_id_ends_with(hit->id, kHitSuffixNoteheadColumn) &&
+          entity.kind == ResolvedEntityKind::kChord) {
+        // Find the winning region to recover its priority and area.
+        const HitRegion* winner_region = nullptr;
+        for (const HitRegion& r : layout.hit_regions) {
+          if (r.id == hit->id) {
+            winner_region = &r;
+            break;
+          }
+        }
+        if (winner_region != nullptr) {
+          // Validate the winner's owner metadata via constrained
+          // resolution: find the actual SystemLayout/
+          // StaffSystemLayout named by owner_system_id/owner_staff_id,
+          // resolve the entity within that staff only, and verify the
+          // entity's onset belongs to that system's measure range.
+          // Rejects absent/nonexistent/inconsistent owner metadata
+          // before the column-disambiguation scan ever reads it.
+          const std::optional<ResolvedVoiceEntity> winner_constrained =
+              resolve_entity_constrained(project, layout, *winner_region);
+          if (!winner_constrained.has_value()) {
+            return std::nullopt;
+          }
+
+          const auto area_fn = [](const HitRegion& r) {
+            return r.bounds.width * r.bounds.height;
+          };
+          const double winner_area = area_fn(*winner_region);
+
+          for (const HitRegion& region : layout.hit_regions) {
+            if (region.role != HitRole::kEvent ||
+                !hit_id_ends_with(region.id, kHitSuffixNoteheadColumn) ||
+                region.id == hit->id) {
+              continue;
+            }
+            // Only override when the alternative is genuinely tied:
+            // same priority, equal area, and the column covers the
+            // click point.
+            if (region.priority != winner_region->priority) {
+              continue;
+            }
+            const double alt_area = area_fn(region);
+            // Area comparison matches hit_test's own exact equality;
+            // a tolerance-based guard would admit an alternative whose
+            // area differs from the winner (but stays within the
+            // tolerance), overriding a higher-priority hit_test result
+            // that was correctly determined by priority/area alone.
+            if (winner_area != alt_area) {
+              continue;
+            }
+            if (!region.bounds.contains(point)) {
+              continue;
+            }
+
+            // Owner-constrained column resolution: given the
+            // alternative HitRegion's owner_system_id/owner_staff_id,
+            // locate the actual SystemLayout and StaffSystemLayout in
+            // the layout tree, resolve the semantic entity only within
+            // the named staff's own voices, and verify the entity's
+            // onset falls within the named system's actual measure
+            // range.  Rejects stale/synthetic/forged regions whose
+            // owner metadata disagrees with the actual layout.
+            const std::optional<ResolvedVoiceEntity> alt_resolved =
+                resolve_entity_constrained(project, layout, region);
+            if (!alt_resolved.has_value()) {
+              continue;
+            }
+            // Same system and staff verified by constrained resolution
+            // having located both in the actual layout tree pointed at
+            // by each region's owner_system_id/owner_staff_id.
+            // resolve_entity_constrained validates owner metadata by
+            // confirming the entity is actually present in the named
+            // staff's voice content and that its onset falls within the
+            // named system's measure range.  Because system measure
+            // ranges are non-overlapping, equal global onset (checked
+            // below) necessarily implies the entities belong to the
+            // same system for any valid layout.  The explicit owner-ID
+            // equality comparison below is therefore defense-in-depth:
+            // it rejects stale or synthetic regions whose owner
+            // metadata disagrees with reality (e.g. a forged region
+            // that copies the winner's owner IDs but names an entity
+            // on a different staff/system), and guards against future
+            // emitter drift in owner-metadata assignment, but it is not
+            // independently observable as a cross-system guard for
+            // valid layouts with equal-onset entities.
+            if (alt_resolved->system != winner_constrained->system ||
+                alt_resolved->staff != winner_constrained->staff) {
+              continue;
+            }
+            if (alt_resolved->entity.kind != ResolvedEntityKind::kChord) {
+              continue;
+            }
+            // Verify equal musical onset: locate both events in
+            // their owning voice's event list and compare the
+            // running onset.
+            if (alt_resolved->content == nullptr ||
+                winner_constrained->content == nullptr) {
+              continue;
+            }
+            const auto find_onset =
+                [](const VoiceContent& content,
+                   const VoiceEvent*   target) -> std::optional<Rational> {
+              Rational onset;
+              for (const VoiceEvent& ev : content.events()) {
+                if (&ev == target) {
+                  return onset;
+                }
+                onset = onset + event_duration(ev).resolved();
+              }
+              return std::nullopt;
+            };
+            const std::optional<Rational> winner_onset = find_onset(
+                *winner_constrained->content, winner_constrained->entity.event);
+            const std::optional<Rational> alt_onset =
+                find_onset(*alt_resolved->content, alt_resolved->entity.event);
+            if (!winner_onset.has_value() || !alt_onset.has_value() ||
+                *winner_onset != *alt_onset) {
+              continue;
+            }
+
+            if (alt_resolved->voice == palette.voice()) {
+              // The armed voice owns a genuinely tied column at this
+              // point; use its chord instead of the one hit_test
+              // returned by UUID ordering.
+              const NodeId            alt_node  = layout.node_id;
+              const TrackId           alt_track = alt_resolved->staff->track_id;
+              const StaveId           alt_stave = alt_resolved->staff->stave_id;
+              const Voice             alt_voice = alt_resolved->voice;
+              std::optional<ChordSet> set       = ChordSet::create(
+                  {ChordItem{alt_node, alt_track, alt_stave, alt_voice,
+                             alt_resolved->entity.id}});
+              if (!set.has_value()) {
+                return std::nullopt;
+              }
+              return Selection{*std::move(set)};
+            }
+          }
+        }
+      }
 
       // Defends against a future emitter silently drifting from the
       // resolution logic above: each of these checks fails safe (returns

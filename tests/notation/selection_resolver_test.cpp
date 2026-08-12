@@ -89,8 +89,10 @@ using graphscore::SelectionDragState;
 using graphscore::Slur;
 using graphscore::SpelledPitch;
 using graphscore::StaffLayout;
+using graphscore::StaffSystemLayout;
 using graphscore::StaveDefinition;
 using graphscore::StaveId;
+using graphscore::SystemLayout;
 using graphscore::TimeSignature;
 using graphscore::TrackId;
 using graphscore::TrackLane;
@@ -729,7 +731,7 @@ TEST(SelectionResolverTest, ClickingATieSegmentSelectsTheTie) {
   const NotationLayout layout = require_layout(
       layout_notation(fixture.project, fixture.node_id, metrics));
   const NotationPoint point = hit_region_center(
-      layout, first.id.to_string() + "/tie/segment/system-0/hit");
+      layout, first.id.to_string() + "/tie/segment/system-0/sub/4/hit");
   ASSERT_TRUE(layout.hit_test(point).has_value());
   EXPECT_EQ(layout.hit_test(point)->role, HitRole::kMarking);
 
@@ -770,8 +772,9 @@ TEST(SelectionResolverTest, ClickingATieOnAChordNoteSelectsThatNotesTie) {
   const FixedMetrics   metrics;
   const NotationLayout layout = require_layout(
       layout_notation(fixture.project, fixture.node_id, metrics));
-  const NotationPoint point = hit_region_center(
-      layout, first_notes[0].id.to_string() + "/tie/segment/system-0/hit");
+  const NotationPoint point =
+      hit_region_center(layout, first_notes[0].id.to_string() +
+                                    "/tie/segment/system-0/sub/4/hit");
 
   const auto selection =
       resolve_selection_at(fixture.project, layout, note_state(), point);
@@ -935,10 +938,13 @@ TEST(SelectionResolverTest, ATieHitRegionOnAnUntiedNoteYieldsNoSelection) {
   // naming the note as its semantic entity -- something no real emitter
   // does for an untied note (add_span_segment's tie branch only ever fires
   // when tied_to_next is set), simulating a future engraver defect.
-  layout.hit_regions.push_back(
-      HitRegion{NotationId{note.id.to_string() + "/tie/segment/system-0/hit"},
-                NotationId{note.id.to_string()}, HitRole::kMarking,
-                NotationRect{point.x - 1.0, point.y - 1.0, 2.0, 2.0}, 100});
+  // The id uses the current subdivided-segment format to match the actual
+  // emitter.
+  layout.hit_regions.push_back(HitRegion{
+      NotationId{note.id.to_string() + "/tie/segment/system-0/sub/0/hit"},
+      NotationId{note.id.to_string()}, HitRole::kMarking,
+      NotationRect{point.x - 1.0, point.y - 1.0, 2.0, 2.0}, 100, std::nullopt,
+      std::nullopt});
 
   const auto selection =
       resolve_selection_at(fixture.project, layout, note_state(), point);
@@ -1145,7 +1151,8 @@ TEST(SelectionResolverTest, AStemSuffixedHitPointingAtARestYieldsNoSelection) {
   layout.hit_regions.push_back(
       HitRegion{NotationId{rest.id.to_string() + "/stem/hit"},
                 NotationId{rest.id.to_string()}, HitRole::kEvent,
-                NotationRect{point.x - 1.0, point.y - 1.0, 2.0, 2.0}, 100});
+                NotationRect{point.x - 1.0, point.y - 1.0, 2.0, 2.0}, 100,
+                std::nullopt, std::nullopt});
 
   const auto selection =
       resolve_selection_at(fixture.project, layout, note_state(), point);
@@ -1435,7 +1442,7 @@ TEST(SelectionResolverTest,
            tied[1].id.to_string() + "/dot/0/hit",
            second.id.to_string() + "/stem/hit",
            dynamic.id.to_string() + "/glyph/0/hit",
-           tied[0].id.to_string() + "/tie/segment/system-0/hit",
+           tied[0].id.to_string() + "/tie/segment/system-0/sub/4/hit",
            slur.id.to_string() + "/slur/segment/system-0/hit",
        }) {
     EXPECT_NE(find_hit_region(layout, required), nullptr) << required;
@@ -1740,17 +1747,22 @@ TEST(SelectionResolverTest, AClusteredDottedChordsDotInsideTheColumnStillWins) {
                       notes[0].id);
 }
 
-// Known limitation, pinned so a future fix trips a test rather than passing
-// silently: add_span_segment gives a tie a region four staff-spaces tall,
-// which blankets a stemless chord's whole column. A tie span segment
-// outranks the column, so the gap click that would otherwise select the
-// chord yields the tie's MarkingSet instead -- the affordance does not
-// reach a tied whole-note chord at all. The oversized tie region is
-// pre-existing engraver geometry, carried forward as its own hit-priority
-// item rather than reworked here.
+// The tie hit region is now subdivided into 8 segments, each bound to
+// the local curve extent rather than a single rectangle spanning the
+// whole envelope (add_span_segment, kHitRoleTie branch in
+// src/notation/notation.cpp).  With both notes tied in a close-voiced
+// stemless chord (E4 + G4, a third apart on adjacent staff lines), each
+// tie's sub-segment rects near the endpoints stay close to the lane --
+// below the notehead y + space where the tie is drawn -- so the gap
+// between the two tie bands at the column centre remains clear.
+// A direct click on the tie curve itself still selects the tie (tested
+// separately below).
 TEST(SelectionResolverTest,
-     ATiedWholeNoteChordsGapClickIsShadowedByTheTieRegion) {
-  Fixture                      fixture(2);
+     ATiedWholeNoteChordsGapClickReachesTheChordAwayFromTheTieCurve) {
+  Fixture fixture(2);
+  // E4 (bottom line) + G4 (second line in treble clef) -- a third apart,
+  // both tied -- the original close-voiced case the single-rectangle tie
+  // region used to shadow.
   const std::vector<ChordNote> tied = {
       {NotationEntityId::generate(), *SpelledPitch::create(Letter::kE, 4),
        true},
@@ -1769,21 +1781,29 @@ TEST(SelectionResolverTest,
   const HitRegion* column = find_hit_region(layout, column_hit_id(first.id));
   ASSERT_NE(column, nullptr);
 
-  const NotationPoint point =
-      notehead_gap_point(layout, tied[0].id, tied[1].id);
+  // Click at the column's own centre -- the gap between the two noteheads
+  // (E4 at staff line, G4 one line above).  The subdivided tie regions are
+  // tight to the actual cubic curves: near the endpoints (t ≈ 0 and t ≈ 1),
+  // the curve y is close to lane = pitch_y + space, so the per-segment
+  // rects for the sub/0 and sub/7 segments extend only ~0.2*space below
+  // lane, nowhere near the column centre.  The column therefore wins the
+  // hit at priority 5, and even though the tie regions outrank it
+  // (priority 7), none of them cover this point.
+  const NotationPoint point{column->bounds.x + column->bounds.width * 0.5,
+                            column->bounds.y + column->bounds.height * 0.5};
   EXPECT_TRUE(column->bounds.contains(point));
 
   const auto hit = layout.hit_test(point);
   ASSERT_TRUE(hit.has_value());
-  EXPECT_EQ(hit->role, HitRole::kMarking);
+  EXPECT_EQ(hit->role, HitRole::kEvent);
 
   const auto selection =
       resolve_selection_at(fixture.project, layout, note_state(), point);
   ASSERT_TRUE(selection.has_value());
-  const auto* marking_set = std::get_if<MarkingSet>(&*selection);
-  ASSERT_NE(marking_set, nullptr);
-  ASSERT_EQ(marking_set->items().size(), 1u);
-  EXPECT_EQ(marking_set->items().front().kind, MarkingKind::kTie);
+  const auto* chord_set = std::get_if<ChordSet>(&*selection);
+  ASSERT_NE(chord_set, nullptr);
+  ASSERT_EQ(chord_set->items().size(), 1u);
+  EXPECT_EQ(chord_set->items().front().entity, first.id);
   EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
 }
 
@@ -1820,6 +1840,1265 @@ TEST(SelectionResolverTest,
   ASSERT_NE(notehead_set, nullptr);
   ASSERT_EQ(notehead_set->items().size(), 1u);
   EXPECT_EQ(notehead_set->items().front().entity, note.id);
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+// ---- Defect Family 1 (M5-phase-16h): a tie's tightened hit region no
+// longer shadows articulation glyphs on the same chord away from the
+// actually drawn tie curve. ----
+
+TEST(SelectionResolverTest,
+     AnArticulationOnATiedChordOutranksTheTieRegionAwayFromTheCurve) {
+  // Two measures: a dotted whole is 3/2 > 4/4.
+  Fixture            fixture(2);
+  const SpelledPitch tied_pitch = *SpelledPitch::create(Letter::kC, 4);
+  const Note         first =
+      make_note(tied_pitch, *Duration::create(NoteValue::kWhole, 1), true,
+                {Articulation::kAccent});
+  ASSERT_TRUE(fixture.voice().append(first).ok());
+  const Note second =
+      make_note(tied_pitch, *Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(fixture.voice().append(second).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint articulation_point =
+      glyph_origin(layout, first.id.to_string() + "/articulation/0");
+
+  // The articulation glyph sits above the notehead; the tightened tie band
+  // no longer reaches it.
+  ASSERT_TRUE(layout.hit_test(articulation_point).has_value());
+  EXPECT_EQ(layout.hit_test(articulation_point)->role, HitRole::kMarking);
+
+  const auto selection = resolve_selection_at(fixture.project, layout,
+                                              note_state(), articulation_point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<MarkingSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  ASSERT_EQ(set->items().size(), 1u);
+  EXPECT_EQ(set->items().front().kind, MarkingKind::kArticulation);
+  ASSERT_TRUE(set->items().front().articulation.has_value());
+  EXPECT_EQ(*set->items().front().articulation, Articulation::kAccent);
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+// ---- The tightened tie region still selects the tie itself when the
+// click lands directly on the drawn tie curve. ----
+
+TEST(SelectionResolverTest, AClickOnTheTieCurveItselfStillSelectsTheTie) {
+  Fixture            fixture(2);
+  const SpelledPitch pitch = *SpelledPitch::create(Letter::kC, 4);
+  const Note         first =
+      make_note(pitch, *Duration::create(NoteValue::kWhole, 0), true);
+  const Note second =
+      make_note(pitch, *Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(fixture.voice().append(first).ok());
+  ASSERT_TRUE(fixture.voice().append(second).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+
+  // The subdivided tie's middle sub-segment (sub/4) covers the curve apex,
+  // the deepest point of the arch -- well away from both noteheads where
+  // the curve is closest to the lane.  Clicking at the centre of that
+  // sub-segment's hit region is a click on the actual drawn curve.
+  const std::string tie_hit_id =
+      first.id.to_string() + "/tie/segment/system-0/sub/4/hit";
+  const NotationPoint point = hit_region_center(layout, tie_hit_id);
+  ASSERT_TRUE(layout.hit_test(point).has_value());
+  EXPECT_EQ(layout.hit_test(point)->role, HitRole::kMarking);
+
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<MarkingSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  ASSERT_EQ(set->items().size(), 1u);
+  const MarkingItem& item = set->items().front();
+  EXPECT_EQ(item.kind, MarkingKind::kTie);
+  EXPECT_EQ(item.anchor, first.id);
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+// Clicking a point inside the single-segment old-rectangle formula but
+// away from every actual subdivided tie sub-segment does not select the tie
+// -- the subdivided curve rects are tight to the actual bezier, so the old
+// universal band is reachable through the column or a container.
+TEST(SelectionResolverTest,
+     APointInsideGlobalTieEnvelopeButAwayFromTheLocalCurveDoesNotSelectTheTie) {
+  Fixture            fixture(2);
+  const SpelledPitch pitch = *SpelledPitch::create(Letter::kC, 4);
+  const Note         first =
+      make_note(pitch, *Duration::create(NoteValue::kWhole, 0), true);
+  const Note second =
+      make_note(pitch, *Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(fixture.voice().append(first).ok());
+  ASSERT_TRUE(fixture.voice().append(second).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint notehead = notehead_origin(layout, first.id);
+
+  // A point near the start notehead's x, at the full arch depth
+  // (the apex is only reached at the midpoint, not near the endpoints).
+  const double        space = 10.0;  // default staff_space in FixedMetrics
+  const NotationPoint point{notehead.x + space * 0.5, notehead.y - space * 0.8};
+
+  // 1. Prove the point is inside the old single-rectangle envelope formula.
+  // The old non-subdivided tie hit region was a single rectangle:
+  //   x = min(from.x, to.x)
+  //   y = lane - 2 * space   where lane = pitch_y + space
+  //   width = abs(to.x - from.x)
+  //   height = 4 * space
+  // For C4 in treble clef with space=10: lane ≈ 40 + 10 = 50, so the
+  // rectangle extends y ∈ [30, 70].
+  const double       from_x     = notehead_origin(layout, first.id).x;
+  const double       to_x       = notehead_origin(layout, second.id).x;
+  const double       old_left   = std::min(from_x, to_x);
+  const double       old_top    = notehead.y + space - space * 2.0;
+  const double       old_width  = std::abs(to_x - from_x);
+  const double       old_height = space * 4.0;
+  const NotationRect old_envelope{old_left, old_top, old_width, old_height};
+  EXPECT_TRUE(old_envelope.contains(point));
+
+  // 2. Prove the point is outside every subdivided tie sub-segment hit
+  // region (it is near the start x, far vertical from the local curve).
+  for (const HitRegion& region : layout.hit_regions) {
+    if (region.role == HitRole::kMarking &&
+        region.id.value.starts_with(first.id.to_string() + "/tie/segment/")) {
+      EXPECT_FALSE(region.bounds.contains(point))
+          << "point inside tie sub-region " << region.id.value;
+    }
+  }
+
+  // 3. The point must not resolve to a tie selection.
+  const auto hit = layout.hit_test(point);
+  if (hit.has_value()) {
+    EXPECT_NE(hit->role, HitRole::kMarking);
+  }
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(), point);
+  if (selection.has_value()) {
+    const auto* set = std::get_if<MarkingSet>(&*selection);
+    if (set != nullptr) {
+      ASSERT_FALSE(set->items().empty());
+      EXPECT_NE(set->items().front().kind, MarkingKind::kTie);
+    }
+  }
+}
+
+// ---- Defect Family 3 (M5-phase-16h) tie geometry: short tie segment
+// (small dx) subdivision, and per-system clipping assertions for ties
+// spanning a system break.  The subdivided curve rects must be strictly
+// within the owning system's bounds. ----
+
+TEST(SelectionResolverTest, ShortTieSubSegmentsAllClipToSystemBounds) {
+  // Two notes very close together (small dx): the tie's cubic arch is
+  // shallow, so each sub-segment rect is short and near the lane.  Every
+  // sub-segment must be strictly within the system bounds.
+  Fixture            fixture(1);
+  const SpelledPitch pitch = *SpelledPitch::create(Letter::kE, 4);
+  const Note         first =
+      make_note(pitch, *Duration::create(NoteValue::kEighth, 0), true);
+  const Note second =
+      make_note(pitch, *Duration::create(NoteValue::kEighth, 0));
+  ASSERT_TRUE(fixture.voice().append(first).ok());
+  ASSERT_TRUE(fixture.voice().append(second).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  ASSERT_EQ(layout.systems.size(), 1u);
+  const NotationRect sys_bounds = layout.systems[0].bounds;
+
+  // Count and verify every tie sub-segment hit region.
+  std::size_t sub_count = 0;
+  for (const HitRegion& region : layout.hit_regions) {
+    if (!region.id.value.starts_with(first.id.to_string() +
+                                     "/tie/segment/system-0/sub/")) {
+      continue;
+    }
+    ++sub_count;
+    // Each sub-segment rect must be finite and within system bounds.
+    EXPECT_GE(region.bounds.x, sys_bounds.x) << "sub " << sub_count - 1;
+    EXPECT_GE(region.bounds.y, sys_bounds.y) << "sub " << sub_count - 1;
+    EXPECT_LE(region.bounds.x + region.bounds.width,
+              sys_bounds.x + sys_bounds.width)
+        << "sub " << sub_count - 1;
+    EXPECT_LE(region.bounds.y + region.bounds.height,
+              sys_bounds.y + sys_bounds.height)
+        << "sub " << sub_count - 1;
+    EXPECT_GT(region.bounds.width, 0.0) << "sub " << sub_count - 1;
+    EXPECT_GT(region.bounds.height, 0.0) << "sub " << sub_count - 1;
+  }
+  // Exactly 8 sub-segments for the subdivided curve.
+  EXPECT_EQ(sub_count, 8u);
+
+  // The tie must be selectable: click the middle sub-segment's centre.
+  const NotationPoint point = hit_region_center(
+      layout, first.id.to_string() + "/tie/segment/system-0/sub/4/hit");
+  const auto hit = layout.hit_test(point);
+  ASSERT_TRUE(hit.has_value());
+  EXPECT_EQ(hit->role, HitRole::kMarking);
+
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<MarkingSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  ASSERT_EQ(set->items().size(), 1u);
+  EXPECT_EQ(set->items().front().kind, MarkingKind::kTie);
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+TEST(SelectionResolverTest, LongTieSubSegmentsAllClipToSystemBounds) {
+  // Two whole notes across a wide span (nearly the full system width):
+  // the tie is long so each sub-segment covers a distinct x range.  The
+  // global envelope extends far from the actual curve at the endpoints;
+  // the subdivided rects must be visibly narrower near the endpoints.
+  Fixture            fixture(1);
+  const SpelledPitch pitch = *SpelledPitch::create(Letter::kE, 4);
+  const Note         first =
+      make_note(pitch, *Duration::create(NoteValue::kWhole, 0), true);
+  const Note second = make_note(pitch, *Duration::create(NoteValue::kWhole, 0));
+  ASSERT_TRUE(fixture.voice().append(first).ok());
+  ASSERT_TRUE(fixture.voice().append(second).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  ASSERT_EQ(layout.systems.size(), 1u);
+  const NotationRect sys_bounds = layout.systems[0].bounds;
+
+  // Count tie sub-segments and verify each is within system bounds.
+  std::size_t sub_count = 0;
+  for (const HitRegion& region : layout.hit_regions) {
+    if (!region.id.value.starts_with(first.id.to_string() +
+                                     "/tie/segment/system-0/sub/")) {
+      continue;
+    }
+    ++sub_count;
+    // Each sub-segment rect must be within all four system bounds and
+    // have positive dimensions.
+    EXPECT_GE(region.bounds.x, sys_bounds.x) << "sub " << sub_count - 1;
+    EXPECT_GE(region.bounds.y, sys_bounds.y) << "sub " << sub_count - 1;
+    EXPECT_LE(region.bounds.x + region.bounds.width,
+              sys_bounds.x + sys_bounds.width)
+        << "sub " << sub_count - 1;
+    EXPECT_LE(region.bounds.y + region.bounds.height,
+              sys_bounds.y + sys_bounds.height)
+        << "sub " << sub_count - 1;
+    EXPECT_GT(region.bounds.width, 0.0) << "sub " << sub_count - 1;
+    EXPECT_GT(region.bounds.height, 0.0) << "sub " << sub_count - 1;
+  }
+  EXPECT_EQ(sub_count, 8u);
+
+  // The tie is selectable at the middle of the curve.  Assert exact
+  // MarkingKind and anchor, not merely validate_selection success.
+  const NotationPoint point = hit_region_center(
+      layout, first.id.to_string() + "/tie/segment/system-0/sub/4/hit");
+  const auto hit = layout.hit_test(point);
+  ASSERT_TRUE(hit.has_value());
+  EXPECT_EQ(hit->role, HitRole::kMarking);
+
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<MarkingSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  ASSERT_EQ(set->items().size(), 1u);
+  EXPECT_EQ(set->items().front().kind, MarkingKind::kTie);
+  EXPECT_EQ(set->items().front().anchor, first.id);
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+TEST(SelectionResolverTest,
+     CrossSystemTieHitRegionsAreClippedToEachOwnedSystem) {
+  // A tie crossing a system break: the engraver emits separate tie
+  // segments on each system, each clipped to its own system's bounds.
+  // The first system's end segment must not extend past its right edge,
+  // and the second system's start segment must not start before its
+  // left edge.
+  Fixture            fixture(2);
+  const SpelledPitch pitch = *SpelledPitch::create(Letter::kC, 4);
+  // A whole note in measure 0, tied into a half note in measure 1.
+  const Note first =
+      make_note(pitch, *Duration::create(NoteValue::kWhole, 0), true);
+  ASSERT_TRUE(fixture.voice().append(first).ok());
+  const Note second = make_note(pitch, *Duration::create(NoteValue::kHalf, 0));
+  ASSERT_TRUE(fixture.voice().append(second).ok());
+
+  const FixedMetrics    metrics;
+  NotationLayoutOptions options;
+  options.system_width        = 50.0;
+  options.left_margin         = 1.0;
+  options.right_margin        = 1.0;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics, options));
+  ASSERT_EQ(layout.systems.size(), 2u);
+
+  // Verify tie segments exist on both systems and are fully clipped.
+  const NotationRect sys0_bounds = layout.systems[0].bounds;
+  const NotationRect sys1_bounds = layout.systems[1].bounds;
+  std::size_t        sys0_segs   = 0;
+  std::size_t        sys1_segs   = 0;
+  for (const HitRegion& region : layout.hit_regions) {
+    if (region.id.value.find("/tie/segment/system-0/sub/") !=
+        std::string::npos) {
+      ++sys0_segs;
+      EXPECT_GE(region.bounds.x, sys0_bounds.x);
+      EXPECT_GE(region.bounds.y, sys0_bounds.y);
+      EXPECT_LE(region.bounds.x + region.bounds.width,
+                sys0_bounds.x + sys0_bounds.width);
+      EXPECT_LE(region.bounds.y + region.bounds.height,
+                sys0_bounds.y + sys0_bounds.height);
+      EXPECT_GT(region.bounds.width, 0.0);
+      EXPECT_GT(region.bounds.height, 0.0);
+    }
+    if (region.id.value.find("/tie/segment/system-1/sub/") !=
+        std::string::npos) {
+      ++sys1_segs;
+      EXPECT_GE(region.bounds.x, sys1_bounds.x);
+      EXPECT_GE(region.bounds.y, sys1_bounds.y);
+      EXPECT_LE(region.bounds.x + region.bounds.width,
+                sys1_bounds.x + sys1_bounds.width);
+      EXPECT_LE(region.bounds.y + region.bounds.height,
+                sys1_bounds.y + sys1_bounds.height);
+      EXPECT_GT(region.bounds.width, 0.0);
+      EXPECT_GT(region.bounds.height, 0.0);
+    }
+  }
+  EXPECT_EQ(sys0_segs, 8u);
+  EXPECT_EQ(sys1_segs, 8u);
+
+  // The tie is selectable on a representative sub-segment in each system.
+  {
+    const NotationPoint sys0_point = hit_region_center(
+        layout, first.id.to_string() + "/tie/segment/system-0/sub/4/hit");
+    const auto hit = layout.hit_test(sys0_point);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(hit->role, HitRole::kMarking);
+
+    const auto selection =
+        resolve_selection_at(fixture.project, layout, note_state(), sys0_point);
+    ASSERT_TRUE(selection.has_value());
+    const auto* set = std::get_if<MarkingSet>(&*selection);
+    ASSERT_NE(set, nullptr);
+    ASSERT_EQ(set->items().size(), 1u);
+    EXPECT_EQ(set->items().front().kind, MarkingKind::kTie);
+    EXPECT_EQ(set->items().front().anchor, first.id);
+    EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+  }
+  {
+    const NotationPoint sys1_point = hit_region_center(
+        layout, first.id.to_string() + "/tie/segment/system-1/sub/3/hit");
+    const auto hit = layout.hit_test(sys1_point);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(hit->role, HitRole::kMarking);
+
+    const auto selection =
+        resolve_selection_at(fixture.project, layout, note_state(), sys1_point);
+    ASSERT_TRUE(selection.has_value());
+    const auto* set = std::get_if<MarkingSet>(&*selection);
+    ASSERT_NE(set, nullptr);
+    ASSERT_EQ(set->items().size(), 1u);
+    EXPECT_EQ(set->items().front().kind, MarkingKind::kTie);
+    EXPECT_EQ(set->items().front().anchor, first.id);
+    EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+  }
+}
+
+// ---- Defect Family 3 (M5-phase-16h): two stemless chords in different
+// voices at the same onset emit overlapping equal-area notehead-column
+// regions.  hit_test's semantic_id tie-break depends on UUID ordering, so
+// the result is not deterministic across IDs.  resolve_selection_at uses
+// the palette's armed voice as a preference: when the armed voice owns one
+// of the coincident columns, that voice's chord is selected regardless of
+// which column hit_test returned.  Direct notehead/glyph hits are
+// unaffected and always resolve to their actual owning voice. ----
+
+// Helper: appends a whole-note chord with the given notes to a voice and
+// returns the chord's id.
+[[nodiscard]] NotationEntityId append_stemless_chord(
+    Fixture& fixture, std::vector<ChordNote> notes,
+    std::uint8_t voice_index = 1) {
+  const Chord chord =
+      make_chord(*Duration::create(NoteValue::kWhole, 0), std::move(notes));
+  const NotationEntityId id = chord.id;
+  EXPECT_TRUE(fixture.voice(voice_index).append(chord).ok());
+  return id;
+}
+
+TEST(SelectionResolverTest,
+     StemlessChordColumnPrefersArmedVoiceWhenColumnsCoincide) {
+  // Two voices, each with a stemless whole-note chord at the same onset on
+  // the same two pitches (E4 + G4).  Both emit notehead-column regions
+  // whose bounds have the same area (same pitch span and same width, with
+  // voice-collision horizontal displacement that preserves the column
+  // dimensions).  A click in the overlap region can hit either column;
+  // hit_test breaks the tie by area first, and when area is equal, falls
+  // to semantic_id (UUID) ordering, which is not deterministic across
+  // IDs.  resolve_selection_at uses the palette's armed voice as a
+  // preference only among equal-priority, equal-area candidates at the
+  // same staff and onset.
+  Fixture fixture(1);
+
+  const std::vector<ChordNote> v1_notes = two_chord_notes();
+  const std::vector<ChordNote> v2_notes = two_chord_notes();
+
+  const NotationEntityId voice1_id =
+      append_stemless_chord(fixture, v1_notes, 1);
+  const NotationEntityId voice2_id =
+      append_stemless_chord(fixture, v2_notes, 2);
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+
+  const HitRegion* col1 = find_hit_region(layout, column_hit_id(voice1_id));
+  const HitRegion* col2 = find_hit_region(layout, column_hit_id(voice2_id));
+  ASSERT_NE(col1, nullptr);
+  ASSERT_NE(col2, nullptr);
+  EXPECT_EQ(col1->priority, col2->priority);
+  // Columns have equal area because they span the same pitches and have
+  // the same width (voice-collision offset only moves them horizontally).
+  const double area1 = col1->bounds.width * col1->bounds.height;
+  const double area2 = col2->bounds.width * col2->bounds.height;
+  EXPECT_DOUBLE_EQ(area1, area2);
+  EXPECT_GT(col1->bounds.width, 0.0);
+  EXPECT_GT(col2->bounds.width, 0.0);
+
+  // Compute a point inside both columns: the midpoint of their
+  // intersection in x, at the common vertical centre.
+  const double overlap_left  = std::max(col1->bounds.x, col2->bounds.x);
+  const double overlap_right = std::min(col1->bounds.x + col1->bounds.width,
+                                        col2->bounds.x + col2->bounds.width);
+  ASSERT_LT(overlap_left, overlap_right);
+  const double        overlap_x = (overlap_left + overlap_right) * 0.5;
+  const double        overlap_y = col1->bounds.y + col1->bounds.height * 0.5;
+  const NotationPoint point{overlap_x, overlap_y};
+
+  ASSERT_TRUE(col1->bounds.contains(point));
+  ASSERT_TRUE(col2->bounds.contains(point));
+
+  // Both chords are at musical onset 0: whole notes at measure start.
+  // The armed-voice override verifies equal onset before swapping, so this
+  // verifies the override fires only for genuinely simultaneous chords.
+
+  // When Voice 1 is armed, the Voice 1 chord is selected -- regardless of
+  // which column hit_test would return on its own UUID-based tie-break.
+  {
+    const auto voice1_selection =
+        resolve_selection_at(fixture.project, layout, note_state(1), point);
+    ASSERT_TRUE(voice1_selection.has_value());
+    const auto* chord_set = std::get_if<ChordSet>(&*voice1_selection);
+    ASSERT_NE(chord_set, nullptr);
+    ASSERT_EQ(chord_set->items().size(), 1u);
+    EXPECT_EQ(chord_set->items().front().entity, voice1_id);
+    EXPECT_EQ(chord_set->items().front().voice, *Voice::create(1));
+    EXPECT_TRUE(validate_selection(fixture.project, *voice1_selection).empty());
+  }
+
+  // When Voice 2 is armed, the Voice 2 chord is selected -- the same
+  // assertion, verifying the armed-voice preference and not mere UUID
+  // ordering.
+  {
+    const auto voice2_selection =
+        resolve_selection_at(fixture.project, layout, note_state(2), point);
+    ASSERT_TRUE(voice2_selection.has_value());
+    const auto* chord_set = std::get_if<ChordSet>(&*voice2_selection);
+    ASSERT_NE(chord_set, nullptr);
+    ASSERT_EQ(chord_set->items().size(), 1u);
+    EXPECT_EQ(chord_set->items().front().entity, voice2_id);
+    EXPECT_EQ(chord_set->items().front().voice, *Voice::create(2));
+    EXPECT_TRUE(validate_selection(fixture.project, *voice2_selection).empty());
+  }
+}
+
+TEST(SelectionResolverTest,
+     DirectNoteheadHitOnMultivoiceChordResolvesToTheOwningVoice) {
+  // Direct notehead hit must still resolve to the actual owning voice, not
+  // the armed voice -- even when another voice also has a coincident
+  // column at the same onset.
+  Fixture fixture(1);
+
+  const Note voice1_note = make_note(*SpelledPitch::create(Letter::kC, 5),
+                                     *Duration::create(NoteValue::kWhole, 0));
+  const Note voice2_note = make_note(*SpelledPitch::create(Letter::kE, 4),
+                                     *Duration::create(NoteValue::kWhole, 0));
+  ASSERT_TRUE(fixture.voice(1).append(voice1_note).ok());
+  ASSERT_TRUE(fixture.voice(2).append(voice2_note).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+
+  // Click on voice 2's notehead while voice 1 is armed -- still gets
+  // voice 2's notehead (direct notehead hit, not a column hit).
+  {
+    const NotationPoint point = notehead_origin(layout, voice2_note.id);
+    const auto          selection =
+        resolve_selection_at(fixture.project, layout, note_state(1), point);
+    ASSERT_TRUE(selection.has_value());
+    const auto* notehead_set = std::get_if<NoteheadSet>(&*selection);
+    ASSERT_NE(notehead_set, nullptr);
+    ASSERT_EQ(notehead_set->items().size(), 1u);
+    EXPECT_EQ(notehead_set->items().front().entity, voice2_note.id);
+    EXPECT_EQ(notehead_set->items().front().voice, *Voice::create(2));
+    EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+  }
+
+  // Click on voice 1's notehead while voice 2 is armed -- still gets
+  // voice 1's notehead.
+  {
+    const NotationPoint point = notehead_origin(layout, voice1_note.id);
+    const auto          selection =
+        resolve_selection_at(fixture.project, layout, note_state(2), point);
+    ASSERT_TRUE(selection.has_value());
+    const auto* notehead_set = std::get_if<NoteheadSet>(&*selection);
+    ASSERT_NE(notehead_set, nullptr);
+    ASSERT_EQ(notehead_set->items().size(), 1u);
+    EXPECT_EQ(notehead_set->items().front().entity, voice1_note.id);
+    EXPECT_EQ(notehead_set->items().front().voice, *Voice::create(1));
+    EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+  }
+}
+
+// ---- Defect Family 2 (M5-phase-16h): armed-voice column preference is
+// correctly scoped to genuinely tied candidates only. ----
+
+// Two overlapping columns with different areas (different pitch spans):
+// the smaller-area column wins geometrically regardless of armed voice.
+TEST(SelectionResolverTest,
+     UnequalAreaColumnWinsEvenWhenArmedVoiceHasLargerColumn) {
+  Fixture fixture(1);
+
+  // Voice 1: wide-spaced chord (C5 + G5, a fifth) -- larger column area.
+  const std::vector<ChordNote> wide_notes = {
+      {NotationEntityId::generate(), *SpelledPitch::create(Letter::kC, 5),
+       false},
+      {NotationEntityId::generate(), *SpelledPitch::create(Letter::kG, 5),
+       false},
+  };
+  const NotationEntityId wide_id =
+      append_stemless_chord(fixture, wide_notes, 1);
+
+  // Voice 2: close-spaced chord (C5 + E5, a third) -- smaller column area.
+  const std::vector<ChordNote> narrow_notes = {
+      {NotationEntityId::generate(), *SpelledPitch::create(Letter::kC, 5),
+       false},
+      {NotationEntityId::generate(), *SpelledPitch::create(Letter::kE, 5),
+       false},
+  };
+  const NotationEntityId narrow_id =
+      append_stemless_chord(fixture, narrow_notes, 2);
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+
+  const HitRegion* wide_col = find_hit_region(layout, column_hit_id(wide_id));
+  const HitRegion* narrow_col =
+      find_hit_region(layout, column_hit_id(narrow_id));
+  ASSERT_NE(wide_col, nullptr);
+  ASSERT_NE(narrow_col, nullptr);
+
+  // Narrow column has strictly smaller area.
+  const double wide_area = wide_col->bounds.width * wide_col->bounds.height;
+  const double narrow_area =
+      narrow_col->bounds.width * narrow_col->bounds.height;
+  ASSERT_LT(narrow_area, wide_area);
+
+  // Click inside the overlap region.
+  const double overlap_left =
+      std::max(wide_col->bounds.x, narrow_col->bounds.x);
+  const double overlap_right =
+      std::min(wide_col->bounds.x + wide_col->bounds.width,
+               narrow_col->bounds.x + narrow_col->bounds.width);
+  ASSERT_LT(overlap_left, overlap_right);
+  const NotationPoint point{
+      (overlap_left + overlap_right) * 0.5,
+      narrow_col->bounds.y + narrow_col->bounds.height * 0.5,
+  };
+
+  // hit_test picks the smaller-area column (Voice 2), not the Voice 1 one.
+  const auto hit = layout.hit_test(point);
+  ASSERT_TRUE(hit.has_value());
+  EXPECT_EQ(hit->id.value, narrow_col->id.value);
+
+  // Voice 1 armed -- the unequal-area override is suppressed; the geometric
+  // winner (Voice 2) is preserved.
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(1), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* chord_set = std::get_if<ChordSet>(&*selection);
+  ASSERT_NE(chord_set, nullptr);
+  ASSERT_EQ(chord_set->items().size(), 1u);
+  EXPECT_EQ(chord_set->items().front().entity, narrow_id);
+  EXPECT_EQ(chord_set->items().front().voice, *Voice::create(2));
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+// An adjacent-onset column cannot cross-select: the armed voice's column at
+// a different onset should not override the hit_test winner.
+TEST(SelectionResolverTest, AdjacentOnsetColumnDoesNotOverrideTheWinner) {
+  Fixture fixture(2);  // two measures so we can offset onsets
+
+  // Voice 1: whole-note chord at measure start (onset 0).
+  const Note v1_note = make_note(*SpelledPitch::create(Letter::kE, 4),
+                                 *Duration::create(NoteValue::kWhole, 0));
+  ASSERT_TRUE(fixture.voice(1).append(v1_note).ok());
+
+  // Voice 2: quarter rest + dotted half chord, so the chord starts at
+  // onset = quarter (not measure start).
+  const Rest rest = make_rest(*Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(fixture.voice(2).append(rest).ok());
+  const Note v2_note =
+      make_note(*SpelledPitch::create(Letter::kG, 4),
+                *Duration::create(NoteValue::kHalf, 1));  // dotted half
+  ASSERT_TRUE(fixture.voice(2).append(v2_note).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+
+  // Click on Voice 1's single-note stemless column (coincident with its
+  // notehead).  Voice 2's note is at a different onset and has a stem
+  // (half note), so it emits no column.
+  const NotationPoint point = notehead_origin(layout, v1_note.id);
+  const auto          hit   = layout.hit_test(point);
+  ASSERT_TRUE(hit.has_value());
+  EXPECT_EQ(hit->role, HitRole::kNotehead);
+
+  // Voice 2 armed.  The Voice 1 notehead is a direct kNotehead hit, not a
+  // column, so the armed-voice column override path is never entered.  The
+  // result is Voice 1's notehead regardless.
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(2), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* notehead_set = std::get_if<NoteheadSet>(&*selection);
+  ASSERT_NE(notehead_set, nullptr);
+  EXPECT_EQ(notehead_set->items().front().entity, v1_note.id);
+  EXPECT_EQ(notehead_set->items().front().voice, *Voice::create(1));
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+// A column on a different staff/system cannot override the winner -- the
+// staff pointer comparison in the armed-voice scan prevents cross-staff
+// selection.
+TEST(SelectionResolverTest, OtherStaffColumnDoesNotOverrideTheWinner) {
+  Fixture fixture({StaffLayout::grand_staff()}, 1);
+
+  // Upper staff: a stemless chord.
+  const NotationEntityId upper_id =
+      append_stemless_chord(fixture, two_chord_notes(), 1);
+  // Lower staff: another stemless chord (Voice 1 on the lower staff).
+  auto&       lower_voice = fixture.voice(1, 0, 1);
+  const Chord lower_chord =
+      make_chord(*Duration::create(NoteValue::kWhole, 0), two_chord_notes());
+  const auto append_result = lower_voice.append(lower_chord);
+  ASSERT_TRUE(append_result.ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+
+  // Click on the upper staff's column centre.
+  const HitRegion* upper_col = find_hit_region(layout, column_hit_id(upper_id));
+  const HitRegion* lower_col =
+      find_hit_region(layout, column_hit_id(lower_chord.id));
+  ASSERT_NE(upper_col, nullptr);
+  ASSERT_NE(lower_col, nullptr);
+  const NotationPoint point{
+      upper_col->bounds.x + upper_col->bounds.width * 0.5,
+      upper_col->bounds.y + upper_col->bounds.height * 0.5};
+  ASSERT_TRUE(upper_col->bounds.contains(point));
+  // The lower staff's column does not contain this point -- the y is far
+  // from the lower staff's own vertical span, so column override is not
+  // reachable regardless of guard state.
+  EXPECT_FALSE(lower_col->bounds.contains(point));
+
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(1), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* chord_set = std::get_if<ChordSet>(&*selection);
+  ASSERT_NE(chord_set, nullptr);
+  // The result must be the upper staff's chord -- never the lower staff's.
+  EXPECT_EQ(chord_set->items().front().entity, upper_id);
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+// ---- Defect Family 3 (M5-phase-16h): adjacent-onset column override
+// guard.  Two stemless chords at different onsets in different voices
+// each emit a notehead-column region.  The click must resolve to the
+// column that actually covers the click point, not to the armed voice's
+// column at a different onset (which has the same priority/area
+// coincidentally).  Unlike the existing
+// AdjacentOnsetColumnDoesNotOverrideTheWinner test (which clicks a
+// kNotehead region), this test clicks a column overlap point so the
+// column-override path is actually entered. ----
+
+TEST(SelectionResolverTest, AdjacentOnsetColumnsDoNotCrossOverride) {
+  // Two measures, two voices, both at the same onset so that columns
+  // have overlapping bounds.  Voice 1 gets a stemless chord at onset 0;
+  // voice 2 gets a stemless chord shifted to a later onset (different
+  // measure position), so the columns have different x positions and
+  // do not both contain the midpoint click on voice 1's column.
+  Fixture fixture(1);
+
+  // Voice 1: two stemless chords at onset 0 (same pitches for both voices
+  // so columns have equal area).
+  const std::vector<ChordNote> notes1 = two_chord_notes();
+  const NotationEntityId v1_id = append_stemless_chord(fixture, notes1, 1);
+
+  // Voice 2: a quarter rest then a stemless chord at onset = quarter.
+  const Rest rest = make_rest(*Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(fixture.voice(2).append(rest).ok());
+  const std::vector<ChordNote> notes2 = two_chord_notes();
+  const Chord                  v2_chord =
+      make_chord(*Duration::create(NoteValue::kWhole, 0), notes2);
+  ASSERT_TRUE(fixture.voice(2).append(v2_chord).ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+
+  const HitRegion* col1 = find_hit_region(layout, column_hit_id(v1_id));
+  const HitRegion* col2 = find_hit_region(layout, column_hit_id(v2_chord.id));
+  ASSERT_NE(col1, nullptr);
+  ASSERT_NE(col2, nullptr);
+  // The columns have equal area (same pitches, same width) and equal
+  // priority, but different x positions (different onsets).
+  EXPECT_EQ(col1->priority, col2->priority);
+  EXPECT_DOUBLE_EQ(col1->bounds.width * col1->bounds.height,
+                   col2->bounds.width * col2->bounds.height);
+  EXPECT_NE(col1->bounds.x, col2->bounds.x);
+
+  // Click at voice 1's column centre.  Voice 2's column is at a
+  // different x and does not contain this point.
+  const NotationPoint point{col1->bounds.x + col1->bounds.width * 0.5,
+                            col1->bounds.y + col1->bounds.height * 0.5};
+  ASSERT_TRUE(col1->bounds.contains(point));
+  EXPECT_FALSE(col2->bounds.contains(point));
+
+  // Voice 2 armed.  The column override scan checks point containment:
+  // voice 2's column does not contain this click point, so it cannot
+  // be an alternative.  The result is voice 1's chord (the geometric
+  // winner), which may differ from the armed voice.
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(2), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* chord_set = std::get_if<ChordSet>(&*selection);
+  ASSERT_NE(chord_set, nullptr);
+  EXPECT_EQ(chord_set->items().front().entity, v1_id);
+  EXPECT_NE(chord_set->items().front().voice, *Voice::create(2));
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+// genuinely tied equal-area columns.
+TEST(SelectionResolverTest,
+     ThreeWayColumnTieChoosesArmedVoiceAmongTiedCandidates) {
+  Fixture fixture(1);
+
+  const std::vector<ChordNote> notes = two_chord_notes();
+  const NotationEntityId       v1_id = append_stemless_chord(fixture, notes, 1);
+  const NotationEntityId       v2_id = append_stemless_chord(fixture, notes, 2);
+  const NotationEntityId       v3_id = append_stemless_chord(fixture, notes, 3);
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+
+  const HitRegion* col1 = find_hit_region(layout, column_hit_id(v1_id));
+  const HitRegion* col2 = find_hit_region(layout, column_hit_id(v2_id));
+  const HitRegion* col3 = find_hit_region(layout, column_hit_id(v3_id));
+  ASSERT_NE(col1, nullptr);
+  ASSERT_NE(col2, nullptr);
+  ASSERT_NE(col3, nullptr);
+
+  // Point inside all three columns.
+  const double overlap_left =
+      std::max({col1->bounds.x, col2->bounds.x, col3->bounds.x});
+  const double overlap_right = std::min({col1->bounds.x + col1->bounds.width,
+                                         col2->bounds.x + col2->bounds.width,
+                                         col3->bounds.x + col3->bounds.width});
+  ASSERT_LT(overlap_left, overlap_right);
+  const NotationPoint point{
+      (overlap_left + overlap_right) * 0.5,
+      col1->bounds.y + col1->bounds.height * 0.5,
+  };
+
+  // Voice 3 armed -- its chord is selected among the three tied columns.
+  {
+    const auto selection =
+        resolve_selection_at(fixture.project, layout, note_state(3), point);
+    ASSERT_TRUE(selection.has_value());
+    const auto* chord_set = std::get_if<ChordSet>(&*selection);
+    ASSERT_NE(chord_set, nullptr);
+    EXPECT_EQ(chord_set->items().front().entity, v3_id);
+    EXPECT_EQ(chord_set->items().front().voice, *Voice::create(3));
+    EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+  }
+
+  // Voice 2 armed -- its chord is selected.
+  {
+    const auto selection =
+        resolve_selection_at(fixture.project, layout, note_state(2), point);
+    ASSERT_TRUE(selection.has_value());
+    const auto* chord_set = std::get_if<ChordSet>(&*selection);
+    ASSERT_NE(chord_set, nullptr);
+    EXPECT_EQ(chord_set->items().front().entity, v2_id);
+    EXPECT_EQ(chord_set->items().front().voice, *Voice::create(2));
+    EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+  }
+}
+
+// A stale alternative whose semantic entity cannot be resolved is skipped
+// rather than crashing or selecting the wrong chord.
+TEST(SelectionResolverTest,
+     StaleAlternativeColumnIsSkippedInArmedVoiceOverride) {
+  Fixture fixture(1);
+
+  const NotationEntityId v1_id =
+      append_stemless_chord(fixture, two_chord_notes(), 1);
+  const NotationEntityId v2_id =
+      append_stemless_chord(fixture, two_chord_notes(), 2);
+
+  const FixedMetrics metrics;
+  NotationLayout     layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+
+  // Inject a fake column region with a semantic_id that does not name any
+  // real domain entity -- simulating a stale layout.
+  const HitRegion* col1 = find_hit_region(layout, column_hit_id(v1_id));
+  ASSERT_NE(col1, nullptr);
+
+  // Copy bounds and priority before push_back, so no pointer into
+  // layout.hit_regions is retained across vector mutation.
+  const NotationRect col1_bounds   = col1->bounds;
+  const int          col1_priority = col1->priority;
+
+  const HitRegion stale_col{NotationId{"stale/notehead-column/hit"},
+                            NotationId{"dead-beef-9999"},
+                            HitRole::kEvent,
+                            col1_bounds,
+                            col1_priority,
+                            std::nullopt,
+                            std::nullopt};
+  layout.hit_regions.push_back(stale_col);
+
+  const NotationPoint point{
+      col1_bounds.x + col1_bounds.width * 0.5,
+      col1_bounds.y + col1_bounds.height * 0.5,
+  };
+  ASSERT_TRUE(col1_bounds.contains(point));
+  ASSERT_TRUE(stale_col.bounds.contains(point));
+
+  // Voice 2 armed.  The stale column coincidentally covers the point and
+  // has equal area/priority with the real columns, but its semantic entity
+  // cannot be resolved, so it is skipped.  The Voice 2 chord is selected
+  // through the real column.
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(2), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* chord_set = std::get_if<ChordSet>(&*selection);
+  ASSERT_NE(chord_set, nullptr);
+  ASSERT_EQ(chord_set->items().size(), 1u);
+  EXPECT_EQ(chord_set->items().front().entity, v2_id);
+  EXPECT_EQ(chord_set->items().front().voice, *Voice::create(2));
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+// ---- Defect Family 2 (M5-phase-16h): controlled isolation tests that
+// prove each target guard (onset, staff) individually prevents an
+// otherwise-eligible armed-voice override.  Each test constructs a scenario
+// where every precondition except the guard under test passes -- same
+// priority, equal area, containing point, resolvable chord, armed
+// alternative present -- then asserts the exact winner.  The test must be
+// designed so that removing the guard would change the outcome.
+
+// Onset guard: the intended winner (lexically smaller id) at onset 0, the
+// armed alternative at onset quarter.  Inject the alternative's column with
+// exact equal bounds at the winner's position.  All other guards pass.
+TEST(SelectionResolverTest, OnsetGuardPreventsArmedOverride) {
+  Fixture     fixture(1);
+  const auto  notes = two_chord_notes();
+  const Chord a = make_chord(*Duration::create(NoteValue::kWhole, 0), notes);
+  const Chord b = make_chord(*Duration::create(NoteValue::kWhole, 0),
+                             two_chord_notes(graphscore::Accidental::kNatural));
+  const bool  a_wins             = a.id.to_string() < b.id.to_string();
+  const NotationEntityId win_id  = a_wins ? a.id : b.id;
+  const NotationEntityId lose_id = a_wins ? b.id : a.id;
+
+  // Winner at onset 0 (voice 1, unarmed in the default note state).
+  ASSERT_TRUE(fixture.voice(1).append(a_wins ? a : b).ok());
+  // Loser at onset quarter in voice 2 (after a quarter rest).
+  const Rest rest = make_rest(*Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(fixture.voice(2).append(rest).ok());
+  ASSERT_TRUE(fixture.voice(2).append(a_wins ? b : a).ok());
+
+  const FixedMetrics metrics;
+  NotationLayout     layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+
+  const HitRegion* win_col  = find_hit_region(layout, column_hit_id(win_id));
+  const HitRegion* lose_col = find_hit_region(layout, column_hit_id(lose_id));
+  ASSERT_NE(win_col, nullptr);
+  ASSERT_NE(lose_col, nullptr);
+  EXPECT_EQ(win_col->priority, lose_col->priority);
+  EXPECT_DOUBLE_EQ(win_col->bounds.width * win_col->bounds.height,
+                   lose_col->bounds.width * lose_col->bounds.height);
+  EXPECT_EQ(win_col->owner_system_id, lose_col->owner_system_id);
+  EXPECT_EQ(win_col->owner_staff_id, lose_col->owner_staff_id);
+
+  const NotationPoint point{win_col->bounds.x + win_col->bounds.width * 0.5,
+                            win_col->bounds.y + win_col->bounds.height * 0.5};
+  ASSERT_TRUE(win_col->bounds.contains(point));
+
+  // Verify deterministic winner: smaller semantic id column wins hit_test.
+  const auto pre_hit = layout.hit_test(point);
+  ASSERT_TRUE(pre_hit.has_value());
+  EXPECT_EQ(pre_hit->id, win_col->id);
+
+  // Inject a synthetic at the winner's position with the loser's semantic
+  // and ownership.  Same system, staff, priority, exact equal area, point
+  // contained — every guard except onset passes.
+  HitRegion synthetic{NotationId{"syn/onset-guard/notehead-column/hit"},
+                      lose_col->semantic_id,
+                      HitRole::kEvent,
+                      win_col->bounds,
+                      win_col->priority,
+                      lose_col->owner_system_id,
+                      lose_col->owner_staff_id};
+  layout.hit_regions.push_back(synthetic);
+
+  // Voice 2 armed.  Without the onset guard this would override; the
+  // onset guard keeps the winner.
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(2), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* chord_set = std::get_if<ChordSet>(&*selection);
+  ASSERT_NE(chord_set, nullptr);
+  EXPECT_EQ(chord_set->items().front().entity, win_id);
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+// Staff guard: the intended winner (lexically smaller id) on upper staff,
+// the armed alternative on lower staff.  Inject the alternative's column
+// with exact equal bounds at the winner's position while retaining distinct
+// owner_staff_id.  All other guards pass.
+TEST(SelectionResolverTest, StaffGuardPreventsArmedOverride) {
+  Fixture     fixture({StaffLayout::grand_staff()}, 1);
+  const auto  notes = two_chord_notes();
+  const Chord a = make_chord(*Duration::create(NoteValue::kWhole, 0), notes);
+  const Chord b = make_chord(*Duration::create(NoteValue::kWhole, 0),
+                             two_chord_notes(graphscore::Accidental::kNatural));
+  const bool  a_wins             = a.id.to_string() < b.id.to_string();
+  const NotationEntityId win_id  = a_wins ? a.id : b.id;
+  const NotationEntityId lose_id = a_wins ? b.id : a.id;
+
+  // Winner on upper staff (voice 1, stave 0).
+  ASSERT_TRUE(fixture.voice(1).append(a_wins ? a : b).ok());
+  // Loser on lower staff (voice 2, stave 1).
+  auto& lower_voice = fixture.voice(2, 0, 1);
+  ASSERT_TRUE(lower_voice.append(a_wins ? b : a).ok());
+
+  const FixedMetrics metrics;
+  NotationLayout     layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+
+  const HitRegion* win_col  = find_hit_region(layout, column_hit_id(win_id));
+  const HitRegion* lose_col = find_hit_region(layout, column_hit_id(lose_id));
+  ASSERT_NE(win_col, nullptr);
+  ASSERT_NE(lose_col, nullptr);
+  ASSERT_TRUE(win_col->owner_staff_id.has_value());
+  ASSERT_TRUE(lose_col->owner_staff_id.has_value());
+  EXPECT_NE(*win_col->owner_staff_id, *lose_col->owner_staff_id);
+  EXPECT_EQ(*win_col->owner_system_id, *lose_col->owner_system_id);
+  EXPECT_EQ(win_col->priority, lose_col->priority);
+  EXPECT_DOUBLE_EQ(win_col->bounds.width * win_col->bounds.height,
+                   lose_col->bounds.width * lose_col->bounds.height);
+
+  const NotationPoint point{win_col->bounds.x + win_col->bounds.width * 0.5,
+                            win_col->bounds.y + win_col->bounds.height * 0.5};
+  ASSERT_TRUE(win_col->bounds.contains(point));
+
+  const auto pre_hit = layout.hit_test(point);
+  ASSERT_TRUE(pre_hit.has_value());
+  EXPECT_EQ(pre_hit->id, win_col->id);
+
+  // Inject a synthetic at the winner's position with the loser's semantic
+  // and lower-staff ownership.  Same system, priority, exact equal area,
+  // point contained.  Only the staff guard differs.
+  HitRegion synthetic{NotationId{"syn/staff-guard/notehead-column/hit"},
+                      lose_col->semantic_id,
+                      HitRole::kEvent,
+                      win_col->bounds,
+                      win_col->priority,
+                      lose_col->owner_system_id,
+                      lose_col->owner_staff_id};
+  layout.hit_regions.push_back(synthetic);
+
+  // Voice 2 armed (lower staff).  The staff guard must reject.
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(2), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* chord_set = std::get_if<ChordSet>(&*selection);
+  ASSERT_NE(chord_set, nullptr);
+  EXPECT_EQ(chord_set->items().front().entity, win_id);
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+// A stemless chord column genuinely emitted in a later system carries
+// that later SystemLayout's id and resolves correctly.  This is a direct
+// integration check, not a synthetic guard-isolation test: the layout is
+// produced by the real engraver with enough content to force a system
+// break, and the column's owner_system_id is read from the emitted
+// HitRegion rather than hand-built.
+TEST(SelectionResolverTest, ColumnInLaterSystemCarriesThatSystemsId) {
+  Fixture        fixture(3);
+  const Duration quarter = *Duration::create(NoteValue::kQuarter, 0);
+  // Fill measure 0 with enough rests to push a stemless chord to a
+  // later measure, where it lands in a later system.
+  for (int index = 0; index < 4; ++index) {
+    ASSERT_TRUE(fixture.voice(1).append(make_rest(quarter)).ok());
+  }
+
+  const std::vector<ChordNote> notes = two_chord_notes();
+  const Chord                  chord =
+      make_chord(*Duration::create(NoteValue::kWhole, 0), notes);
+  ASSERT_TRUE(fixture.voice(1).append(chord).ok());
+
+  NotationLayoutOptions options;
+  options.system_width = 60.0;
+  options.left_margin  = 1.0;
+  options.right_margin = 1.0;
+  const FixedMetrics metrics;
+  NotationLayout     layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics, options));
+  ASSERT_GE(layout.systems.size(), 2u);
+
+  const HitRegion* col = find_hit_region(layout, column_hit_id(chord.id));
+  ASSERT_NE(col, nullptr);
+  ASSERT_TRUE(col->owner_system_id.has_value());
+
+  // The column was emitted in a later system -- verify the
+  // owner_system_id matches that system's actual id and does not point
+  // to system 0.
+  const SystemLayout* owner_system = nullptr;
+  for (const SystemLayout& sys : layout.systems) {
+    if (sys.id == *col->owner_system_id) {
+      owner_system = &sys;
+      break;
+    }
+  }
+  ASSERT_NE(owner_system, nullptr);
+  EXPECT_NE(*col->owner_system_id, layout.systems[0].id);
+  EXPECT_GE(owner_system->first_measure, 1u);
+
+  // Click on the column and verify correct resolution.
+  const NotationPoint point{col->bounds.x + col->bounds.width * 0.5,
+                            col->bounds.y + col->bounds.height * 0.5};
+  ASSERT_TRUE(col->bounds.contains(point));
+
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(1), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* chord_set = std::get_if<ChordSet>(&*selection);
+  ASSERT_NE(chord_set, nullptr);
+  EXPECT_EQ(chord_set->items().front().entity, chord.id);
+  EXPECT_EQ(chord_set->items().front().track, fixture.track_ids[0]);
+  EXPECT_EQ(chord_set->items().front().voice, *Voice::create(1));
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+// Forged/stale-owner guard: a synthetic column that copies the winner's
+// owner_system_id/owner_staff_id but carries a semantic_id from a chord
+// that actually lives on a different staff/system.  The genuine winner's
+// semantic id is deterministically arranged to be lexically smaller so
+// that hit_test always returns the genuine region after injection,
+// removing any dependence on UUID ordering.  Owner-constrained resolution
+// on a forged-winner synthetic (tested via fail-closed) is the separate
+// backstop.
+TEST(SelectionResolverTest, ForgedOwnerMetadataBlockedByConstrainedResolution) {
+  Fixture fixture({StaffLayout::single_staff(), StaffLayout::single_staff()},
+                  1);
+
+  // Construct chords first so the lexically smaller semantic id can be
+  // deterministically assigned to the genuine winner.
+  const std::vector<ChordNote> upper_notes = two_chord_notes();
+  const std::vector<ChordNote> other_notes =
+      two_chord_notes(graphscore::Accidental::kSharp);
+  const Chord upper_chord =
+      make_chord(*Duration::create(NoteValue::kWhole, 0), upper_notes);
+  const Chord other_chord =
+      make_chord(*Duration::create(NoteValue::kWhole, 0), other_notes);
+
+  // Deterministic assignment: lexically smaller semantic id to the
+  // genuine winner (unarmed voice 1 on track 0).
+  const bool upper_wins =
+      upper_chord.id.to_string() < other_chord.id.to_string();
+  const NotationEntityId win_id  = upper_wins ? upper_chord.id : other_chord.id;
+  const NotationEntityId lose_id = upper_wins ? other_chord.id : upper_chord.id;
+
+  // Winner on track 0 (voice 1, unarmed in this test).
+  ASSERT_TRUE(
+      fixture.voice(1, 0).append(upper_wins ? upper_chord : other_chord).ok());
+  // Armed chord on track 1 (voice 2).
+  ASSERT_TRUE(
+      fixture.voice(2, 1).append(upper_wins ? other_chord : upper_chord).ok());
+
+  const FixedMetrics metrics;
+  NotationLayout     layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  ASSERT_EQ(layout.systems.size(), 1u);
+
+  const HitRegion* win_col = find_hit_region(layout, column_hit_id(win_id));
+  ASSERT_NE(win_col, nullptr);
+  ASSERT_TRUE(win_col->owner_system_id.has_value());
+  ASSERT_TRUE(win_col->owner_staff_id.has_value());
+
+  const NotationPoint point{win_col->bounds.x + win_col->bounds.width * 0.5,
+                            win_col->bounds.y + win_col->bounds.height * 0.5};
+  ASSERT_TRUE(win_col->bounds.contains(point));
+
+  // Copy every needed winner property before push_back, so no pointer
+  // into layout.hit_regions is retained across vector mutation.
+  const NotationId                win_id_copy   = win_col->id;
+  const NotationRect              win_bounds    = win_col->bounds;
+  const int                       win_priority  = win_col->priority;
+  const std::optional<NotationId> win_owner_sys = win_col->owner_system_id;
+  const std::optional<NotationId> win_owner_stf = win_col->owner_staff_id;
+
+  // Synthetic: copies the winner's owner IDs (track 0's staff) but names
+  // the losing chord as its semantic entity.  The synthetic's id prefix
+  // 'z' sorts after every hex digit and letter, guaranteeing the genuine
+  // winner's own column id always wins the lexicographic tie-break.
+  HitRegion synthetic{NotationId{"zzz/forged-owner/notehead-column/hit"},
+                      NotationId{{lose_id.to_string()}},
+                      HitRole::kEvent,
+                      win_bounds,
+                      win_priority,
+                      win_owner_sys,
+                      win_owner_stf};
+  layout.hit_regions.push_back(synthetic);
+
+  // Post-injection: the genuine column wins hit_test deterministically
+  // because its semantic_id is the lexically smaller of the two chord
+  // ids (assigned above) and its column id sorts before 'z'.
+  const auto post_hit = layout.hit_test(point);
+  ASSERT_TRUE(post_hit.has_value());
+  EXPECT_EQ(post_hit->id, win_id_copy);
+
+  // Voice 2 armed (track 1).  Resolver selects the genuine winner.
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(2), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* chord_set = std::get_if<ChordSet>(&*selection);
+  ASSERT_NE(chord_set, nullptr);
+  EXPECT_EQ(chord_set->items().front().entity, win_id);
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+// Area guard: same staff/system/onset, the intended geometric winner
+// (lexically smaller id) has equal area with the armed alternative.
+// Inject the alternative's column at the winner's position with width
+// perturbed by std::nextafter so the area differs by < 1e-9.
+// The exact-area guard preserves the winner.
+TEST(SelectionResolverTest, TinyAreaDeltaPreservesWinner) {
+  Fixture     fixture(1);
+  const auto  notes = two_chord_notes();
+  const Chord a = make_chord(*Duration::create(NoteValue::kWhole, 0), notes);
+  const Chord b = make_chord(*Duration::create(NoteValue::kWhole, 0),
+                             two_chord_notes(graphscore::Accidental::kNatural));
+  const bool  a_wins             = a.id.to_string() < b.id.to_string();
+  const NotationEntityId win_id  = a_wins ? a.id : b.id;
+  const NotationEntityId lose_id = a_wins ? b.id : a.id;
+  ASSERT_TRUE(fixture.voice(1).append(a_wins ? a : b).ok());
+  ASSERT_TRUE(fixture.voice(2).append(a_wins ? b : a).ok());
+
+  const FixedMetrics metrics;
+  NotationLayout     layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+
+  const HitRegion* win_col  = find_hit_region(layout, column_hit_id(win_id));
+  const HitRegion* lose_col = find_hit_region(layout, column_hit_id(lose_id));
+  ASSERT_NE(win_col, nullptr);
+  ASSERT_NE(lose_col, nullptr);
+  EXPECT_EQ(win_col->priority, lose_col->priority);
+  const double win_area = win_col->bounds.width * win_col->bounds.height;
+  EXPECT_DOUBLE_EQ(win_area, lose_col->bounds.width * lose_col->bounds.height);
+  EXPECT_EQ(win_col->owner_system_id, lose_col->owner_system_id);
+  EXPECT_EQ(win_col->owner_staff_id, lose_col->owner_staff_id);
+
+  const double overlap_left = std::max(win_col->bounds.x, lose_col->bounds.x);
+  const double overlap_right =
+      std::min(win_col->bounds.x + win_col->bounds.width,
+               lose_col->bounds.x + lose_col->bounds.width);
+  ASSERT_LT(overlap_left, overlap_right);
+  const NotationPoint point{
+      (overlap_left + overlap_right) * 0.5,
+      win_col->bounds.y + win_col->bounds.height * 0.5,
+  };
+  ASSERT_TRUE(win_col->bounds.contains(point));
+  ASSERT_TRUE(lose_col->bounds.contains(point));
+
+  const auto pre_hit = layout.hit_test(point);
+  ASSERT_TRUE(pre_hit.has_value());
+  EXPECT_EQ(pre_hit->id, win_col->id);
+
+  // Copy every needed winner property before any erase/push_back, so
+  // no pointer/reference/iterator into layout.hit_regions is retained
+  // across vector mutation.
+  const NotationId                win_id_copy    = win_col->id;
+  const NotationRect              win_bounds     = win_col->bounds;
+  const int                       win_priority   = win_col->priority;
+  const NotationId                lose_semantic  = lose_col->semantic_id;
+  const std::optional<NotationId> lose_owner_sys = lose_col->owner_system_id;
+  const std::optional<NotationId> lose_owner_stf = lose_col->owner_staff_id;
+  const auto                      lose_pos       = std::ranges::find_if(
+      layout.hit_regions,
+      [&](const HitRegion& r) { return r.id == lose_col->id; });
+  ASSERT_NE(lose_pos, layout.hit_regions.end());
+  layout.hit_regions.erase(lose_pos);
+
+  // Replace it with a synthetic that has the same semantic/ownership but
+  // a width perturbed by one ULP, so the area differs by < 1e-9.
+  NotationRect alt_bounds = win_bounds;
+  alt_bounds.width        = std::nextafter(alt_bounds.width, INFINITY);
+  HitRegion synthetic{NotationId{"syn/tiny-area/notehead-column/hit"},
+                      lose_semantic,
+                      HitRole::kEvent,
+                      alt_bounds,
+                      win_priority,
+                      lose_owner_sys,
+                      lose_owner_stf};
+  layout.hit_regions.push_back(synthetic);
+
+  const double synth_area = alt_bounds.width * alt_bounds.height;
+  EXPECT_NE(synth_area, win_area);
+  EXPECT_GT(synth_area, win_area);
+  const double delta = synth_area - win_area;
+  EXPECT_GT(delta, 0.0);
+  EXPECT_LT(delta, 1e-9);
+
+  // Post-mutation: hit_test still returns the smaller-area winner,
+  // asserted against the pre-mutation copy.
+  const auto post_hit = layout.hit_test(point);
+  ASSERT_TRUE(post_hit.has_value());
+  EXPECT_EQ(post_hit->id, win_id_copy);
+
+  // Voice 2 armed.  The exact-area guard rejects the synthetic; winner
+  // remains unchanged.
+  const auto selection =
+      resolve_selection_at(fixture.project, layout, note_state(2), point);
+  ASSERT_TRUE(selection.has_value());
+  const auto* chord_set = std::get_if<ChordSet>(&*selection);
+  ASSERT_NE(chord_set, nullptr);
+  EXPECT_EQ(chord_set->items().front().entity, win_id);
   EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
 }
 
@@ -2228,9 +3507,10 @@ TEST(MeasureSelectionTest,
   NotationLayout correct;
   correct.hit_regions = {
       HitRegion{NotationId{"sm/hit"}, NotationId{"sm"}, HitRole::kStaffMeasure,
-                shared_bounds, 4},
+                shared_bounds, 4, std::nullopt, std::nullopt},
       HitRegion{NotationId{"note/notehead/hit"}, NotationId{"note"},
-                HitRole::kNotehead, shared_bounds, 8},
+                HitRole::kNotehead, shared_bounds, 8, std::nullopt,
+                std::nullopt},
   };
   const auto correct_hit = correct.hit_test(NotationPoint{2.0, 2.0});
   ASSERT_TRUE(correct_hit.has_value());
@@ -2249,9 +3529,10 @@ TEST(MeasureSelectionTest,
   misranked.hit_regions = {
       HitRegion{NotationId{"a-staff-measure/hit"},
                 NotationId{"a-staff-measure"}, HitRole::kStaffMeasure,
-                shared_bounds, 8},
+                shared_bounds, 8, std::nullopt, std::nullopt},
       HitRegion{NotationId{"b-notehead/hit"}, NotationId{"b-notehead"},
-                HitRole::kNotehead, shared_bounds, 8},
+                HitRole::kNotehead, shared_bounds, 8, std::nullopt,
+                std::nullopt},
   };
   const auto misranked_hit = misranked.hit_test(NotationPoint{2.0, 2.0});
   ASSERT_TRUE(misranked_hit.has_value());

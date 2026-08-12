@@ -242,6 +242,17 @@ struct HitRegion {
   // and why nothing else may be moved into it.
   int priority = 0;
 
+  // The owning SystemLayout and StaffSystemLayout's own id at emission
+  // time, recorded so that resolve_selection_at's armed-voice column
+  // override can compare actual emitting systems rather than inferring
+  // ownership from a resolve_hit_entity scan of the complete VoiceContent
+  // (which always returns the first system that happens to carry the
+  // entity, not the one that emitted this region).  Empty for regions that
+  // are not notehead-columns (containers, glyphs, span segments, etc.) and
+  // for hand-constructed regions in tests.
+  std::optional<NotationId> owner_system_id = std::nullopt;
+  std::optional<NotationId> owner_staff_id  = std::nullopt;
+
   [[nodiscard]] bool operator==(const HitRegion&) const = default;
 };
 
@@ -882,10 +893,13 @@ struct NotationPreview {
 //
 // `palette`'s armed voice is the sole source of truth for which voice an
 // insertion-caret result names, mirroring preview_note_entry's own use of
-// it. A notehead/chord/rest hit instead names whichever staff and voice
-// actually own the hit's entity id, which may differ from the armed voice:
-// clicking an existing note in Voice 2 while Voice 1 is armed still selects
-// that Voice 2 note.
+// it. It is also used as a preference when two stemless chords in different
+// voices at the same onset emit overlapping equal-area notehead-column
+// regions that hit_test cannot geometrically distinguish (see the
+// notehead-column paragraph below). Otherwise, a notehead/chord/rest hit
+// names whichever staff and voice actually own the hit's entity id, which
+// may differ from the armed voice: clicking an existing note in Voice 2
+// while Voice 1 is armed still selects that Voice 2 note.
 //
 // Resolution:
 //   kNotehead hit  -- NoteheadSet (one item): the Note, ChordNote, or
@@ -932,21 +946,35 @@ struct NotationPreview {
 //                     articulation, for instance, still yields its own
 //                     MarkingSet.
 //
-//                     A tie is the case where that second consequence bites
-//                     hardest, because a tie's span segment both outranks
-//                     the column and is drawn far larger than the notes it
-//                     joins: the engraver gives it a band four staff-spaces
-//                     tall, a fixed height that does not grow with the
-//                     chord. Wherever that band covers the click, the tie's
-//                     own MarkingSet wins and no ChordSet is produced --
-//                     and for an ordinary close-voiced chord the band
-//                     covers the whole column, so this affordance does not
-//                     reach a tied chord at all. That is the tie region's
-//                     own geometry rather than anything about the column;
-//                     it is a known limitation, pinned by a test for the
-//                     close-voiced case. A chord voiced widely enough to
-//                     put part of its column outside the band is neither
-//                     claimed nor tested here.
+//                     A tie's span segment ranks above the column
+//                     (kHitPrioritySpanSegment > kHitPriorityNoteheadColumn),
+//                     but its hit region is now tight to the actual drawn
+//                     tie curve (see add_span_segment's kHitRoleTie branch
+//                     in src/notation/notation.cpp) rather than a universal
+//                     four-staff-space band.  A click on the drawn curve
+//                     itself still selects the tie; a click away from the
+//                     curve, inside the notehead-column region of a
+//                     close-voiced tied stemless chord, now reaches that
+//                     chord's ChordSet instead.  Articulation glyphs on a
+//                     chord carrying both a tie and articulations are
+//                     likewise no longer shadowed by the tie band away from
+//                     the actual curve.
+//
+//                     Two stemless chords in different voices at the same
+//                     onset emit overlapping equal-area column regions.
+//                     hit_test cannot geometrically distinguish them, so its
+//                     semantic_id tie-break would decide by UUID ordering.
+//                     This function instead uses `palette`'s armed voice as a
+//                     preference only among candidates truly tied at the
+//                     UUID-order stage: same priority, equal area (within
+//                     floating-point tolerance), same staff/system, and same
+//                     musical onset.  When priority or area distinguishes the
+//                     candidates, hit_test's own order is deterministically
+//                     correct regardless of UUID values, and the geometric
+//                     winner is preserved as-is.  Direct notehead/glyph hits
+//                     (kNotehead, kMarking) are unaffected and always resolve
+//                     to their actual owning voice, which may differ from the
+//                     armed voice.
 //
 //                     For a stemless single Note the column coincides
 //                     exactly with that note's sole notehead region and is

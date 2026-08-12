@@ -527,13 +527,17 @@ TEST(NotationLayoutTest, HitTestingUsesDocumentedPriorityAreaAndIdTies) {
   NotationLayout layout;
   layout.hit_regions = {
       HitRegion{NotationId{"z"}, NotationId{"z"}, HitRole::kStaff,
-                NotationRect{0.0, 0.0, 10.0, 10.0}, 2},
+                NotationRect{0.0, 0.0, 10.0, 10.0}, 2, std::nullopt,
+                std::nullopt},
       HitRegion{NotationId{"b"}, NotationId{"b"}, HitRole::kEvent,
-                NotationRect{0.0, 0.0, 5.0, 5.0}, 4},
+                NotationRect{0.0, 0.0, 5.0, 5.0}, 4, std::nullopt,
+                std::nullopt},
       HitRegion{NotationId{"a2"}, NotationId{"a"}, HitRole::kEvent,
-                NotationRect{0.0, 0.0, 5.0, 5.0}, 4},
+                NotationRect{0.0, 0.0, 5.0, 5.0}, 4, std::nullopt,
+                std::nullopt},
       HitRegion{NotationId{"a1"}, NotationId{"a"}, HitRole::kEvent,
-                NotationRect{0.0, 0.0, 5.0, 5.0}, 4},
+                NotationRect{0.0, 0.0, 5.0, 5.0}, 4, std::nullopt,
+                std::nullopt},
   };
   const auto hit = layout.hit_test(NotationPoint{2.0, 2.0});
   ASSERT_TRUE(hit.has_value());
