@@ -56,6 +56,8 @@ Provide a polished, directly editable focused notation system inside a node, wit
   - [x] Resolve marking hit regions to dynamic, hairpin, slur, pedal span, articulation, tie, and tuplet selections.
   - [x] Emit a notehead-column hit region, below the noteheads' own priority, so a stemless whole-note chord can select its whole event.
   - [ ] Resolve range selections through hit regions; the selection tool and measure targets below drive them.
+  - [ ] Resolve the hit-priority and voice-disambiguation gaps the resolvers above left open: a tie segment's fixed four-staff-space band shadows the articulation glyphs on a chord carrying both, and blankets a close-voiced stemless chord so the notehead-column affordance cannot reach a tied whole-note chord; two stemless chords in different voices at one onset emit overlapping equal-area columns that `hit_test` separates only by `Uuid` ordering, so a click can select the other voice's chord.
+  - [ ] Reconcile per-system tuplet-digit suppression with the domain's own run keying: the engraver suppresses against the first record in the system it is laying out, while the domain keys `kIncompleteTupletGroup` to the true global run start, so the two can disagree across a system break.
 - [x] Add a dedicated selection tool whose pointer drag creates a contiguous musical-time selection across the intersected staves/voices rather than selecting engraving glyph bounds individually.
   - [x] Resolve a two-point drag to a contiguous musical-time range selection across the intersected staves and voices.
   - [x] Hold drag state and the active tool at the app layer, and wire pointer press/move/release to the resolver.

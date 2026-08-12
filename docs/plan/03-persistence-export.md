@@ -43,6 +43,7 @@ identical cycle. Plugin state blobs are opaque and unstable.
 - [ ] Define minimum reader/writer versions and actionable unsupported-version diagnostics.
 - [ ] Add migration fixtures from every released schema starting with the first public `0.1.0` schema.
 - [ ] Preserve unknown non-semantic bundle entries where safe, but never silently accept unknown runtime semantics.
+- [ ] Round-trip every identity the writer's selection model addresses. Beyond `ChordNote::id` and `GraceNote::id`, this covers `Rest::id` and every marking record's id; and because Milestone 05 addresses articulations, ties and tuplets by composite key rather than by minting an id per marking, articulation membership and order, `tied_to_next`, and tuplet run boundaries are load-bearing across a migration too. Changing or regenerating any of them breaks selection, clipboard remapping, and arbitration.
 
 ### Export pipeline
 

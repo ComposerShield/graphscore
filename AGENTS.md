@@ -349,7 +349,12 @@ rationale.
 - [docs/plan/CHECKLIST.md](docs/plan/CHECKLIST.md) — source-controlled
   execution checklist; check a step box once every detailed deliverable in
   its linked section is done, and record completed increments short of that
-  as checked indented sub-entries so partial progress stays visible.
+  as bare checked indented sub-entries so partial progress stays visible.
+  It is a checklist, not a changelog: never append evidence parentheticals,
+  test counts, or verification results to a line there or in a milestone
+  file — that is what the commit message is for. A forward obligation that
+  outlives its increment (a deferral, a known limitation, a bug found but
+  not fixed) goes in the owning milestone file, not the checklist.
 - [docs/plan/01-toolchain-ci.md](docs/plan/01-toolchain-ci.md) — this
   milestone's deliverables and acceptance criteria in full.
 - [docs/decisions/0003-architecture-target-dag.md](docs/decisions/0003-architecture-target-dag.md)
