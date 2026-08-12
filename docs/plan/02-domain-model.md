@@ -53,6 +53,7 @@ Implement the toolkit-independent source of truth for notation, graph structure,
 - [x] Sequential and vertical connector types with type-appropriate trigger, priority, and weight fields; queue policy/capacity is stored once per node/event listener.
 - [x] Registered event UUID/name lookup with unique case-sensitive UTF-8 names.
 - [x] Normative persistent event state machine: bounded occurrence storage per event, arrival sequence, per-node/event first/latest/FIFO interpretation, cross-event connector-priority arbitration, stable tie-breaking, consumption/discard rules, pause behavior, and clearing on stop/reset/node-play.
+- [ ] Reclaim orphaned event queues. A queue whose event or listener is removed is currently left unreclaimed rather than freed. Carried over from the Milestone 02 orchestration handoff; the zero-capacity FIFO half of that note is discharged, since `Node` now rejects a zero-capacity FIFO listener and the validation service reports one.
 - [x] Orthogonal route geometry stored as automatic or user-customized interior segments, independent of runtime semantics.
 
 ### Adaptive playback semantics

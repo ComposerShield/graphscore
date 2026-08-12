@@ -259,9 +259,11 @@ do not restate them in the plan documents themselves, where they drift.
   milestone's own worker will read it.
 - Acceptance and test boxes are checked before the milestone-complete box.
 
-`docs/plan/M02_HANDOFF.md` and `docs/plan/M0_STATUS.md` are a different
-genre: living status documents that must get *smaller* as work completes.
-Each carries its own maintenance rule; honour it.
+`docs/plan/M0_STATUS.md` is a different genre: a living status document that
+must get *smaller* as work completes. It carries its own maintenance rule;
+honour it. Such a document is deleted once its milestone stops being the
+active one, and anything still live in it moves to the milestone file that
+owns it first — as `M02_HANDOFF.md` was.
 
 `docs/plan/02-domain-model.md` still contains per-phase implementation
 summaries predating these rules. It is a completed milestone and is
