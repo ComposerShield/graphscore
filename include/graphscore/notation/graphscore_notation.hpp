@@ -1123,6 +1123,40 @@ struct MeasureScope {
   [[nodiscard]] bool operator==(const MeasureScope&) const = default;
 };
 
+// The project-wide score order every range-selection resolver below
+// applies to a pair of staff endpoints: Project::active_tracks() order,
+// then each track's own StaffLayout::staves() order -- the identical order
+// layout_notation itself assigns to every system's own StaffSystemLayout
+// list, so every system carries this exact same ordered staff set
+// project-wide. resolve_range_selection, resolve_range_selection_spec,
+// extend_range_selection, and extend_range_selection_staff_scope (below)
+// all resolve their own staff endpoints through one private helper in
+// src/notation/notation.cpp; this function delegates to that same helper
+// rather than copying the rule. (extend_measure_selection, also in
+// src/notation/notation.cpp, restates this order in its own in-place
+// filter loop rather than calling the shared helper; it pre-dates this
+// function and is the one remaining sibling not yet routed through it.)
+//
+// Exposed publicly for docs/plan/05-notation-editor.md's M5-phase-19b:
+// the app layer's keyboard staff-scope extension needs to answer "which
+// staff is one position below/above the current last staff?" and must
+// not re-derive the traversal to answer it -- a second, independently
+// written copy of the ordering rule could silently drift from the one the
+// resolvers above actually use, producing a keyboard extension that
+// disagrees with what a pointer drag over the same staves would select.
+// This function is that shared order, as a value a caller can index,
+// search, or feed straight back into extend_range_selection_staff_scope/
+// extend_measure_selection as MeasureScope endpoints without converting.
+//
+// Returns one MeasureScope per (track, stave) pair, in that order. A
+// project with no active tracks (and, transitively, a project with active
+// tracks whose own StaffLayout carries no staves) returns an empty
+// vector.
+//
+// A pure query: never mutates `project`.
+[[nodiscard]] std::vector<MeasureScope> score_ordered_staves(
+    const Project& project);
+
 // Extends an existing aligned FullMeasureSet across additional chosen
 // (track, stave) scopes, for docs/plan/05-notation-editor.md's "Extend an
 // aligned measure selection across additional chosen tracks/staves."
@@ -1511,6 +1545,13 @@ enum class ActiveTool : std::uint8_t {
 //                  committed Selection.
 //   cancel()    -- discard the in-progress drag without committing.
 //
+// set_committed_selection() is not part of that pointer-drag lifecycle: it
+// is the keyboard/accessible entry point (M5-phase-19b) that writes
+// committed_selection() directly from a Selection the drag lifecycle above
+// never produced, for a Shift/keyboard range extension or an accessible
+// start/end/staff-scope control. See its own declaration below for why it
+// still cancels any in-progress drag first.
+//
 // Every begin() call cancels any in-progress drag before validating its
 // arguments.  A non-kSelection tool, a non-finite anchor, or any other
 // reason to return false leaves no stale drag state — only
@@ -1546,8 +1587,39 @@ class SelectionDragState {
 
   // Discard the current drag without committing.  Clears is_dragging(),
   // anchor, live extent -- committed_selection is untouched (its previous
-  // value persists until the next commit).
+  // value persists until the next commit() or set_committed_selection()).
   void cancel() noexcept;
+
+  // The keyboard/accessible counterpart to commit(): stores `selection` as
+  // the new committed_selection() directly, for
+  // docs/plan/05-notation-editor.md's M5-phase-19b, where Shift/keyboard
+  // range extension and the accessible start/end/staff-scope controls
+  // produce a fresh Selection (via extend_range_selection,
+  // extend_range_selection_staff_scope, or resolve_range_selection_spec)
+  // with no pointer drag involved, so commit() -- which requires
+  // is_dragging() -- has nowhere to store it.
+  //
+  // Always cancels any in-progress drag first, exactly like begin() does,
+  // before storing `selection`. This is not merely for consistency: if a
+  // drag stayed live across this call, a later commit() would overwrite
+  // this keyboard-set selection with the drag's own stale live extent,
+  // so the two selection sources -- pointer drag and keyboard/accessible
+  // range extension -- could disagree about what is actually selected.
+  // Cancelling here closes that gap by leaving no drag for a later
+  // commit() to resolve.
+  //
+  // That guarantee covers only the drag in progress at the time of this
+  // call: a begin()/commit() cycle that starts afterward owns
+  // committed_selection() again like any other drag, including the case
+  // where its own update() never resolves a valid extent -- that commit()
+  // still clears committed_selection() to std::nullopt exactly as it would
+  // for a selection commit() itself produced, silently discarding the
+  // Selection this call just stored.
+  //
+  // `selection` becomes the new committed_selection() exactly as passed;
+  // std::nullopt is the supported way to deselect via this path. After
+  // this call, is_dragging() is false and live_extent() is std::nullopt.
+  void set_committed_selection(std::optional<Selection> selection) noexcept;
 
   [[nodiscard]] bool is_dragging() const noexcept { return dragging_; }
 
@@ -1557,8 +1629,9 @@ class SelectionDragState {
     return live_extent_;
   }
 
-  // The Selection committed by the most recent commit(), or nullopt.
-  // Survives cancel() and begin() -- only commit() writes it.
+  // The Selection committed by the most recent commit() or
+  // set_committed_selection() call, or nullopt.  Survives cancel() and
+  // begin().
   [[nodiscard]] const std::optional<Selection>& committed_selection()
       const noexcept {
     return committed_selection_;

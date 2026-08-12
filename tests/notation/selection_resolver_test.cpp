@@ -91,6 +91,7 @@ using graphscore::resolve_selection_at;
 using graphscore::Rest;
 using graphscore::RestItem;
 using graphscore::RestSet;
+using graphscore::score_ordered_staves;
 using graphscore::Selection;
 using graphscore::SelectionDragState;
 using graphscore::Slur;
@@ -5030,6 +5031,70 @@ TEST(RangeSpecTest, ItemOrderIsScoreOrderRegardlessOfCallerEndpointOrder) {
   EXPECT_EQ(set->items()[2].track, fixture.track_ids[2]);
 }
 
+// ---- score_ordered_staves -----------------------------------------------
+
+TEST(ScoreOrderedStavesTest,
+     MultiTrackMultiStaveOrderMatchesActiveTracksThenStaves) {
+  Fixture fixture(
+      {StaffLayout::grand_staff(), StaffLayout::single_staff(Clef::kTreble)},
+      1);
+
+  const std::vector<MeasureScope> order = score_ordered_staves(fixture.project);
+
+  const std::vector<MeasureScope> expected{
+      MeasureScope{fixture.track_ids[0], fixture.stave_id(0, 0)},
+      MeasureScope{fixture.track_ids[0], fixture.stave_id(0, 1)},
+      MeasureScope{fixture.track_ids[1], fixture.stave_id(1, 0)},
+  };
+  EXPECT_EQ(order, expected);
+}
+
+TEST(ScoreOrderedStavesTest, ProjectWithNoActiveTracksReturnsAnEmptyVector) {
+  Project project{ProjectId::generate(), "Empty"};
+  EXPECT_TRUE(score_ordered_staves(project).empty());
+}
+
+// Proves score_ordered_staves' own order agrees with the order
+// resolve_range_selection_spec actually applies: feeding its front() and
+// back() straight back in as first_staff/last_staff must select every
+// staff in between, in that same order, matching the two-copies-drift
+// concern the design forbids.
+TEST(ScoreOrderedStavesTest,
+     FrontAndBackFeedDirectlyIntoRangeSelectionSpecEndpoints) {
+  Fixture fixture(
+      {StaffLayout::grand_staff(), StaffLayout::single_staff(Clef::kTreble)},
+      1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice(1, 0, 0)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1, 0, 1)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 3), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice(1, 1, 0)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+
+  const std::vector<MeasureScope> order = score_ordered_staves(fixture.project);
+  ASSERT_EQ(order.size(), 3u);
+
+  const auto selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         order.front(), order.back()});
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<ArbitraryRangeSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  ASSERT_EQ(set->items().size(), 3u);
+  for (std::size_t index = 0; index < order.size(); ++index) {
+    EXPECT_EQ(set->items()[index].track, order[index].track_id);
+    EXPECT_EQ(set->items()[index].stave, order[index].stave_id);
+  }
+}
+
 // ---- extend_range_selection: Shift/keyboard time-edge extension --------
 
 TEST(RangeExtensionTest, MovingKStartWidensTheSpanKeepingEndFixed) {
@@ -6094,6 +6159,210 @@ TEST(SelectionDragLifecycleTest,
   EXPECT_FALSE(drag.is_dragging());
   ASSERT_TRUE(drag.committed_selection().has_value());
   EXPECT_EQ(*drag.committed_selection(), *committed);
+}
+
+// ---- SelectionDragState::set_committed_selection -----------------------
+
+TEST(SelectionDragLifecycleTest, SetCommittedSelectionWithNoDragInProgress) {
+  Fixture        fixture(1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff, staff});
+  ASSERT_TRUE(selection.has_value());
+
+  SelectionDragState drag;
+  drag.set_committed_selection(selection);
+  EXPECT_FALSE(drag.is_dragging());
+  EXPECT_FALSE(drag.live_extent().has_value());
+  ASSERT_TRUE(drag.committed_selection().has_value());
+  EXPECT_EQ(*drag.committed_selection(), *selection);
+}
+
+TEST(SelectionDragLifecycleTest,
+     SetCommittedSelectionWithNulloptClearsAPreviousSelection) {
+  Fixture        fixture(1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint anchor = measure_left_edge(layout, 0, 0, 0);
+  const NotationPoint focus  = measure_right_edge(layout, 0, 0, 0);
+
+  SelectionDragState drag;
+  ASSERT_TRUE(drag.begin(ActiveTool::kSelection, anchor));
+  ASSERT_TRUE(drag.update(fixture.project, layout, focus).has_value());
+  ASSERT_TRUE(drag.commit().has_value());
+  ASSERT_TRUE(drag.committed_selection().has_value());
+
+  drag.set_committed_selection(std::nullopt);
+  EXPECT_FALSE(drag.committed_selection().has_value());
+}
+
+TEST(SelectionDragLifecycleTest, SetCommittedSelectionMidDragCancelsTheDrag) {
+  Fixture        fixture(2);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(*SpelledPitch::create(Letter::kD, 4), whole))
+          .ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint anchor = measure_left_edge(layout, 0, 0, 0);
+  const NotationPoint focus  = measure_right_edge(layout, 0, 0, 0);
+
+  SelectionDragState drag;
+  ASSERT_TRUE(drag.begin(ActiveTool::kSelection, anchor));
+  ASSERT_TRUE(drag.update(fixture.project, layout, focus).has_value());
+  ASSERT_TRUE(drag.is_dragging());
+
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         keyboard_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(1), Rational(2)},
+                         staff, staff});
+  ASSERT_TRUE(keyboard_selection.has_value());
+
+  drag.set_committed_selection(keyboard_selection);
+  EXPECT_FALSE(drag.is_dragging());
+  EXPECT_FALSE(drag.live_extent().has_value());
+  ASSERT_TRUE(drag.committed_selection().has_value());
+  EXPECT_EQ(*drag.committed_selection(), *keyboard_selection);
+}
+
+// If set_committed_selection did not cancel the in-progress drag first, this
+// commit() would resolve to the drag's own live extent (span [0, 1), from
+// the pointer drag over measure 0 below) and overwrite the keyboard-set
+// selection with it. keyboard_selection deliberately names a different span
+// ([1, 2), measure 1) so that overwrite -- were the cancel-first invariant
+// removed -- would be visible in committed_selection() rather than
+// accidentally matching by coincidence.
+TEST(SelectionDragLifecycleTest,
+     SetCommittedSelectionMidDragPreventsALaterCommitFromOverwritingIt) {
+  Fixture        fixture(2);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(*SpelledPitch::create(Letter::kD, 4), whole))
+          .ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint anchor = measure_left_edge(layout, 0, 0, 0);
+  const NotationPoint focus  = measure_right_edge(layout, 0, 0, 0);
+
+  SelectionDragState drag;
+  ASSERT_TRUE(drag.begin(ActiveTool::kSelection, anchor));
+  const std::optional<Selection> live_extent =
+      drag.update(fixture.project, layout, focus);
+  ASSERT_TRUE(live_extent.has_value());
+
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         keyboard_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(1), Rational(2)},
+                         staff, staff});
+  ASSERT_TRUE(keyboard_selection.has_value());
+  ASSERT_NE(*keyboard_selection, *live_extent);
+  drag.set_committed_selection(keyboard_selection);
+
+  const std::optional<Selection> committed = drag.commit();
+  EXPECT_FALSE(committed.has_value());
+  ASSERT_TRUE(drag.committed_selection().has_value());
+  EXPECT_EQ(*drag.committed_selection(), *keyboard_selection);
+}
+
+TEST(SelectionDragLifecycleTest, SetCommittedSelectionSurvivesALaterCancel) {
+  Fixture        fixture(1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff, staff});
+  ASSERT_TRUE(selection.has_value());
+
+  SelectionDragState drag;
+  drag.set_committed_selection(selection);
+  drag.cancel();
+  EXPECT_FALSE(drag.is_dragging());
+  ASSERT_TRUE(drag.committed_selection().has_value());
+  EXPECT_EQ(*drag.committed_selection(), *selection);
+}
+
+// set_committed_selection()'s cancel-first guarantee covers only the drag in
+// progress at the time of the call. A begin()/update()/commit() cycle that
+// starts afterward owns committed_selection() again like any other drag,
+// including the case where its own update() never resolves a valid extent --
+// commit() then clears committed_selection() to std::nullopt exactly as it
+// would for a selection commit() itself produced, silently discarding the
+// keyboard-set selection.
+TEST(SelectionDragLifecycleTest,
+     SetCommittedSelectionThenFailedDragCommitClearsIt) {
+  Fixture        fixture(1);
+  const Duration whole = *Duration::create(NoteValue::kWhole, 0);
+  ASSERT_TRUE(
+      fixture.voice()
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), whole))
+          .ok());
+
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const NotationPoint anchor = measure_left_edge(layout, 0, 0, 0);
+
+  const MeasureScope staff{fixture.track_ids[0], fixture.stave_id()};
+  const auto         keyboard_selection = resolve_range_selection_spec(
+      fixture.project,
+      RangeSelectionSpec{fixture.node_id, MusicalSpan{Rational(0), Rational(1)},
+                         staff, staff});
+  ASSERT_TRUE(keyboard_selection.has_value());
+
+  SelectionDragState drag;
+  drag.set_committed_selection(keyboard_selection);
+  ASSERT_TRUE(drag.committed_selection().has_value());
+
+  // A later drag begins, but its update() never resolves an extent (the
+  // focus point is off-stave) -- confirm that genuinely fails before relying
+  // on it below.
+  ASSERT_TRUE(drag.begin(ActiveTool::kSelection, anchor));
+  const std::optional<Selection> live =
+      drag.update(fixture.project, layout, NotationPoint{-10'000.0, -10'000.0});
+  ASSERT_FALSE(live.has_value());
+
+  // commit() still resolves the drag lifecycle -- and clears the
+  // keyboard-set selection, even though this drag never produced one of its
+  // own.
+  const std::optional<Selection> committed = drag.commit();
+  EXPECT_FALSE(committed.has_value());
+  EXPECT_FALSE(drag.is_dragging());
+  EXPECT_FALSE(drag.committed_selection().has_value());
 }
 
 // ---- build_range_highlight_rects -------------------------------------------

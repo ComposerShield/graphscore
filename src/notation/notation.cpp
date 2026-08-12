@@ -4396,9 +4396,16 @@ struct ResolvedMarkingRecord {
 // StaffLayout::staves() order -- the identical order layout_notation itself
 // assigns to every system's own StaffSystemLayout list (see its own
 // "std::size_t stave_ordinal" loop above), so every system carries this
-// exact same ordered staff set project-wide.
-[[nodiscard]] std::vector<std::pair<TrackId, StaveId>> score_ordered_staves(
-    const Project& project) {
+// exact same ordered staff set project-wide. Named "_pairs" because the
+// public score_ordered_staves (graphscore_notation.hpp) exposes this same
+// traversal to callers outside this file as a vector of MeasureScope
+// instead; that function delegates to this one rather than copying the
+// rule. (extend_measure_selection, below, restates this order in its own
+// in-place filter loop rather than calling this helper -- it pre-dates
+// this helper and is the one remaining sibling not yet routed through
+// it.)
+[[nodiscard]] std::vector<std::pair<TrackId, StaveId>>
+score_ordered_stave_pairs(const Project& project) {
   std::vector<std::pair<TrackId, StaveId>> order;
   for (const Track& track : project.active_tracks()) {
     for (const StaveDefinition& stave_definition : track.layout().staves()) {
@@ -4445,7 +4452,7 @@ constexpr std::int64_t kRangeSelectionGridDenominator = 192;
 // extend_range_selection, and extend_range_selection_staff_scope. Applies
 // the staff-range rule (every staff between `first_staff` and `last_staff`,
 // inclusive, in `project`'s own score order, order-insensitive via
-// std::minmax -- see score_ordered_staves above), the voice-inclusion rule
+// std::minmax -- see score_ordered_stave_pairs above), the voice-inclusion rule
 // (voice_overlaps_span, one item per staff/voice pair with overlapping
 // content), and the lane/voices-missing skip behavior described in
 // resolve_range_selection's own original comment. Does not itself run
@@ -4471,7 +4478,7 @@ constexpr std::int64_t kRangeSelectionGridDenominator = 192;
   }
 
   const std::vector<std::pair<TrackId, StaveId>> score_order =
-      score_ordered_staves(project);
+      score_ordered_stave_pairs(project);
   const auto first_position = std::ranges::find(score_order, first_staff);
   const auto last_position  = std::ranges::find(score_order, last_staff);
   if (first_position == score_order.end() ||
@@ -4708,7 +4715,7 @@ std::optional<Selection> extend_range_selection(
   const MusicalSpan new_span{new_start, new_end};
 
   const std::vector<std::pair<TrackId, StaveId>> score_order =
-      score_ordered_staves(project);
+      score_ordered_stave_pairs(project);
   const auto extent =
       existing_range_staff_extent(existing.items(), score_order);
   if (!extent.has_value()) {
@@ -4754,6 +4761,17 @@ std::optional<Selection> extend_range_selection_staff_scope(
     return std::nullopt;
   }
   return selection;
+}
+
+std::vector<MeasureScope> score_ordered_staves(const Project& project) {
+  const std::vector<std::pair<TrackId, StaveId>> pairs =
+      score_ordered_stave_pairs(project);
+  std::vector<MeasureScope> order;
+  order.reserve(pairs.size());
+  for (const auto& [track_id, stave_id] : pairs) {
+    order.push_back(MeasureScope{track_id, stave_id});
+  }
+  return order;
 }
 
 std::optional<Selection> resolve_selection_at(const Project&          project,
@@ -5552,7 +5570,25 @@ void SelectionDragState::cancel() noexcept {
   anchor_   = {};
   live_extent_.reset();
   // committed_selection_ is untouched: its previous value persists until the
-  // next commit().
+  // next commit() or set_committed_selection().
+}
+
+static_assert(std::is_nothrow_move_constructible_v<std::optional<Selection>>);
+static_assert(std::is_nothrow_move_assignable_v<std::optional<Selection>>);
+
+void SelectionDragState::set_committed_selection(
+    std::optional<Selection> selection) noexcept {
+  // Cancel any in-progress drag before storing: if a drag stayed live, a
+  // later commit() would overwrite this keyboard-set selection with a
+  // stale live extent, so the two selection sources -- pointer drag and
+  // keyboard/accessible range extension -- could disagree about what is
+  // selected. Cancelling here means a subsequent commit() finds no drag in
+  // progress at the moment of this call and returns nullopt rather than
+  // clobbering `selection`. A begin() that starts a new drag afterward owns
+  // committed_selection() again like any other drag -- including clearing
+  // it via commit() if that new drag's own update() never resolves.
+  cancel();
+  committed_selection_ = std::move(selection);
 }
 
 // ---- build_range_highlight_rects -------------------------------------------
