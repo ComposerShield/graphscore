@@ -115,6 +115,15 @@ enum class HitRole : std::uint8_t {
   kMeasure,
   kStaff,
   kVoice,
+  // One measure on one staff -- the region resolve_measure_selection_at
+  // resolves to a one-item FullMeasureSet. Distinct from kMeasure, which
+  // spans every staff in the system, and from kStaff, which spans every
+  // measure in the system; this is the two-way intersection. Placed here,
+  // after the other three container roles and before the engraved-object
+  // roles below, because nothing in this codebase depends on HitRole's
+  // underlying numeric values (see kHitPriorityStaffMeasure in
+  // notation.cpp for the separate, load-bearing hit_test priority rank).
+  kStaffMeasure,
   kEvent,
   kNotehead,
   kMarking,
@@ -182,19 +191,41 @@ struct HitRegion {
   //   1  measure
   //   2  staff
   //   3  voice
-  //   4  notehead column (stemless events only)
-  //   5  every individually engraved glyph that carries a semantic id --
+  //   4  staff-measure (one measure on one staff)
+  //   5  notehead column (stemless events only)
+  //   6  every individually engraved glyph that carries a semantic id --
   //      accidentals, augmentation dots, rests, flags, articulations,
   //      dynamics, tuplet digits -- plus the stem's own widened region
-  //   6  span segments: hairpin, slur, tie, pedal
-  //   7  noteheads, ordinary and grace
+  //   7  span segments: hairpin, slur, tie, pedal
+  //   8  noteheads, ordinary and grace
   //
-  // 0-3 are the containers a click falls through to when it names no
-  // engraved object. 5-7 are the engraved objects themselves, and their
+  // 0-4 are the containers a click falls through to when it names no
+  // engraved object. 6-8 are the engraved objects themselves, and their
   // relative order is what makes a click on an object select that object
   // rather than whatever it was drawn on top of.
   //
-  // 4 is deliberately a rank of its own between the two groups, holding
+  // 4 (staff-measure) must outrank 0-3, the coarser containers it overlaps
+  // exactly (every staff-measure region is covered by one system, one
+  // measure, one staff, and four voice regions, all sharing its bounds or
+  // larger), so resolve_measure_selection_at can tell "this click named one
+  // measure on one staff" apart from "this click named nothing more
+  // specific than a system/measure/staff/voice column". A rank tied with
+  // kVoice (3) happens to resolve correctly today too: on a system carrying
+  // exactly one measure the staff-measure region and its containing kVoice
+  // region (which shares the same staff.bounds) have equal area, so
+  // hit_test falls to its semantic_id tie-break, and the staff-measure
+  // region's id sorts first purely because "staff-measure" precedes
+  // "voice" lexically ('s' < 'v'). That outcome depends on the incidental
+  // shape of the two id strings, not on anything hit_test's contract
+  // promises; a future rename of either id shape could silently flip it.
+  // Giving the staff-measure region a rank of its own removes that
+  // dependence, so the outcome no longer turns on how the ids happen to be
+  // spelled. It must in turn lose to every engraved object (5-8): a click
+  // on a note, accidental, or stem must keep selecting that object rather
+  // than falling back to a whole-measure selection just because the object
+  // happens to sit inside one measure of one staff.
+  //
+  // 5 is deliberately a rank of its own between the two groups, holding
   // exactly one region: the notehead column a stemless event emits in place
   // of the stem it does not draw (see resolve_selection_at). That column
   // spans the bounding box of its own noteheads, so it necessarily overlaps
@@ -207,7 +238,7 @@ struct HitRegion {
   // while the column spans every notehead's, and the seconds and
   // voice-collision rules both displace a notehead far enough to carry the
   // column out past an accidental or a dot. Only a rank strictly below
-  // every glyph region is unconditionally correct, which is why 4 exists
+  // every glyph region is unconditionally correct, which is why 5 exists
   // and why nothing else may be moved into it.
   int priority = 0;
 
@@ -954,7 +985,8 @@ struct NotationPreview {
 //                     backward from the hit's anchor, while the preceding
 //                     event carries an equal TupletRatio, before building
 //                     the selection.
-//   kSystem/kMeasure/kStaff/kVoice hit, or no hit at all -- InsertionCaretSet
+//   kSystem/kMeasure/kStaff/kVoice/kStaffMeasure hit, or no hit at all --
+//                     InsertionCaretSet
 //                     (one item) at the nearest onset in `palette`'s armed
 //                     voice that preview_note_entry would also snap its own
 //                     preview to, filtered by one further check this
@@ -987,6 +1019,71 @@ struct NotationPreview {
 [[nodiscard]] std::optional<Selection> resolve_selection_at(
     const Project& project, const NotationLayout& layout,
     const NotePaletteState& palette, NotationPoint point);
+
+// Resolves `point` against `layout` (produced by a prior
+// layout_notation()/NotationLayoutCache::update() call for the same
+// project/node) to the single one-item FullMeasureSet Selection naming the
+// whole measure on the whole staff `point` names, for
+// docs/plan/05-notation-editor.md's "Emit a per-staff measure hit region
+// and resolve a pointer position on it to a one-measure full-measure
+// selection on that staff/track."
+//
+// `point` is resolved through layout.hit_test(point). Only a hit whose role
+// is HitRole::kStaffMeasure -- the per-(staff, measure) region
+// layout_notation now emits alongside the pre-existing kSystem/kMeasure/
+// kStaff/kVoice containers, ranked strictly below every engraved-object
+// region and strictly above those four coarser containers (see
+// HitRegion::priority) -- resolves to a selection here; every other role
+// (kNotehead, kEvent, kMarking) and every other container returns
+// std::nullopt, so a click on a notehead, an accidental, a stem, a rest, or
+// a span segment never produces a measure selection, and neither does a hit
+// that resolves to one of the four coarser container regions instead of a
+// staff-measure region -- e.g. the margin outside every drawn measure
+// (kSystem), or the ledger/marking lane above or below a staff, which falls
+// outside every staff-measure region's own tight bounds. Conversely, an
+// ordinary click on blank staff space *inside* a drawn measure is the
+// primary success case: it resolves to that measure's own kStaffMeasure
+// region and yields the one-item FullMeasureSet below. The winning region's
+// own semantic_id is then matched back against the layout tree (never
+// parsed) to recover the typed NodeId/TrackId/StaveId/measure ordinal the
+// FullMeasureItem needs.
+//
+// This is a separate entry point from resolve_selection_at, rather than a
+// new arm of it, specifically so that resolve_selection_at's own already-
+// delivered "blank staff area falls through to an insertion caret" behavior
+// is untouched: HitRole::kStaffMeasure is one more role
+// resolve_selection_at's own container fall-through catches, exactly like
+// kSystem/kMeasure/kStaff/kVoice today, so every point resolve_selection_at
+// used to resolve still resolves identically. A future measure-selection
+// affordance calls this function instead, at the point in its own pointer
+// handling where it chooses to select a measure rather than enter a note or
+// extend an insertion caret.
+//
+// Returns std::nullopt when `point` is non-finite, when it does not resolve
+// to a HitRole::kStaffMeasure region, when that region's own semantic id
+// cannot be found in `layout`'s own system/staff/measure tree -- a
+// defensive check against a future emitter drifting from this resolution
+// logic (mirroring resolve_selection_at's own hit-id/entity-kind
+// cross-checks at notation.cpp:4380-4389), not a live path for a layout
+// merely stale relative to `project`: an id drawn from `layout.hit_regions`
+// is always found in that same layout's own `systems` tree, since both are
+// built together by the one layout_notation() pass -- or when the
+// resulting Selection would not satisfy
+// validate_selection(project, selection).empty(), which is where genuine
+// staleness relative to `project` is actually caught (e.g. a measure
+// ordinal the layout still carries but the node's own NodeTimeline no
+// longer does, rejected as kMeasureIndexOutOfRange in
+// validate_full_measure_set, src/domain/selection.cpp). That same function
+// also carries a TimelineRegion::kPickdown check, but it is unreachable
+// from here: layout_notation only ever builds a HitRole::kStaffMeasure
+// region from system.measures, which is exactly the node's own NodeTimeline
+// main region (see measure_map.hpp), so every measure ordinal this
+// function can produce is main-region material by construction and the
+// pickdown check never has an ordinal to fire on.
+//
+// A pure query: never mutates `project` or `layout`.
+[[nodiscard]] std::optional<Selection> resolve_measure_selection_at(
+    const Project& project, const NotationLayout& layout, NotationPoint point);
 
 // Resolves a pointer drag from `anchor` to `focus` against `layout`
 // (produced by a prior layout_notation()/NotationLayoutCache::update() call

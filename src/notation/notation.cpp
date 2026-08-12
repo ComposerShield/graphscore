@@ -64,21 +64,23 @@ constexpr std::string_view kHitSuffixRest           = "rest";
 constexpr std::string_view kHitRoleArticulation     = "articulation";
 constexpr std::string_view kHitRoleTie              = "tie";
 constexpr std::string_view kHitRoleTupletDigit      = "tuplet/digit";
+constexpr std::string_view kHitRoleStaffMeasure     = "staff-measure";
 
 // Every hit-region priority the engraver emits, named so that no bare
 // integer reaches a HitRegion::priority anywhere in this file and the whole
 // ladder can be read (and re-ordered) in one place. HitRegion::priority in
 // graphscore_notation.hpp documents what each rank means and, in
-// particular, why kHitPriorityNoteheadColumn is a rank of its own that
-// nothing else may be moved into.
+// particular, why kHitPriorityStaffMeasure and kHitPriorityNoteheadColumn
+// are each a rank of its own that nothing else may be moved into.
 constexpr int kHitPrioritySystem         = 0;
 constexpr int kHitPriorityMeasure        = 1;
 constexpr int kHitPriorityStaff          = 2;
 constexpr int kHitPriorityVoice          = 3;
-constexpr int kHitPriorityNoteheadColumn = 4;
-constexpr int kHitPriorityGlyph          = 5;
-constexpr int kHitPrioritySpanSegment    = 6;
-constexpr int kHitPriorityNotehead       = 7;
+constexpr int kHitPriorityStaffMeasure   = 4;
+constexpr int kHitPriorityNoteheadColumn = 5;
+constexpr int kHitPriorityGlyph          = 6;
+constexpr int kHitPrioritySpanSegment    = 7;
+constexpr int kHitPriorityNotehead       = 8;
 
 [[nodiscard]] NotationId make_id(const std::string& root,
                                  const std::string& role) {
@@ -89,6 +91,22 @@ template <typename Tag>
 [[nodiscard]] NotationId make_id(const StrongId<Tag>& id,
                                  const std::string&   role) {
   return make_id(id.to_string(), role);
+}
+
+// The id shape a staff-measure HitRegion's own semantic_id is built with,
+// shared between layout_internal's emission of that region and
+// resolve_staff_measure_hit's later recovery of the (staff, measure
+// ordinal) pair a HitResult names -- the same "define once, compare by
+// exact string equality, never parse" convention kHitRoleArticulation/
+// kHitRoleTie/kHitRoleTupletDigit document above. `staff_id` is
+// StaffSystemLayout::id (already unique per stave per system); appending
+// the measure's own global ordinal makes the combination unique per
+// (staff, measure) pair without needing any information hit_test's own
+// bounds-based resolution does not already guarantee.
+[[nodiscard]] NotationId staff_measure_semantic_id(const NotationId& staff_id,
+                                                   std::size_t       ordinal) {
+  return make_id(staff_id.value, std::string(kHitRoleStaffMeasure) + "/" +
+                                     std::to_string(ordinal));
 }
 
 [[nodiscard]] bool finite_rect(const NotationRect& rect) noexcept {
@@ -3010,8 +3028,15 @@ NotationLayoutResult layout_internal(
             NotationRect{options.left_margin, staff_y,
                          measure_x - options.left_margin, staff_height};
         for (const MeasureLayout& measure : system.measures) {
-          staff.measure_bounds.push_back(NotationRect{
-              measure.bounds.x, staff_y, measure.bounds.width, staff_height});
+          const NotationRect measure_staff_bounds{
+              measure.bounds.x, staff_y, measure.bounds.width, staff_height};
+          staff.measure_bounds.push_back(measure_staff_bounds);
+          const NotationId staff_measure_id =
+              staff_measure_semantic_id(staff.id, measure.ordinal);
+          builder.output.hit_regions.push_back(
+              HitRegion{make_id(staff_measure_id.value, "hit"),
+                        staff_measure_id, HitRole::kStaffMeasure,
+                        measure_staff_bounds, kHitPriorityStaffMeasure});
         }
         builder.output.hit_regions.push_back(
             HitRegion{make_id(staff.id.value, "hit"),
@@ -4422,9 +4447,9 @@ std::optional<Selection> resolve_selection_at(const Project&          project,
     }
     // Every ResolvedEntityKind enumerator the switch above covers already
     // returns, so only a hit whose role is none of kNotehead/kEvent/
-    // kMarking (kSystem, kMeasure, kStaff, kVoice today) reaches here and
-    // falls through to insertion-caret resolution below, using the point
-    // the hit occurred at.
+    // kMarking (kSystem, kMeasure, kStaff, kVoice, kStaffMeasure today)
+    // reaches here and falls through to insertion-caret resolution below,
+    // using the point the hit occurred at.
   }
 
   const std::optional<ResolvedInsertionSite> site =
@@ -4457,6 +4482,81 @@ std::optional<Selection> resolve_selection_at(const Project&          project,
     return std::nullopt;
   }
   return Selection{*std::move(set)};
+}
+
+namespace {
+
+// The (staff, measure ordinal) pair a HitRole::kStaffMeasure HitResult's own
+// semantic_id names, recovered by rebuilding the same id
+// staff_measure_semantic_id built at emission for every (staff, measure)
+// pair this layout actually carries and comparing each for exact string
+// equality against the hit's own semantic_id -- never by parsing the hit id
+// itself, for the same reason find_entity_in_voice above cannot: there is
+// no way to parse a NodeId/TrackId/StaveId/ordinal back out of a
+// NotationId's own string. The scan is O(systems x staves x measures per
+// system), the same order of magnitude resolve_marking_record above
+// already scans; both are a per-pointer-event query this notation target
+// runs on the writer's own click handling, entirely outside the ADR 0003
+// §3.1 runtime closure and off any path graphscore_runtime_impl's process
+// call reaches, so neither is subject to the realtime rules in AGENTS.md.
+// The inner staff_measure_semantic_id call still allocates two fresh
+// std::strings per candidate before the comparison; the starts_with check
+// below skips straight past every staff other than the hit's own without
+// paying that cost, since staff_measure_semantic_id(staff.id, ordinal)'s
+// value is always staff.id.value with a "/staff-measure/<ordinal>" suffix
+// appended (make_id's own "root/role" concatenation), so a semantic_id
+// naming this staff's own measure always carries staff.id.value as a
+// literal prefix.
+struct ResolvedStaffMeasure {
+  const StaffSystemLayout* staff   = nullptr;
+  std::size_t              ordinal = 0;
+};
+
+[[nodiscard]] std::optional<ResolvedStaffMeasure> resolve_staff_measure_hit(
+    const NotationLayout& layout, const NotationId& semantic_id) {
+  for (const SystemLayout& system : layout.systems) {
+    for (const StaffSystemLayout& staff : system.staves) {
+      if (!semantic_id.value.starts_with(staff.id.value)) {
+        continue;
+      }
+      for (const MeasureLayout& measure : system.measures) {
+        if (staff_measure_semantic_id(staff.id, measure.ordinal).value ==
+            semantic_id.value) {
+          return ResolvedStaffMeasure{&staff, measure.ordinal};
+        }
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<Selection> resolve_measure_selection_at(
+    const Project& project, const NotationLayout& layout, NotationPoint point) {
+  if (!finite_point(point)) {
+    return std::nullopt;
+  }
+  const std::optional<HitResult> hit = layout.hit_test(point);
+  if (!hit.has_value() || hit->role != HitRole::kStaffMeasure) {
+    return std::nullopt;
+  }
+  const std::optional<ResolvedStaffMeasure> resolved =
+      resolve_staff_measure_hit(layout, hit->semantic_id);
+  if (!resolved.has_value()) {
+    return std::nullopt;
+  }
+  std::optional<FullMeasureSet> set = FullMeasureSet::create(
+      {FullMeasureItem{layout.node_id, resolved->staff->track_id,
+                       resolved->staff->stave_id, resolved->ordinal}});
+  if (!set.has_value()) {
+    return std::nullopt;
+  }
+  Selection selection{*std::move(set)};
+  if (!validate_selection(project, selection).empty()) {
+    return std::nullopt;
+  }
+  return selection;
 }
 
 namespace {
