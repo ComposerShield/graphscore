@@ -44,6 +44,54 @@ struct PointerEvent {
   PointerButton button = PointerButton::kPrimary;
 };
 
+// Platform-neutral key identity. This is deliberately the minimum set
+// M5-phase-19b's Shift/keyboard range extension needs — arrows plus
+// Home/End — not a general keyboard model. Character/text keys, key
+// release, and the full platform-normalized action table belong to
+// M5-phase-26/M5-phase-27.
+//
+// Arrows and Home/End are safe to identify by physical position: they are
+// not remapped by keyboard layout the way character keys are (compare a
+// QWERTY vs. AZERTY 'A' key, which sit at different physical scancodes for
+// the same intended letter). That is exactly why M5-phase-27's non-US-layout
+// concerns do not apply to this set, and why the SDL translation in
+// writer_shell.cpp uses the physical scancode rather than the
+// layout-dependent logical keycode.
+enum class KeyCode : std::uint8_t {
+  kUnknown,
+  kLeft,
+  kRight,
+  kUp,
+  kDown,
+  kHome,
+  kEnd,
+};
+
+// Platform-neutral key modifiers, translated from SDL3's combined
+// left/right modifier masks in writer_shell.cpp.
+//
+// `meta` is the Command key on macOS and the Windows/Super key elsewhere.
+// This struct deliberately does not collapse it into a "Primary" concept:
+// M5-phase-24 defines Primary as Command on macOS and Control on
+// Windows/Linux, and that mapping is a product decision for the action
+// table, not something the shell should bake in.
+struct KeyModifiers {
+  bool               shift                                 = false;
+  bool               control                               = false;
+  bool               alt                                   = false;
+  bool               meta                                  = false;
+  [[nodiscard]] bool operator==(const KeyModifiers&) const = default;
+};
+
+// A single key-press event, platform-neutral. There is no release
+// counterpart in this sub-phase — only key press is delivered, because
+// range extension (M5-phase-19b-iii) is driven entirely by presses; adding
+// on_key_release without a consumer would be speculative.
+struct KeyEvent {
+  KeyCode      code = KeyCode::kUnknown;
+  KeyModifiers modifiers;
+};
+
 // Input event callback. graphscore_writer_app implements this and
 // registers it with WriterShell::set_input_handler(). Every callback runs
 // on the main thread (the same thread that calls SDL_WaitEvent /
@@ -63,6 +111,14 @@ class InputHandler {
   // the window is being closed.  Any in-progress drag or transient state
   // must be cancelled here — the pointer is no longer tracked.
   virtual void on_cancel() = 0;
+
+  // Called on a key press (including auto-repeat; see the dispatch site in
+  // writer_shell.cpp). Deliberately not pure virtual, unlike the pointer
+  // methods above: a handler that only responds to pointer input should
+  // not be forced to write an empty override, and this keeps key-event
+  // delivery independent of any app-layer handler, which lands in
+  // M5-phase-19b-iii. Default: ignore the key.
+  virtual void on_key_press(KeyEvent /*event*/) {}
 };
 
 enum class ShellError : std::uint8_t {
@@ -191,6 +247,32 @@ class WriterShell {
   // `kind` selects the handler method (0=press, 1=move, 2=release,
   // 3=cancel); unknown values are a no-op.
   void dispatch_sdl_test_pointer_event(std::uint8_t kind, PointerEvent event);
+
+  // Test-only: inject a synthetic key event that calls the registered
+  // InputHandler's on_key_press() directly with a platform-neutral
+  // KeyEvent, without exercising any SDL conversion.  This is the headless
+  // seam; unlike the pointer headless seam there is no DPI scaling to
+  // apply — key events carry no coordinates.  Does nothing when no handler
+  // is registered.  Compiles and behaves identically in writer-ON and
+  // writer-OFF builds, and lives in the shared (non-#ifdef) region of
+  // writer_shell.cpp for that reason — which also means the writer-OFF
+  // clang-tidy pre-commit hook analyses this seam, unlike the SDL
+  // translation helpers in writer_shell.cpp.
+  void dispatch_test_key_event(KeyEvent event);
+
+  // Test-only: inject a synthetic key event through the actual production
+  // SDL event-conversion path (the physical-scancode and modifier-mask
+  // translation in writer_shell.cpp), so a test can assert what the
+  // handler actually receives rather than testing a reverse mapping
+  // written only for the test.  Builds a real SDL_EVENT_KEY_DOWN and
+  // routes it through the production dispatch_sdl_event.  Does nothing
+  // when no handler is registered.  In a writer-OFF build this is a no-op.
+  //
+  // Parameters are plain integers, not an SDL type, so no SDL type reaches
+  // this header: `sdl_scancode` is the raw SDL_Scancode value and
+  // `sdl_key_modifiers` is the raw SDL_Keymod bitmask.
+  void dispatch_sdl_test_key_event(std::uint32_t sdl_scancode,
+                                   std::uint16_t sdl_key_modifiers);
 
   // Test-only: override the DPI scale factor the headless test seam
   // dispatch_test_pointer_event applies to incoming coordinates.

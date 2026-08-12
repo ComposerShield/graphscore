@@ -411,6 +411,46 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
   }
 }
 
+// Translates SDL's physical scancode (event.key.scancode), not the layout-
+// dependent logical keycode (event.key.key). The physical scancode is what
+// keeps arrow/Home/End identification layout-independent — see KeyCode's
+// doc comment in the public header for why that matters here and how it
+// relates to M5-phase-27's action table. Any scancode outside this
+// minimal set maps to kUnknown.
+[[nodiscard]] KeyCode sdl_scancode_to_key_code(
+    SDL_Scancode sdl_scancode) noexcept {
+  switch (sdl_scancode) {
+    case SDL_SCANCODE_LEFT:
+      return KeyCode::kLeft;
+    case SDL_SCANCODE_RIGHT:
+      return KeyCode::kRight;
+    case SDL_SCANCODE_UP:
+      return KeyCode::kUp;
+    case SDL_SCANCODE_DOWN:
+      return KeyCode::kDown;
+    case SDL_SCANCODE_HOME:
+      return KeyCode::kHome;
+    case SDL_SCANCODE_END:
+      return KeyCode::kEnd;
+    default:
+      return KeyCode::kUnknown;
+  }
+}
+
+// SDL_KMOD_SHIFT / SDL_KMOD_CTRL / SDL_KMOD_ALT / SDL_KMOD_GUI are each the
+// combined left|right mask for that modifier (e.g. SDL_KMOD_SHIFT ==
+// SDL_KMOD_LSHIFT | SDL_KMOD_RSHIFT), so either physical key sets the
+// corresponding GraphScore flag.
+[[nodiscard]] KeyModifiers sdl_keymod_to_key_modifiers(
+    SDL_Keymod sdl_mod) noexcept {
+  KeyModifiers modifiers;
+  modifiers.shift   = (sdl_mod & SDL_KMOD_SHIFT) != 0;
+  modifiers.control = (sdl_mod & SDL_KMOD_CTRL) != 0;
+  modifiers.alt     = (sdl_mod & SDL_KMOD_ALT) != 0;
+  modifiers.meta    = (sdl_mod & SDL_KMOD_GUI) != 0;
+  return modifiers;
+}
+
 void dispatch_sdl_event(InputHandler* handler, SDL_Renderer* renderer,
                         SDL_Event event) {
   if (handler == nullptr) {
@@ -456,6 +496,18 @@ void dispatch_sdl_event(InputHandler* handler, SDL_Renderer* renderer,
       pe.y      = static_cast<double>(event.button.y);
       pe.button = sdl_button_to_pointer_button(event.button.button);
       handler->on_pointer_release(pe);
+      break;
+    }
+    case SDL_EVENT_KEY_DOWN: {
+      // event.key.repeat is delivered as an ordinary press, not filtered
+      // or specially marked: a held arrow key repeatedly extending a
+      // range selection is the desired behaviour for M5-phase-19b-iii, so
+      // auto-repeat presses are indistinguishable from the initial press
+      // at this layer.
+      KeyEvent ke;
+      ke.code      = sdl_scancode_to_key_code(event.key.scancode);
+      ke.modifiers = sdl_keymod_to_key_modifiers(event.key.mod);
+      handler->on_key_press(ke);
       break;
     }
     default:
@@ -704,6 +756,19 @@ void WriterShell::dispatch_test_pointer_event(std::uint8_t kind,
   }
 }
 
+void WriterShell::dispatch_test_key_event(KeyEvent event) {
+  InputHandler* handler = impl_->input_handler;
+  if (handler == nullptr) {
+    return;
+  }
+  // Unlike the pointer headless seam, key events carry no coordinates, so
+  // there is no DPI scale to apply here — the event is delivered
+  // unchanged. This function lives outside any GRAPHSCORE_HAVE_SDL3
+  // #ifdef, so it compiles identically in writer-ON and writer-OFF
+  // builds, and the writer-OFF clang-tidy pre-commit hook analyses it.
+  handler->on_key_press(event);
+}
+
 void WriterShell::dispatch_sdl_test_pointer_event(std::uint8_t kind,
                                                   PointerEvent event) {
 #ifdef GRAPHSCORE_HAVE_SDL3
@@ -747,6 +812,30 @@ void WriterShell::dispatch_sdl_test_pointer_event(std::uint8_t kind,
 #else
   (void)kind;
   (void)event;
+#endif
+}
+
+void WriterShell::dispatch_sdl_test_key_event(std::uint32_t sdl_scancode,
+                                              std::uint16_t sdl_key_modifiers) {
+#ifdef GRAPHSCORE_HAVE_SDL3
+  InputHandler* handler = impl_->input_handler;
+  if (handler == nullptr) {
+    return;
+  }
+  // Parameters are plain integers, not an SDL type, so no SDL type reaches
+  // the public header; they are cast to the real SDL types only here, at
+  // the one translation unit permitted to name them, and routed through
+  // the production dispatch_sdl_event so a test exercises the actual
+  // forward translation rather than a mapping written only for the test.
+  SDL_Event sdl_event{};
+  sdl_event.type         = SDL_EVENT_KEY_DOWN;
+  sdl_event.key.scancode = static_cast<SDL_Scancode>(sdl_scancode);
+  sdl_event.key.mod      = static_cast<SDL_Keymod>(sdl_key_modifiers);
+  sdl_event.key.down     = true;
+  dispatch_sdl_event(handler, impl_->renderer, sdl_event);
+#else
+  (void)sdl_scancode;
+  (void)sdl_key_modifiers;
 #endif
 }
 

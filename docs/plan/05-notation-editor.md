@@ -60,7 +60,7 @@ Provide a polished, directly editable focused notation system inside a node, wit
   - [x] M5-phase-19a Resolve keyboard range extension and explicit start/end/staff-scope controls in the notation layer from musical coordinates, through the same resolution the pointer drag uses.
   - [ ] M5-phase-19b Wire platform-neutral key events through the writer shell and app so Shift extension and the accessible controls drive those resolvers.
     - [x] M5-phase-19b-i Hold a keyboard-set committed range selection and expose score order in the notation layer.
-    - [ ] M5-phase-19b-ii Deliver platform-neutral key events carrying modifiers through the writer shell.
+    - [x] M5-phase-19b-ii Deliver platform-neutral key events carrying modifiers through the writer shell.
     - [ ] M5-phase-19b-iii Interpret Shift extension and the accessible start/end/staff-scope controls in the app.
 - [ ] M5-phase-20 Up/Down moves a selected notehead one diatonic staff step and preserves its accidental.
 - [ ] M5-phase-21 `-` and `=` step through double-flat, flat, natural, sharp, and double-sharp.

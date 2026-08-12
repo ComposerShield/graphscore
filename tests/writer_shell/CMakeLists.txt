@@ -102,3 +102,44 @@ else()
   # exercises only the headless selection_tool_test (above), which passes
   # without a rendering backend.
 endif()
+
+# M5-phase-19b-ii: exercise WriterShell's platform-neutral key-event
+# delivery through the writer executable's own --test-key-events path.
+# This is a headless code path — no window, no SDL — that exercises
+# dispatch_test_key_event: KeyCode/modifier round-trip, no-handler and
+# post-unregistration no-op behaviour, and the InputHandler::on_key_press
+# default no-op. It does not interpret keys into selection changes; that
+# is M5-phase-19b-iii.
+#
+# The headless test uses no rendering backend and works in both writer-ON
+# and writer-OFF configurations.
+add_test(NAME graphscore_writer_key_events_test
+  COMMAND graphscore_writer_app --test-key-events
+)
+
+set_tests_properties(graphscore_writer_key_events_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "key-events-test: ok"
+  TIMEOUT 30
+)
+
+# The shell test exercises the production SDL physical-scancode and
+# modifier-mask translation (dispatch_sdl_test_key_event), which requires
+# GRAPHSCORE_BUILD_WRITER=ON because there is no SDL backend in a writer-OFF
+# build. Unlike the pointer shell test above, it never calls open_window():
+# dispatch_sdl_test_key_event needs no window, renderer, or SDL_Init, so
+# there is no headless-host skip outcome to accept and no Windows
+# window-creation hang risk to guard against.
+if (GRAPHSCORE_BUILD_WRITER)
+  add_test(NAME graphscore_writer_key_events_shell_test
+    COMMAND graphscore_writer_app --test-key-events-shell
+  )
+
+  set_tests_properties(graphscore_writer_key_events_shell_test PROPERTIES
+    PASS_REGULAR_EXPRESSION "key-events-shell-test: ok"
+    TIMEOUT 30
+  )
+else()
+  # Writer-OFF: the shell test is not registered.  A writer-OFF ctest run
+  # exercises only the headless key_events_test (above), which passes
+  # without a rendering backend.
+endif()
