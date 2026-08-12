@@ -19,8 +19,8 @@ namespace graphscore {
 // recorded, so "earliest" and "newest" comparisons between two occurrences
 // are exact and total -- including when two occurrences share the same
 // sample_offset -- without relying on wall-clock time or container
-// iteration order (see docs/plan/M02_HANDOFF.md's note on nondeterministic
-// unordered-map iteration; this design avoids that class of bug entirely).
+// iteration order (this design avoids the class of bug that comes from
+// relying on nondeterministic unordered-map iteration entirely).
 //
 // `sample_offset` is the runtime sample position, within the node whose
 // boundary or vertical jump this occurrence relates to, at which the

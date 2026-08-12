@@ -22,12 +22,11 @@ namespace graphscore {
 // -- Cycles are valid, and bounded by construction --
 // "Cycles are valid" (docs/plan/README.md) is a locked decision, and a
 // pickdown-bearing node sitting on a cycle is not an export error: Adam's
-// ruling (product decision, Phase 6b-i; see docs/plan/M02_HANDOFF.md's
-// "Deferrals carried forward") is "Allow. In that scenario the pickdown
-// measure still plays on every loop by overlapping with the start of the
-// loop." -- intended musical behavior, not a defect. Two invariants locked
-// well before this file existed make that provably safe with no timing
-// analysis at all:
+// ruling (product decision, Phase 6b-i) is "Allow. In that scenario the
+// pickdown measure still plays on every loop by overlapping with the start
+// of the loop." -- intended musical behavior, not a defect. Two invariants
+// locked well before this file existed make that provably safe with no
+// timing analysis at all:
 //   1. A node has at least one complete main-region measure
 //      (docs/plan/README.md, docs/plan/02-domain-model.md;
 //      NodeTimeline::create requires a non-empty `measures`).

@@ -212,7 +212,7 @@ TEST(PickdownBoundOracleTest, ADestinationLessOutputDoesNotAffectTheBound) {
 
 TEST(PickdownBoundOracleTest,
      APickdownBearingNodeOnACycleWithNonPickdownNodesIsBounded) {
-  // Adam's ruling (product decision, Phase 6b-i; docs/plan/M02_HANDOFF.md):
+  // Adam's ruling (product decision, Phase 6b-i):
   // a pickdown on a cycle is legal and bounded -- the pickdown tail sounds
   // on every loop iteration, overlapping the start of the next iteration's
   // main region ("the pickdown measure still plays on every loop by

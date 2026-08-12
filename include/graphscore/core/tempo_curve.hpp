@@ -429,9 +429,9 @@ namespace graphscore {
 // Rational that independently carries some other, unrelated large
 // denominator remains a separate, pre-existing risk in
 // Rational::operator<=>'s cross-multiplication generally -- already
-// recorded as accepted-as-designed for non-musical extreme operands
-// (docs/plan/M02_HANDOFF.md's Phase 1 entry) -- and is not something this
-// module's own quantization choice can or should re-litigate.
+// accepted as designed for non-musical extreme operands -- and is not
+// something this module's own quantization choice can or should
+// re-litigate.
 //
 // -- Integer sample rounding --
 // round_to_sample_count() converts an elapsed-seconds `double` and a
