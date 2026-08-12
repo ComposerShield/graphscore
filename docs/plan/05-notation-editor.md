@@ -53,9 +53,9 @@ Provide a polished, directly editable focused notation system inside a node, wit
   - [x] M5-phase-17a Resolve a two-point drag to a contiguous musical-time range selection across the intersected staves and voices.
   - [x] M5-phase-17b Hold drag state and the active tool at the app layer, and wire pointer press/move/release to the resolver.
   - [x] M5-phase-17c Show a live selection extent during and after the drag.
-- [ ] M5-phase-18 Add measure hit targets/actions for selecting one complete measure on the focused staff/track and extending that aligned measure selection across additional tracks.
+- [x] M5-phase-18 Add measure hit targets/actions for selecting one complete measure on the focused staff/track and extending that aligned measure selection across additional tracks.
   - [x] M5-phase-18a Emit a per-staff measure hit region and resolve a pointer position on it to a one-measure full-measure selection on that staff/track.
-  - [ ] M5-phase-18b Extend an aligned measure selection across additional chosen tracks/staves.
+  - [x] M5-phase-18b Extend an aligned measure selection across additional chosen tracks/staves.
 - [ ] M5-phase-19 Support Shift/keyboard range extension and accessible start/end/staff-scope controls that produce the same selection as pointer dragging.
 - [ ] M5-phase-20 Up/Down moves a selected notehead one diatonic staff step and preserves its accidental.
 - [ ] M5-phase-21 `-` and `=` step through double-flat, flat, natural, sharp, and double-sharp.

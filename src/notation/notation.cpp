@@ -4910,6 +4910,97 @@ std::optional<Selection> resolve_measure_selection_at(
   return selection;
 }
 
+std::optional<Selection> extend_measure_selection(
+    const Project& project, const FullMeasureSet& existing,
+    const std::vector<MeasureScope>& additional) {
+  if (existing.items().empty()) {
+    return std::nullopt;
+  }
+
+  // Verify alignment: every item must share one node and one measure_index.
+  const NodeId      anchor_node    = existing.items().front().node;
+  const std::size_t anchor_measure = existing.items().front().measure_index;
+  for (const FullMeasureItem& item : existing.items()) {
+    if (item.node != anchor_node || item.measure_index != anchor_measure) {
+      return std::nullopt;
+    }
+  }
+
+  const Node* node = project.find_node(anchor_node);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+
+  // Validates one (track, stave) scope against project + anchor node.
+  // Returns false for archived/unknown track, stave not in that track's
+  // layout, or missing lane/stave in the node.  This is the single gate
+  // both existing and additional scopes pass through; no scope is ever
+  // silently skipped.
+  const auto scope_is_valid = [&](TrackId track_id, StaveId stave_id) -> bool {
+    const Track* track = project.find_active_track(track_id);
+    if (track == nullptr)
+      return false;
+    for (const StaveDefinition& sd : track->layout().staves()) {
+      if (sd.id == stave_id) {
+        const TrackLane* lane = node->lane(track_id);
+        return lane != nullptr && lane->has_stave(stave_id);
+      }
+    }
+    return false;
+  };
+
+  // Validate and collect: existing items first, then additional scopes.
+  // Every scope is validated before being accepted; any invalid scope
+  // fails the whole call.
+  std::vector<std::pair<TrackId, StaveId>> scopes;
+
+  const auto add_scope = [&](TrackId track_id, StaveId stave_id) -> bool {
+    if (!scope_is_valid(track_id, stave_id))
+      return false;
+    for (const auto& scope : scopes) {
+      if (scope.first == track_id && scope.second == stave_id) {
+        return true;  // duplicate, idempotent
+      }
+    }
+    scopes.push_back({track_id, stave_id});
+    return true;
+  };
+
+  for (const FullMeasureItem& item : existing.items()) {
+    if (!add_scope(item.track, item.stave))
+      return std::nullopt;
+  }
+  for (const MeasureScope& scope : additional) {
+    if (!add_scope(scope.track_id, scope.stave_id))
+      return std::nullopt;
+  }
+
+  // Produce items in deterministic score order: active_tracks() order,
+  // then each track's own StaffLayout::staves() order.
+  std::vector<FullMeasureItem> items;
+  for (const Track& track : project.active_tracks()) {
+    for (const StaveDefinition& sd : track.layout().staves()) {
+      for (const auto& scope : scopes) {
+        if (scope.first == track.id() && scope.second == sd.id) {
+          items.push_back(
+              FullMeasureItem{anchor_node, track.id(), sd.id, anchor_measure});
+          break;
+        }
+      }
+    }
+  }
+
+  std::optional<FullMeasureSet> set = FullMeasureSet::create(std::move(items));
+  if (!set.has_value()) {
+    return std::nullopt;
+  }
+  Selection selection{*std::move(set)};
+  if (!validate_selection(project, selection).empty()) {
+    return std::nullopt;
+  }
+  return selection;
+}
+
 namespace {
 
 // The one case a note-entry click resolves to. Branch selection lives

@@ -1113,6 +1113,53 @@ struct NotationPreview {
 [[nodiscard]] std::optional<Selection> resolve_measure_selection_at(
     const Project& project, const NotationLayout& layout, NotationPoint point);
 
+// One (track, stave) scope a caller chooses to extend a measure selection
+// onto.  Both fields name GraphScore-owned types; no platform or
+// third-party type crosses this boundary.
+struct MeasureScope {
+  TrackId track_id;
+  StaveId stave_id;
+
+  [[nodiscard]] bool operator==(const MeasureScope&) const = default;
+};
+
+// Extends an existing aligned FullMeasureSet across additional chosen
+// (track, stave) scopes, for docs/plan/05-notation-editor.md's "Extend an
+// aligned measure selection across additional chosen tracks/staves."
+//
+// `existing` must be a FullMeasureSet whose every item shares one anchor
+// NodeId and one global measure_index -- an aligned set, which is what
+// resolve_measure_selection_at's own one-item result produces, and what a
+// prior extend_measure_selection call itself returns.  A misaligned set
+// (different nodes or measure indices) is rejected with std::nullopt rather
+// than silently normalized.
+//
+// Each scope in `additional` must name an active track (never archived or
+// unknown), a stave that exists in that track's fixed StaffLayout, and a
+// usable lane/stave in the anchor node (that node must carry a TrackLane
+// for the track, and that lane must carry a StaveVoices for the stave).
+// The entire call fails with std::nullopt for any invalid/stale/archive/
+// missing scope -- it never silently skips caller choices.
+//
+// Items already present in `existing` and `additional` items that
+// duplicate an existing or already-added scope are idempotent.  The
+// returned FullMeasureSet's items are always in deterministic score order:
+// Project::active_tracks() order then each track's own
+// StaffLayout::staves() order, regardless of caller input order or
+// existing-item order.  Every item carries the one shared anchor NodeId
+// and measure_index.
+//
+// When `additional` is empty the result is the existing set itself,
+// re-validated against `project`.
+//
+// The resulting Selection is validated with validate_selection before
+// being returned; a non-empty diagnostic list rejects it with std::nullopt.
+//
+// A pure query: never mutates `project`.
+[[nodiscard]] std::optional<Selection> extend_measure_selection(
+    const Project& project, const FullMeasureSet& existing,
+    const std::vector<MeasureScope>& additional);
+
 // Resolves a pointer drag from `anchor` to `focus` against `layout`
 // (produced by a prior layout_notation()/NotationLayoutCache::update() call
 // for the same project/node) to the single ArbitraryRangeSet Selection a
