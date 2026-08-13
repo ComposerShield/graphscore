@@ -2150,6 +2150,84 @@ TEST(NotationIncrementalReferenceDeltaTest, RemoveOneAddTwoBeamOverrides) {
   EXPECT_LE(updated.work.reference_visits, 6U);
 }
 
+TEST(NotationIncrementalReferenceDeltaTest,
+     ReplaceBeamOverridePreservesOrderPrecedence) {
+  // Overlapping join/break overrides: the join (added first) covers e1-e2-e3
+  // and the break (added second) covers e2-e3, so the break wins on e2-e3.
+  // Replacing the join in place (run reduced to e2-e3) must keep its order
+  // key ahead of the break — a remove/re-add would reinsert it after the
+  // break and flip e2-e3 from broken to joined.
+  IncrementalReferenceFixture f(true);
+  const Duration              e_dur = *Duration::create(NoteValue::kEighth, 0);
+  const auto                  pitch = *SpelledPitch::create(Letter::kC, 4);
+  ASSERT_TRUE(
+      f.voice()
+          .replace_event(Rational(0), make_note(pitch, e_dur), Rational(6))
+          .ok());
+  ASSERT_TRUE(f.voice()
+                  .replace_event(*Rational::create(1, 8),
+                                 make_note(pitch, e_dur), Rational(6))
+                  .ok());
+  ASSERT_TRUE(f.voice()
+                  .replace_event(*Rational::create(1, 4),
+                                 make_note(pitch, e_dur), Rational(6))
+                  .ok());
+  ASSERT_TRUE(
+      f.cache.update(f.fixture.project, f.fixture.node_id, f.metrics, f.options,
+                     {{NotationInvalidationKind::kLocalContent, 0, 0}}));
+  const auto& evs   = f.events();
+  const auto  e1_id = graphscore::event_id(evs[0]);
+  const auto  e2_id = graphscore::event_id(evs[1]);
+  const auto  e3_id = graphscore::event_id(evs[2]);
+
+  const auto join =
+      make_beam_override(BeamOverride::Kind::kJoin, {e1_id, e2_id, e3_id});
+  const auto brk =
+      make_beam_override(BeamOverride::Kind::kBreak, {e2_id, e3_id});
+  ASSERT_TRUE(f.voice().add_beam_override(join).ok());
+  ASSERT_TRUE(f.voice().add_beam_override(brk).ok());
+  EXPECT_TRUE(graphscore::validate_voice_references(f.voice()).empty());
+  ASSERT_TRUE(
+      f.cache.update(f.fixture.project, f.fixture.node_id, f.metrics, f.options,
+                     {{NotationInvalidationKind::kLocalContent, 0, 0}}));
+
+  const auto beam_exists = [](const NotationLayout&        layout,
+                              graphscore::NotationEntityId left,
+                              graphscore::NotationEntityId right) {
+    const std::string id = left.to_string() + "/beam/to/" + right.to_string();
+    return std::ranges::any_of(layout.commands, [&](const auto& command) {
+      const auto* line = std::get_if<LineCommand>(&command);
+      return line != nullptr && line->id.value.starts_with(id);
+    });
+  };
+
+  // Break (added second) wins on the shared pair e2-e3.
+  {
+    const auto before = layout_notation(f.fixture.project, f.fixture.node_id,
+                                        f.metrics, f.options);
+    ASSERT_TRUE(before);
+    EXPECT_TRUE(beam_exists(*before.layout, e1_id, e2_id));
+    EXPECT_FALSE(beam_exists(*before.layout, e2_id, e3_id));
+  }
+
+  // Replace the join in place: same id, reduced run {e2, e3}.
+  const BeamOverride replacement{
+      join.id, BeamOverride::Kind::kJoin, {e2_id, e3_id}};
+  ASSERT_TRUE(f.voice().replace_beam_override(join.id, replacement).ok());
+
+  const auto updated =
+      f.cache.update(f.fixture.project, f.fixture.node_id, f.metrics, f.options,
+                     {{NotationInvalidationKind::kLocalContent, 0, 0}});
+  ASSERT_TRUE(updated);
+
+  // The break still wins on the shared pair e2-e3 (e1-e2 stays beamed by
+  // automatic beaming, so it is not a discriminator here).
+  EXPECT_TRUE(beam_exists(*updated.layout, e1_id, e2_id));
+  EXPECT_FALSE(beam_exists(*updated.layout, e2_id, e3_id));
+  f.assert_incremental_equals_fresh(updated);
+  EXPECT_LE(updated.work.reference_visits, 3U);
+}
+
 TEST(NotationIncrementalReferenceDeltaTest, RemoveOneAddTwoGraceGroups) {
   IncrementalReferenceFixture f;
   const GraceNote             old_note{.pitch    = pitch(Letter::kD),

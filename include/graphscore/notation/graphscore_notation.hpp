@@ -1742,6 +1742,22 @@ class SelectionDragState {
     const Project& project, const NoteheadItem& notehead,
     NoteheadStepDirection direction);
 
+// Constructs the reversible command for deleting one selected notehead. A
+// complete Note or Chord becomes a same-duration Rest; removing one pitch from
+// a Chord preserves the remaining pitches and contracts a two-note Chord to a
+// normal Note. Grace-note deletion removes its note from its GraceGroup.
+// Returns nullptr unless `notehead` is a valid single notehead selection.
+[[nodiscard]] std::unique_ptr<Command> make_delete_notehead_command(
+    const Project& project, const NoteheadItem& notehead);
+
+// Resolves the selection to hold after deleting `notehead`, using the state
+// immediately before the delete. The preceding event onset in the same voice
+// is selected when one exists; otherwise an insertion caret is placed at the
+// deleted event's onset. The returned selection is intended to be installed
+// after the delete command succeeds.
+[[nodiscard]] std::optional<Selection> selection_after_notehead_delete(
+    const Project& project, const NoteheadItem& notehead);
+
 // The short audition request for the same keyboard pitch action
 // make_move_notehead_command above builds a command for, mirroring
 // audition_for_note_entry: this milestone produces the request as a value and

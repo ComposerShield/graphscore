@@ -880,6 +880,34 @@ void refresh_voice_range(const VoiceContent& content, const MeasureMap& map,
         remove_ref(indexed.beam_overrides, op.id, beam_rev);
       } else if (op.kind == RefOpKind::kAdd) {
         add_ref(indexed.beam_overrides, op.record, beam_rev, beam_membership);
+      } else if (op.kind == RefOpKind::kUpdate) {
+        // In-place update (VoiceContent::replace_beam_override): replace the
+        // retained record while preserving its order key and collection
+        // identity, so overlapping order-sensitive join/break overrides keep
+        // their precedence. Reverse refs and bucket membership are rebuilt
+        // from the new event run.
+        auto it = indexed.beam_overrides.entries.find(op.id);
+        if (it == indexed.beam_overrides.entries.end())
+          continue;
+        for (const NotationEntityId& ev_id : beam_rev(it->second.record)) {
+          auto rev_it = indexed.reverse_refs.find(ev_id);
+          if (rev_it != indexed.reverse_refs.end()) {
+            rev_it->second.erase(op.id);
+            if (rev_it->second.empty()) {
+              indexed.reverse_refs.erase(rev_it);
+            }
+          }
+        }
+        for (const std::size_t m : it->second.measure_membership) {
+          indexed.beam_overrides.by_measure[m].erase(op.id);
+        }
+        it->second.record = op.record;
+        it->second.measure_membership.clear();
+        beam_membership(indexed, indexed.beam_overrides.by_measure, op.record,
+                        it->second.measure_membership);
+        for (const NotationEntityId& ev_id : beam_rev(it->second.record)) {
+          indexed.reverse_refs[ev_id].insert(op.id);
+        }
       }
     }
     // Apply grace group ops.
@@ -5539,6 +5567,98 @@ std::unique_ptr<Command> make_move_notehead_command(
   return std::make_unique<MoveNoteheadCommand>(notehead.node, notehead.track,
                                                notehead.stave, notehead.voice,
                                                notehead.entity, direction);
+}
+
+std::unique_ptr<Command> make_delete_notehead_command(
+    const Project& project, const NoteheadItem& notehead) {
+  const std::optional<NoteheadSet> set = NoteheadSet::create({notehead});
+  if (!set.has_value() || !validate_selection(project, Selection{*set}).empty())
+    return nullptr;
+  return std::make_unique<DeleteNoteheadCommand>(notehead.node, notehead.track,
+                                                 notehead.stave, notehead.voice,
+                                                 notehead.entity);
+}
+
+std::optional<Selection> selection_after_notehead_delete(
+    const Project& project, const NoteheadItem& notehead) {
+  const std::optional<NoteheadSet> set = NoteheadSet::create({notehead});
+  if (!set.has_value() || !validate_selection(project, Selection{*set}).empty())
+    return std::nullopt;
+
+  const Node* node = project.find_node(notehead.node);
+  if (node == nullptr)
+    return std::nullopt;
+  const TrackLane* lane = node->lane(notehead.track);
+  if (lane == nullptr)
+    return std::nullopt;
+  const StaveVoices* stave = lane->stave(notehead.stave);
+  if (stave == nullptr)
+    return std::nullopt;
+  const VoiceContent& voice = stave->voice(notehead.voice);
+
+  std::optional<std::size_t> deleted_index;
+  Rational                   deleted_onset(0);
+  Rational                   onset(0);
+  for (std::size_t index = 0; index < voice.events().size(); ++index) {
+    const VoiceEvent& event   = voice.events()[index];
+    bool              matches = event_id(event) == notehead.entity;
+    if (const auto* chord = std::get_if<Chord>(&event)) {
+      matches = matches ||
+                std::ranges::any_of(chord->notes, [&](const ChordNote& note) {
+                  return note.id == notehead.entity;
+                });
+    }
+    if (matches) {
+      deleted_index = index;
+      deleted_onset = onset;
+      break;
+    }
+    onset = onset + event_duration(event).resolved();
+  }
+
+  if (!deleted_index.has_value()) {
+    const std::optional<Rational> grace_onset =
+        voice.position_of_event(notehead.entity);
+    if (!grace_onset.has_value())
+      return std::nullopt;
+    deleted_onset = *grace_onset;
+    deleted_index = voice.find_event_index_at(deleted_onset);
+    if (!deleted_index.has_value())
+      return std::nullopt;
+  }
+
+  if (*deleted_index == 0u) {
+    const auto caret = InsertionCaretSet::create(
+        {InsertionCaretItem{notehead.node, notehead.track, notehead.stave,
+                            notehead.voice, deleted_onset}});
+    if (!caret.has_value())
+      return std::nullopt;
+    return Selection{*caret};
+  }
+
+  const VoiceEvent& previous = voice.events()[*deleted_index - 1u];
+  if (const auto* note = std::get_if<Note>(&previous)) {
+    const auto previous_set = NoteheadSet::create(
+        {NoteheadItem{notehead.node, notehead.track, notehead.stave,
+                      notehead.voice, note->id}});
+    if (!previous_set.has_value())
+      return std::nullopt;
+    return Selection{*previous_set};
+  }
+  if (const auto* chord = std::get_if<Chord>(&previous)) {
+    const auto previous_set = ChordSet::create(
+        {ChordItem{notehead.node, notehead.track, notehead.stave,
+                   notehead.voice, chord->id}});
+    if (!previous_set.has_value())
+      return std::nullopt;
+    return Selection{*previous_set};
+  }
+  const auto previous_set =
+      RestSet::create({RestItem{notehead.node, notehead.track, notehead.stave,
+                                notehead.voice, event_id(previous)}});
+  if (!previous_set.has_value())
+    return std::nullopt;
+  return Selection{*previous_set};
 }
 
 std::optional<NoteAuditionRequest> audition_for_notehead_move(

@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <new>
 #include <optional>
 #include <stdexcept>
@@ -1161,6 +1162,36 @@ Result VoiceContent::remove_beam_override(NotationEntityId id) {
   return Result();
 }
 
+Result VoiceContent::replace_beam_override(NotationEntityId id,
+                                           BeamOverride     replacement) {
+  const auto it =
+      std::find_if(beam_overrides_.begin(), beam_overrides_.end(),
+                   [id](const BeamOverride& m) { return m.id == id; });
+  if (it == beam_overrides_.end())
+    return Result(ResultCode::kInvalidArgument);
+  if (replacement.id != id)
+    return Result(ResultCode::kInvalidArgument);
+
+  VoiceDelta d;
+  try {
+    // A replacement keeps the override's position and identity, so it is
+    // expressed as a single kUpdate. The incremental consumer replaces the
+    // retained record in place, preserving its order key; a remove-then-add
+    // would reinsert it after peers and reorder order-sensitive overlapping
+    // join/break precedence.
+    d.beam_override_ops.push_back(
+        RefOp<BeamOverride>{RefOpKind::kUpdate, id, replacement});
+    *it = std::move(replacement);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+
+  advance_revision(std::move(d));  // noexcept commit
+  return Result();
+}
+
 Result VoiceContent::remove_grace_group(NotationEntityId id) {
   const auto it =
       std::find_if(grace_groups_.begin(), grace_groups_.end(),
@@ -1179,6 +1210,42 @@ Result VoiceContent::remove_grace_group(NotationEntityId id) {
 
   advance_revision(std::move(d));  // noexcept commit
   return Result();
+}
+
+Result VoiceContent::remove_grace_group_note(NotationEntityId id) {
+  for (std::size_t g = 0; g < grace_groups_.size(); ++g) {
+    const auto it = std::find_if(
+        grace_groups_[g].notes.begin(), grace_groups_[g].notes.end(),
+        [id](const GraceNote& note) { return note.id == id; });
+    if (it == grace_groups_[g].notes.end())
+      continue;
+
+    VoiceDelta d;
+    try {
+      if (grace_groups_[g].notes.size() == 1u) {
+        const NotationEntityId group_id = grace_groups_[g].id;
+        d.grace_group_ops.push_back(make_remove_op<GraceGroup>(group_id));
+        grace_groups_.erase(grace_groups_.begin() +
+                            static_cast<std::ptrdiff_t>(g));
+      } else {
+        GraceGroup modified = grace_groups_[g];
+        modified.notes.erase(modified.notes.begin() +
+                             static_cast<std::ptrdiff_t>(std::distance(
+                                 grace_groups_[g].notes.begin(), it)));
+        d.grace_group_ops.push_back(
+            RefOp<GraceGroup>{RefOpKind::kUpdate, modified.id, modified});
+        grace_groups_[g] = std::move(modified);
+      }
+    } catch (const std::bad_alloc&) {
+      return Result(ResultCode::kOutOfMemory);
+    } catch (const std::length_error&) {
+      return Result(ResultCode::kOutOfMemory);
+    }
+
+    advance_revision(std::move(d));  // noexcept commit
+    return Result();
+  }
+  return Result(ResultCode::kInvalidArgument);
 }
 
 namespace {

@@ -46,8 +46,9 @@ struct PointerEvent {
 
 // Platform-neutral key identity. This is deliberately a minimum set, not a
 // general keyboard model: the arrows and Home/End M5-phase-19b's
-// Shift/keyboard range extension needs, plus the two character keys
-// M5-phase-21's accidental step binds (`-` and `=`). Every other
+// Shift/keyboard range extension needs, the two character keys
+// M5-phase-21's accidental step binds (`-` and `=`), and the two delete keys
+// M5-phase-22's notehead deletion binds (Backspace and Delete). Every other
 // character/text key, key release, and the full platform-normalized action
 // table belong to M5-phase-26/M5-phase-27.
 //
@@ -71,6 +72,8 @@ enum class KeyCode : std::uint8_t {
   kEnd,
   kMinus,
   kEquals,
+  kBackspace,
+  kDelete,
 };
 
 // Platform-neutral key modifiers, translated from SDL3's combined

@@ -501,6 +501,46 @@ TEST(VoiceDeltaFamilyTest, RemoveOneAddTwoBeamOverrides) {
             validate_voice_references(voice));
 }
 
+TEST(VoiceDeltaFamilyTest,
+     ReplaceBeamOverrideEmitsSingleUpdatePreservingPosition) {
+  VoiceContent voice;
+  const auto   e1 = make_note(pitch(Letter::kC), duration(NoteValue::kEighth));
+  const auto   e2 = make_note(pitch(Letter::kD), duration(NoteValue::kEighth));
+  const auto   e3 = make_note(pitch(Letter::kE), duration(NoteValue::kEighth));
+  ASSERT_TRUE(voice.append(e1).ok());
+  ASSERT_TRUE(voice.append(e2).ok());
+  ASSERT_TRUE(voice.append(e3).ok());
+  const auto first  = make_beam_override(BeamOverride::Kind::kJoin,
+                                         {event_id(e1), event_id(e2)});
+  const auto second = make_beam_override(BeamOverride::Kind::kBreak,
+                                         {event_id(e2), event_id(e3)});
+  ASSERT_TRUE(voice.add_beam_override(first).ok());
+  ASSERT_TRUE(voice.add_beam_override(second).ok());
+  VoiceValidationState state;
+  (void)state.rebuild(voice);
+  const auto rev0 = voice.capture_revision();
+
+  const BeamOverride replacement{
+      first.id, BeamOverride::Kind::kBreak, {event_id(e1), event_id(e2)}};
+  ASSERT_TRUE(voice.replace_beam_override(first.id, replacement).ok());
+
+  // Position and identity are preserved: replacement stays at index 0, the
+  // peer at index 1.
+  ASSERT_EQ(voice.beam_overrides().size(), 2u);
+  EXPECT_EQ(voice.beam_overrides()[0], replacement);
+  EXPECT_EQ(voice.beam_overrides()[1], second);
+
+  // Exactly one kUpdate op carrying the full replacement record.
+  const auto d_opt = voice.delta_since(rev0);
+  ASSERT_TRUE(d_opt.has_value());
+  ASSERT_EQ(d_opt->beam_override_ops.size(), 1u);
+  EXPECT_EQ(d_opt->beam_override_ops[0].kind, RefOpKind::kUpdate);
+  EXPECT_EQ(d_opt->beam_override_ops[0].id, first.id);
+  EXPECT_EQ(d_opt->beam_override_ops[0].record, replacement);
+  EXPECT_EQ(state.apply(voice, *d_opt).diagnostics,
+            validate_voice_references(voice));
+}
+
 TEST(VoiceDeltaFamilyTest, RemoveOneAddTwoGraceGroups) {
   VoiceContent voice;
   const auto   principal =

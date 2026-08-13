@@ -30,6 +30,7 @@
 #include <graphscore/domain/create_voice_stream_command.hpp>
 #include <graphscore/domain/cut_fragment_command.hpp>
 #include <graphscore/domain/delete_measure_command.hpp>
+#include <graphscore/domain/delete_notehead_command.hpp>
 #include <graphscore/domain/disconnect_command.hpp>
 #include <graphscore/domain/duplicate_nodes_command.hpp>
 #include <graphscore/domain/event_listener.hpp>

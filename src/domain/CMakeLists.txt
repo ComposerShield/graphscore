@@ -24,6 +24,7 @@ add_library(graphscore_domain STATIC
   convert_event_to_rest_command.cpp
   create_voice_stream_command.cpp
   cut_fragment_command.cpp
+  delete_notehead_command.cpp
   delete_measure_command.cpp
   disconnect_command.cpp
   duplicate_nodes_command.cpp

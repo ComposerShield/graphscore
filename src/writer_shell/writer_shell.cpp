@@ -437,6 +437,10 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
       return KeyCode::kMinus;
     case SDL_SCANCODE_EQUALS:
       return KeyCode::kEquals;
+    case SDL_SCANCODE_BACKSPACE:
+      return KeyCode::kBackspace;
+    case SDL_SCANCODE_DELETE:
+      return KeyCode::kDelete;
     default:
       return KeyCode::kUnknown;
   }

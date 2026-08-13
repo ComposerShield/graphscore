@@ -62,6 +62,7 @@ constexpr std::string_view kKeyEventsShellTestFlag = "--test-key-events-shell";
 constexpr std::string_view kKeySelectionTestFlag   = "--test-key-selection";
 constexpr std::string_view kNoteheadMoveTestFlag   = "--test-notehead-move";
 constexpr std::string_view kAccidentalStepTestFlag = "--test-accidental-step";
+constexpr std::string_view kNoteheadDeleteTestFlag = "--test-notehead-delete";
 
 const char* describe(graphscore::ShellError error) {
   switch (error) {
@@ -432,6 +433,10 @@ class SelectionToolHandler final : public graphscore::InputHandler {
       return;
     }
     switch (event.code) {
+      case graphscore::KeyCode::kBackspace:
+      case graphscore::KeyCode::kDelete:
+        std::ignore = delete_selected_notehead();
+        break;
       case graphscore::KeyCode::kUp:
         std::ignore =
             move_selected_notehead(graphscore::NoteheadStepDirection::kUp);
@@ -452,6 +457,50 @@ class SelectionToolHandler final : public graphscore::InputHandler {
       default:
         break;
     }
+  }
+
+  bool delete_selected_notehead() {
+    if (history_.poisoned())
+      return false;
+    const auto* set = current_notehead_set();
+    if (set == nullptr || set->items().size() != 1u)
+      return false;
+    const graphscore::NoteheadItem       item = set->items().front();
+    std::optional<graphscore::Selection> next_selection =
+        graphscore::selection_after_notehead_delete(project_, item);
+    std::unique_ptr<graphscore::Command> command =
+        graphscore::make_delete_notehead_command(project_, item);
+    if (command == nullptr || !next_selection.has_value())
+      return false;
+
+    const std::optional<graphscore::NotationInvalidation> invalidation =
+        notehead_invalidation(item);
+    if (!invalidation.has_value())
+      return false;
+    graphscore::CommandHistory::Transaction transaction =
+        history_.begin_transaction(std::move(command), project_);
+    if (!transaction.active())
+      return false;
+    if (!refresh_layout(invalidation)) {
+      const graphscore::Result rollback = transaction.abort();
+      if (!rollback.ok()) {
+        // The rollback failed: the history is now poisoned. Attempt recovery
+        // once; a persistent failure leaves the handler unavailable and
+        // further edits blocked, exactly as the notehead-move/accidental-step
+        // paths do.
+        recover_from_failed_rollback();
+        return false;
+      }
+      // Project restored exactly: re-seed the retained cache from it so the
+      // next edit stays incremental.
+      layout_cache_.reset();
+      warm_layout_cache();
+      return false;
+    }
+    if (!transaction.commit().ok())
+      return false;
+    set_committed_selection(std::move(next_selection));
+    return true;
   }
 
   // ---- accessible range controls (M5-phase-19b-iii) ------------------------
@@ -1108,7 +1157,8 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // Requires metrics_ to have been set (run() and the notehead-move test both
   // do); returns true otherwise so the range-selection paths that never move
   // a notehead remain no-ops.
-  bool refresh_layout() {
+  bool refresh_layout(
+      std::optional<graphscore::NotationInvalidation> forced = std::nullopt) {
     if (metrics_ == nullptr) {
       return true;
     }
@@ -1117,7 +1167,7 @@ class SelectionToolHandler final : public graphscore::InputHandler {
       return true;
     }
     const std::optional<graphscore::NotationInvalidation> invalidation =
-        notehead_invalidation(set->items()[0]);
+        forced.has_value() ? forced : notehead_invalidation(set->items()[0]);
     if (!invalidation.has_value()) {
       return false;
     }
@@ -3214,12 +3264,13 @@ int key_events_test() {
   shell.set_input_handler(&handler);
 
   // --- test: every KeyCode value round-trips unchanged -------------------
-  constexpr std::array<graphscore::KeyCode, 9> kAllCodes{
+  constexpr std::array<graphscore::KeyCode, 11> kAllCodes{
       graphscore::KeyCode::kUnknown, graphscore::KeyCode::kLeft,
       graphscore::KeyCode::kRight,   graphscore::KeyCode::kUp,
       graphscore::KeyCode::kDown,    graphscore::KeyCode::kHome,
       graphscore::KeyCode::kEnd,     graphscore::KeyCode::kMinus,
-      graphscore::KeyCode::kEquals,
+      graphscore::KeyCode::kEquals,  graphscore::KeyCode::kBackspace,
+      graphscore::KeyCode::kDelete,
   };
   for (const graphscore::KeyCode code : kAllCodes) {
     const std::size_t    before = handler.events.size();
@@ -3308,25 +3359,27 @@ int key_events_shell_test() {
 
   // Raw SDL_Scancode values, verified against the fetched SDL3 headers
   // (SDL3/SDL_scancode.h at the pinned commit): LEFT=80, RIGHT=79, UP=82,
-  // DOWN=81, HOME=74, END=77, MINUS=45, EQUALS=46. SDL_SCANCODE_A=4 is a
-  // mapped character-key scancode outside this minimal set and must
-  // translate to kUnknown.
-  constexpr std::uint32_t kScancodeLeft   = 80;
-  constexpr std::uint32_t kScancodeRight  = 79;
-  constexpr std::uint32_t kScancodeUp     = 82;
-  constexpr std::uint32_t kScancodeDown   = 81;
-  constexpr std::uint32_t kScancodeHome   = 74;
-  constexpr std::uint32_t kScancodeEnd    = 77;
-  constexpr std::uint32_t kScancodeMinus  = 45;
-  constexpr std::uint32_t kScancodeEquals = 46;
-  constexpr std::uint32_t kScancodeA      = 4;
+  // DOWN=81, HOME=74, END=77, MINUS=45, EQUALS=46, BACKSPACE=42, DELETE=76.
+  // SDL_SCANCODE_A=4 is a mapped character-key scancode outside this minimal
+  // set and must translate to kUnknown.
+  constexpr std::uint32_t kScancodeLeft      = 80;
+  constexpr std::uint32_t kScancodeRight     = 79;
+  constexpr std::uint32_t kScancodeUp        = 82;
+  constexpr std::uint32_t kScancodeDown      = 81;
+  constexpr std::uint32_t kScancodeHome      = 74;
+  constexpr std::uint32_t kScancodeEnd       = 77;
+  constexpr std::uint32_t kScancodeMinus     = 45;
+  constexpr std::uint32_t kScancodeEquals    = 46;
+  constexpr std::uint32_t kScancodeBackspace = 42;
+  constexpr std::uint32_t kScancodeDelete    = 76;
+  constexpr std::uint32_t kScancodeA         = 4;
 
   struct ScancodeCase {
     std::uint32_t       scancode;
     graphscore::KeyCode expected;
   };
 
-  constexpr std::array<ScancodeCase, 8> kMappedScancodes{{
+  constexpr std::array<ScancodeCase, 10> kMappedScancodes{{
       {kScancodeLeft, graphscore::KeyCode::kLeft},
       {kScancodeRight, graphscore::KeyCode::kRight},
       {kScancodeUp, graphscore::KeyCode::kUp},
@@ -3335,6 +3388,8 @@ int key_events_shell_test() {
       {kScancodeEnd, graphscore::KeyCode::kEnd},
       {kScancodeMinus, graphscore::KeyCode::kMinus},
       {kScancodeEquals, graphscore::KeyCode::kEquals},
+      {kScancodeBackspace, graphscore::KeyCode::kBackspace},
+      {kScancodeDelete, graphscore::KeyCode::kDelete},
   }};
 
   for (const ScancodeCase& test_case : kMappedScancodes) {
@@ -7018,6 +7073,436 @@ int accidental_step_test() {
   return 0;
 }
 
+// ---- M5-phase-22: notehead delete ----------------------------------------
+//
+// Exercises SelectionToolHandler's unmodified Backspace/Delete dispatch: with
+// exactly one selected notehead, the notehead is removed -- a complete Note
+// becomes a same-duration normalized Rest -- and the prior onset in the same
+// voice/staff is selected. Deleting the voice's first event leaves an
+// insertion caret at onset 0 instead. One pitch removed from a Chord leaves
+// the remaining pitch (a two-note Chord contracts to a Note). The retained
+// layout is refreshed and re-published, and the delete runs as one
+// reversible history entry. No selection, a multi-notehead selection, a
+// stale notehead, and Shift/modifier chords remain no-ops.
+int notehead_delete_test() {
+  const SelfTestMetrics metrics;
+
+  const graphscore::Voice voice1 = voice_one();
+
+  // --- test 1: a real click selects the second notehead, then Delete
+  //     removes it as a normalized Rest, selects the prior onset (the first
+  //     notehead), re-publishes a different visible surface, and undo/redo
+  //     round-trips through the handler's history. -------------------------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-delete-test: fixture build failed (1)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(
+          stderr, "notehead-delete-test: initial surface publish failed (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto before_surface = shell.test_snapshot_notation_surface();
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->second_note_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->second_note_id) {
+        std::fprintf(stderr,
+                     "notehead-delete-test: click did not select the second "
+                     "notehead (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    const auto event_at = [&](std::size_t index) {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      return lane->stave(fx->stave_id)->voice(voice1).events()[index];
+    };
+    if (!std::holds_alternative<graphscore::Note>(event_at(0)) ||
+        !std::holds_alternative<graphscore::Note>(event_at(1))) {
+      std::fprintf(stderr,
+                   "notehead-delete-test: expected two notes before delete "
+                   "(1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kDelete));
+    if (!std::holds_alternative<graphscore::Rest>(event_at(1)) ||
+        !std::holds_alternative<graphscore::Note>(event_at(0))) {
+      std::fprintf(stderr,
+                   "notehead-delete-test: Delete did not replace the second "
+                   "notehead with a Rest (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(stderr,
+                     "notehead-delete-test: prior onset not selected after "
+                     "Delete (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    const auto after_surface = shell.test_snapshot_notation_surface();
+    if (!after_surface.has_value() || after_surface == before_surface) {
+      std::fprintf(stderr,
+                   "notehead-delete-test: visible surface not re-published "
+                   "after Delete (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // Undo/redo round-trip through the handler's history.
+    if (!handler.test_undo() ||
+        !std::holds_alternative<graphscore::Note>(event_at(1))) {
+      std::fprintf(stderr,
+                   "notehead-delete-test: undo did not restore the notehead "
+                   "(1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!handler.test_redo() ||
+        !std::holds_alternative<graphscore::Rest>(event_at(1))) {
+      std::fprintf(stderr,
+                   "notehead-delete-test: redo did not re-apply the delete "
+                   "(1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 1b: Backspace routes through the same delete path. ------------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-delete-test: fixture build failed (1b)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->second_note_id);
+    click_at(shell, point.x, point.y);
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kBackspace));
+    const auto* lane =
+        handler.project().find_node(fx->node_id)->lane(fx->track_id);
+    const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+    if (!std::holds_alternative<graphscore::Rest>(vc.events()[1])) {
+      std::fprintf(stderr,
+                   "notehead-delete-test: Backspace did not remove the second "
+                   "notehead (1b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(stderr,
+                     "notehead-delete-test: prior onset not selected after "
+                     "Backspace (1b)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 1c: deleting the voice's first event has no prior onset, so an
+  //     insertion caret is left at the deleted onset (0). ------------------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-delete-test: fixture build failed (1c)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->first_note_id);
+    click_at(shell, point.x, point.y);
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kDelete));
+    const auto* lane =
+        handler.project().find_node(fx->node_id)->lane(fx->track_id);
+    const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+    if (!std::holds_alternative<graphscore::Rest>(vc.events()[0])) {
+      std::fprintf(stderr,
+                   "notehead-delete-test: Delete did not replace the first "
+                   "notehead with a Rest (1c)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto& committed = handler.drag_state().committed_selection();
+    if (!committed.has_value()) {
+      std::fprintf(stderr,
+                   "notehead-delete-test: no committed selection after "
+                   "deleting the first notehead (1c)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto* caret = std::get_if<graphscore::InsertionCaretSet>(&*committed);
+    if (caret == nullptr || caret->items().size() != 1u ||
+        caret->items().front().position != graphscore::Rational(0)) {
+      std::fprintf(stderr,
+                   "notehead-delete-test: no insertion caret at onset 0 after "
+                   "deleting the first notehead (1c)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 1d: deleting one chord notehead leaves the remaining pitch as a
+  //     Note and selects the prior onset. ----------------------------------
+  {
+    auto fx = build_notehead_click_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-delete-test: fixture build failed (1d)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->chord_note_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->chord_note_id) {
+        std::fprintf(stderr,
+                     "notehead-delete-test: click did not select the chord "
+                     "notehead (1d)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kDelete));
+    // The two-note chord is now a single Note carrying the surviving pitch
+    // (G4); the E4 notehead that was clicked is gone.
+    const auto surviving = [&]() -> std::optional<graphscore::Note> {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+      for (const auto& event : vc.events()) {
+        if (const auto* note = std::get_if<graphscore::Note>(&event)) {
+          if (note->id == fx->chord_other_id) {
+            return *note;
+          }
+        }
+      }
+      return std::nullopt;
+    };
+    const auto remaining = surviving();
+    if (!remaining.has_value() ||
+        remaining->pitch != spelled(graphscore::Letter::kG, 4)) {
+      std::fprintf(stderr,
+                   "notehead-delete-test: chord delete did not leave the "
+                   "surviving pitch as a Note (1d)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // The prior onset (the D4 note at event index 1) is now the committed
+    // selection, matching selection_after_notehead_delete's Chord→prior
+    // recovery branch.
+    {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+      const graphscore::NotationEntityId prior_id =
+          graphscore::event_id(vc.events()[1]);
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != prior_id) {
+        std::fprintf(stderr,
+                     "notehead-delete-test: prior onset not selected after "
+                     "chord delete (1d)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    // The clicked E4 notehead is gone from the voice.
+    for (const auto& event : handler.project()
+                                 .find_node(fx->node_id)
+                                 ->lane(fx->track_id)
+                                 ->stave(fx->stave_id)
+                                 ->voice(voice1)
+                                 .events()) {
+      if (const auto* chord = std::get_if<graphscore::Chord>(&event)) {
+        for (const auto& note : chord->notes) {
+          if (note.id == fx->chord_note_id) {
+            std::fprintf(stderr,
+                         "notehead-delete-test: clicked chord notehead still "
+                         "present (1d)\n");
+            shell.set_input_handler(nullptr);
+            return 1;
+          }
+        }
+      }
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 2/3/4/5: every no-op case leaves the project unchanged: no
+  //     selection, a stale notehead identity, a multi-notehead selection, a
+  //     Shift chord (which stays M5-phase-19b range extension), and a
+  //     Control/Alt/Meta chord (no binding this phase owns). ---------------
+  {
+    enum class NoOpCase : std::uint8_t {
+      kNoSelection,
+      kStaleIdentity,
+      kMultiNotehead,
+      kShiftChord,
+      kModifierChord,
+    };
+
+    struct NoOpSpec {
+      const char* label;
+      NoOpCase    kind;
+    };
+
+    const std::array<NoOpSpec, 5> kNoOpCases{{
+        {"2", NoOpCase::kNoSelection},
+        {"3", NoOpCase::kStaleIdentity},
+        {"4", NoOpCase::kMultiNotehead},
+        {"5", NoOpCase::kShiftChord},
+        {"5b", NoOpCase::kModifierChord},
+    }};
+
+    for (const NoOpSpec& test_case : kNoOpCases) {
+      auto fx = build_notehead_move_fixture(metrics);
+      if (!fx.has_value()) {
+        std::fprintf(stderr,
+                     "notehead-delete-test: fixture build failed (%s)\n",
+                     test_case.label);
+        return 1;
+      }
+      graphscore::WriterShell shell;
+      SelectionToolHandler    handler(std::move(fx->project),
+                                      std::move(fx->layout), &shell);
+      handler.set_metrics(&metrics);
+      shell.set_input_handler(&handler);
+      handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+      bool armed = true;
+      switch (test_case.kind) {
+        case NoOpCase::kNoSelection:
+          break;
+        case NoOpCase::kStaleIdentity:
+          armed = select_noteheads(
+              handler, {graphscore::NoteheadItem{
+                           fx->node_id, fx->track_id, fx->stave_id, voice1,
+                           graphscore::NotationEntityId::generate()}});
+          break;
+        case NoOpCase::kMultiNotehead:
+          armed = select_noteheads(
+              handler,
+              {graphscore::NoteheadItem{fx->node_id, fx->track_id, fx->stave_id,
+                                        voice1, fx->first_note_id},
+               graphscore::NoteheadItem{fx->node_id, fx->track_id, fx->stave_id,
+                                        voice1, fx->second_note_id}});
+          break;
+        case NoOpCase::kShiftChord:
+        case NoOpCase::kModifierChord:
+          armed = select_noteheads(
+              handler,
+              {graphscore::NoteheadItem{fx->node_id, fx->track_id, fx->stave_id,
+                                        voice1, fx->second_note_id}});
+          break;
+      }
+      if (!armed) {
+        std::fprintf(stderr,
+                     "notehead-delete-test: selection setup rejected (%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+
+      const auto event_at = [&](std::size_t index) {
+        const auto* lane =
+            handler.project().find_node(fx->node_id)->lane(fx->track_id);
+        return lane->stave(fx->stave_id)->voice(voice1).events()[index];
+      };
+
+      if (test_case.kind == NoOpCase::kShiftChord) {
+        shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kDelete));
+        shell.dispatch_test_key_event(
+            shift_key(graphscore::KeyCode::kBackspace));
+      } else if (test_case.kind == NoOpCase::kModifierChord) {
+        for (const graphscore::KeyCode code :
+             {graphscore::KeyCode::kDelete, graphscore::KeyCode::kBackspace}) {
+          graphscore::KeyEvent control = plain_key(code);
+          control.modifiers.control    = true;
+          shell.dispatch_test_key_event(control);
+          graphscore::KeyEvent alt = plain_key(code);
+          alt.modifiers.alt        = true;
+          shell.dispatch_test_key_event(alt);
+          graphscore::KeyEvent meta = plain_key(code);
+          meta.modifiers.meta       = true;
+          shell.dispatch_test_key_event(meta);
+        }
+      } else {
+        shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kDelete));
+        shell.dispatch_test_key_event(
+            plain_key(graphscore::KeyCode::kBackspace));
+      }
+
+      if (!std::holds_alternative<graphscore::Note>(event_at(0)) ||
+          !std::holds_alternative<graphscore::Note>(event_at(1)) ||
+          handler.test_undo_stack_size() != 0u) {
+        std::fprintf(stderr,
+                     "notehead-delete-test: a no-op case mutated the project "
+                     "(%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+      shell.set_input_handler(nullptr);
+    }
+  }
+
+  std::printf("notehead-delete-test: ok\n");
+  return 0;
+}
+
 }  // namespace
 
 // The shell allocates (window titles, backend names), so this call path can
@@ -7034,6 +7519,7 @@ int main(int argc, char** argv) {
   bool run_key_selection_test    = false;
   bool run_notehead_move_test    = false;
   bool run_accidental_step_test  = false;
+  bool run_notehead_delete_test  = false;
   for (int i = 1; i < argc; ++i) {
     if (kSmokeTestFlag == argv[i]) {
       smoke_test = true;
@@ -7059,6 +7545,9 @@ int main(int argc, char** argv) {
     if (kAccidentalStepTestFlag == argv[i]) {
       run_accidental_step_test = true;
     }
+    if (kNoteheadDeleteTestFlag == argv[i]) {
+      run_notehead_delete_test = true;
+    }
   }
 
   try {
@@ -7082,6 +7571,9 @@ int main(int argc, char** argv) {
     }
     if (run_accidental_step_test) {
       return accidental_step_test();
+    }
+    if (run_notehead_delete_test) {
+      return notehead_delete_test();
     }
     return run(smoke_test);
   } catch (const std::exception& error) {

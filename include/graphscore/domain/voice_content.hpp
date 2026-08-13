@@ -264,6 +264,13 @@ class VoiceContent {
 
   [[nodiscard]] Result remove_beam_override(NotationEntityId id);
 
+  // Replaces the beam override named by `id` with `replacement` in place,
+  // preserving the override's position in the beam-override vector and its
+  // identity. Fails, leaving the voice unchanged, if `id` does not name an
+  // existing beam override or `replacement.id` differs from `id`.
+  [[nodiscard]] Result replace_beam_override(NotationEntityId id,
+                                             BeamOverride     replacement);
+
   [[nodiscard]] const std::vector<GraceGroup>& grace_groups() const noexcept {
     return grace_groups_;
   }
@@ -271,6 +278,13 @@ class VoiceContent {
   [[nodiscard]] Result add_grace_group(GraceGroup group);
 
   [[nodiscard]] Result remove_grace_group(NotationEntityId id);
+
+  // Removes the grace note named by `id` from its containing GraceGroup in
+  // place, preserving the group vector's order and every other group's
+  // identity. When the removed note was the group's only note, the now-empty
+  // group is removed in place instead. Fails, leaving the voice unchanged,
+  // if `id` does not name a GraceNote.
+  [[nodiscard]] Result remove_grace_group_note(NotationEntityId id);
 
   // The exact whole-note sum of every event's resolved duration.
   [[nodiscard]] Rational total_length() const;
