@@ -1766,6 +1766,53 @@ class SelectionDragState {
     const Project& project, const NoteheadItem& notehead,
     NoteheadStepDirection direction);
 
+// Constructs a reversible domain command for the keyboard accidental action
+// described in docs/plan/05-notation-editor.md M5-phase-21: "`-` and `=` step
+// through double-flat, flat, natural, sharp, and double-sharp."
+//
+// `notehead` is the single selected NoteheadItem
+// (graphscore/domain/selection.hpp); `direction` is one rung down (`-`) or up
+// (`=`) that ladder. The returned StepAccidentalCommand re-resolves
+// `notehead.entity` against the project at execute time, so a stale identity
+// fails atomically rather than mutating a different notehead. Spelling
+// arithmetic and identity preservation live entirely in
+// StepAccidentalCommand; this helper owns only the selection-to-command
+// translation, mirroring make_move_notehead_command.
+//
+// Returns nullptr when `notehead` does not name a single valid notehead in the
+// project -- an unknown node/track/stave/lane, an archived track, or an entity
+// that is not a Note/ChordNote/GraceNote in the addressed voice -- which is
+// exactly validate_selection's own notehead-arm check. Building the command
+// never mutates the project; the caller applies it through a CommandHistory.
+[[nodiscard]] std::unique_ptr<Command> make_step_accidental_command(
+    const Project& project, const NoteheadItem& notehead,
+    AccidentalStepDirection direction);
+
+// The short audition request for the same keyboard accidental action
+// make_step_accidental_command above builds a command for. An accidental step
+// changes the sounding pitch, so it auditions exactly like a diatonic move
+// (M5-phase-15's "pitch-edited notes issue a short preview request"); this
+// milestone produces the request as a value and nothing plays it
+// (graphscore_writer_audio consumes it in Milestone 08).
+//
+// The request sounds the single post-edit sounding MIDI pitch of the stepped
+// notehead (a tied notehead steps its whole chain, every member of which
+// shares one pitch, so the one post-edit pitch is still the whole audible
+// change), through the notehead's own track at the project's default dynamic.
+// A chord notehead auditions that notehead's post-edit pitch alone -- not the
+// whole chord -- because the composer is re-spelling one notehead.
+//
+// A pure query over the PRE-execution project: it never mutates `project` and
+// builds no command. It returns std::nullopt -- auditions nothing -- whenever
+// the step itself would fail: an invalid/stale notehead (the same
+// notehead-arm check make_step_accidental_command uses), or a step off either
+// end of the ladder or out of the sounding MIDI range (the boundaries the
+// command also rejects atomically). A caller invokes it before executing the
+// command and discards the request when execution fails.
+[[nodiscard]] std::optional<NoteAuditionRequest> audition_for_accidental_step(
+    const Project& project, const NoteheadItem& notehead,
+    AccidentalStepDirection direction);
+
 // The short audition request for the same note-entry pointer action
 // make_note_entry_command above builds a command for
 // (docs/plan/05-notation-editor.md: "Newly inserted or pitch-edited notes

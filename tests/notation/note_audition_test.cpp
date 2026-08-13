@@ -14,6 +14,8 @@
 namespace {
 
 using graphscore::Accidental;
+using graphscore::AccidentalStepDirection;
+using graphscore::audition_for_accidental_step;
 using graphscore::audition_for_note_entry;
 using graphscore::audition_for_notehead_move;
 using graphscore::Chord;
@@ -623,6 +625,135 @@ TEST(NoteAuditionTest, MoveNoteheadAuditionIsSilentOnStaleNotehead) {
   const std::optional<NoteAuditionRequest> request = audition_for_notehead_move(
       fixture.project, notehead_item(fixture, NotationEntityId::generate()),
       NoteheadStepDirection::kUp);
+  EXPECT_FALSE(request.has_value());
+}
+
+// ---- audition_for_accidental_step (M5-phase-21) ----------------------------
+
+TEST(NoteAuditionTest, AccidentalStepAuditionsThePostEditPitch) {
+  Fixture            fixture;
+  const SpelledPitch c4   = *SpelledPitch::create(Letter::kC, 4);
+  const Note         note = append_quarter_note(fixture, c4);
+  fixture.normalize_voice();
+
+  const std::optional<NoteAuditionRequest> request =
+      audition_for_accidental_step(fixture.project,
+                                   notehead_item(fixture, note.id),
+                                   AccidentalStepDirection::kRaise);
+  ASSERT_TRUE(request.has_value());
+  EXPECT_EQ(request->track_id, fixture.track());
+  EXPECT_EQ(request->velocity,
+            velocity_for_dynamic(fixture.project.default_dynamic()));
+  ASSERT_EQ(request->pitches.size(), 1u);
+  EXPECT_EQ(request->pitches[0],
+            *SpelledPitch::create(Letter::kC, 4, Accidental::kSharp)
+                 ->to_midi_pitch());
+
+  // The opposite direction sounds the other neighbour, never the same pitch.
+  const std::optional<NoteAuditionRequest> lowered =
+      audition_for_accidental_step(fixture.project,
+                                   notehead_item(fixture, note.id),
+                                   AccidentalStepDirection::kLower);
+  ASSERT_TRUE(lowered.has_value());
+  ASSERT_EQ(lowered->pitches.size(), 1u);
+  EXPECT_EQ(
+      lowered->pitches[0],
+      *SpelledPitch::create(Letter::kC, 4, Accidental::kFlat)->to_midi_pitch());
+}
+
+TEST(NoteAuditionTest, AccidentalStepChordNoteheadAuditionsOnePitch) {
+  Fixture            fixture;
+  const SpelledPitch c4 = *SpelledPitch::create(Letter::kC, 4);
+  const SpelledPitch e4 = *SpelledPitch::create(Letter::kE, 4);
+  const ChordNote    stepped{NotationEntityId::generate(), c4, false};
+  const Chord        chord =
+      make_chord(*Duration::create(NoteValue::kQuarter, 0),
+                 {stepped, ChordNote{NotationEntityId::generate(), e4, false}});
+  ASSERT_TRUE(fixture.voice().append(chord).ok());
+  fixture.normalize_voice();
+
+  const std::optional<NoteAuditionRequest> request =
+      audition_for_accidental_step(fixture.project,
+                                   notehead_item(fixture, stepped.id),
+                                   AccidentalStepDirection::kRaise);
+  ASSERT_TRUE(request.has_value());
+  // Only the stepped notehead's post-edit pitch sounds, not the whole chord.
+  ASSERT_EQ(request->pitches.size(), 1u);
+  EXPECT_EQ(request->pitches[0],
+            *SpelledPitch::create(Letter::kC, 4, Accidental::kSharp)
+                 ->to_midi_pitch());
+}
+
+TEST(NoteAuditionTest, AccidentalStepGraceNoteAuditionsThePostEditPitch) {
+  Fixture            fixture;
+  const SpelledPitch c4        = *SpelledPitch::create(Letter::kC, 4);
+  const Note         principal = append_quarter_note(fixture, c4);
+  fixture.normalize_voice();
+  const GraceGroup group = make_grace_group(
+      principal.id, {GraceNote{NotationEntityId::generate(),
+                               *SpelledPitch::create(Letter::kD, 4),
+                               *Duration::create(NoteValue::kEighth, 0),
+                               GraceNoteType::kAcciaccatura, true}});
+  ASSERT_TRUE(fixture.voice().add_grace_group(group).ok());
+
+  const std::optional<NoteAuditionRequest> request =
+      audition_for_accidental_step(fixture.project,
+                                   notehead_item(fixture, group.notes[0].id),
+                                   AccidentalStepDirection::kLower);
+  ASSERT_TRUE(request.has_value());
+  ASSERT_EQ(request->pitches.size(), 1u);
+  EXPECT_EQ(
+      request->pitches[0],
+      *SpelledPitch::create(Letter::kD, 4, Accidental::kFlat)->to_midi_pitch());
+}
+
+TEST(NoteAuditionTest, AccidentalStepAuditionIsSilentOnBoundary) {
+  // Both ends of the ladder and the sounding-MIDI boundary are silent,
+  // exactly where the command builds nothing.
+  {
+    Fixture            fixture;
+    const SpelledPitch c_double_sharp4 =
+        *SpelledPitch::create(Letter::kC, 4, Accidental::kDoubleSharp);
+    const Note note = append_quarter_note(fixture, c_double_sharp4);
+    fixture.normalize_voice();
+    EXPECT_FALSE(audition_for_accidental_step(fixture.project,
+                                              notehead_item(fixture, note.id),
+                                              AccidentalStepDirection::kRaise)
+                     .has_value());
+  }
+  {
+    Fixture            fixture;
+    const SpelledPitch c_double_flat4 =
+        *SpelledPitch::create(Letter::kC, 4, Accidental::kDoubleFlat);
+    const Note note = append_quarter_note(fixture, c_double_flat4);
+    fixture.normalize_voice();
+    EXPECT_FALSE(audition_for_accidental_step(fixture.project,
+                                              notehead_item(fixture, note.id),
+                                              AccidentalStepDirection::kLower)
+                     .has_value());
+  }
+  {
+    Fixture            fixture;
+    const SpelledPitch g9   = *SpelledPitch::create(Letter::kG, 9);
+    const Note         note = append_quarter_note(fixture, g9);
+    fixture.normalize_voice();
+    EXPECT_FALSE(audition_for_accidental_step(fixture.project,
+                                              notehead_item(fixture, note.id),
+                                              AccidentalStepDirection::kRaise)
+                     .has_value());
+  }
+}
+
+TEST(NoteAuditionTest, AccidentalStepAuditionIsSilentOnStaleNotehead) {
+  Fixture            fixture;
+  const SpelledPitch c4 = *SpelledPitch::create(Letter::kC, 4);
+  append_quarter_note(fixture, c4);
+  fixture.normalize_voice();
+
+  const std::optional<NoteAuditionRequest> request =
+      audition_for_accidental_step(
+          fixture.project, notehead_item(fixture, NotationEntityId::generate()),
+          AccidentalStepDirection::kRaise);
   EXPECT_FALSE(request.has_value());
 }
 

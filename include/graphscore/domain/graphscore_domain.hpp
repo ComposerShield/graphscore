@@ -103,6 +103,7 @@
 #include <graphscore/domain/set_track_pan_command.hpp>
 #include <graphscore/domain/set_track_solo_command.hpp>
 #include <graphscore/domain/staff_layout.hpp>
+#include <graphscore/domain/step_accidental_command.hpp>
 #include <graphscore/domain/tempo_lane.hpp>
 #include <graphscore/domain/track.hpp>
 #include <graphscore/domain/validation_service.hpp>

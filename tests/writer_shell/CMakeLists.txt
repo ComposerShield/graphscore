@@ -181,3 +181,23 @@ set_tests_properties(graphscore_writer_notehead_move_test PROPERTIES
   PASS_REGULAR_EXPRESSION "notehead-move-test: ok"
   TIMEOUT 30
 )
+
+# M5-phase-21: exercise SelectionToolHandler's unmodified `-`/`=` accidental
+# step through the writer executable's own --test-accidental-step path -- the
+# single-selected-notehead step along the double-flat .. double-sharp ladder,
+# the hard reject at either end of that ladder, same-selection retention,
+# layout refresh, post-edit audition, and every no-op case (no selection,
+# stale identity, multi-notehead, range selection, Shift chord). This is a
+# headless code path -- no window, no SDL -- built on WriterShell's
+# dispatch_test_key_event and dispatch_test_pointer_event seams.
+#
+# The headless test uses no rendering backend and works in both writer-ON
+# and writer-OFF configurations.
+add_test(NAME graphscore_writer_accidental_step_test
+  COMMAND graphscore_writer_app --test-accidental-step
+)
+
+set_tests_properties(graphscore_writer_accidental_step_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "accidental-step-test: ok"
+  TIMEOUT 30
+)

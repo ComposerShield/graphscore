@@ -413,10 +413,11 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
 
 // Translates SDL's physical scancode (event.key.scancode), not the layout-
 // dependent logical keycode (event.key.key). The physical scancode is what
-// keeps arrow/Home/End identification layout-independent — see KeyCode's
-// doc comment in the public header for why that matters here and how it
-// relates to M5-phase-27's action table. Any scancode outside this
-// minimal set maps to kUnknown.
+// keeps arrow/Home/End identification layout-independent, and is also how
+// the two character keys `-`/`=` are identified — see KeyCode's doc comment
+// in the public header for why that matters here and how it relates to
+// M5-phase-27's action table. Any scancode outside this minimal set maps to
+// kUnknown.
 [[nodiscard]] KeyCode sdl_scancode_to_key_code(
     SDL_Scancode sdl_scancode) noexcept {
   switch (sdl_scancode) {
@@ -432,6 +433,10 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
       return KeyCode::kHome;
     case SDL_SCANCODE_END:
       return KeyCode::kEnd;
+    case SDL_SCANCODE_MINUS:
+      return KeyCode::kMinus;
+    case SDL_SCANCODE_EQUALS:
+      return KeyCode::kEquals;
     default:
       return KeyCode::kUnknown;
   }

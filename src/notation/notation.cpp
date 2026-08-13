@@ -5611,6 +5611,89 @@ std::optional<NoteAuditionRequest> audition_for_notehead_move(
   return request;
 }
 
+std::unique_ptr<Command> make_step_accidental_command(
+    const Project& project, const NoteheadItem& notehead,
+    AccidentalStepDirection direction) {
+  const std::optional<NoteheadSet> set = NoteheadSet::create({notehead});
+  if (!set.has_value())
+    return nullptr;
+  if (!validate_selection(project, Selection{*set}).empty())
+    return nullptr;
+  return std::make_unique<StepAccidentalCommand>(notehead.node, notehead.track,
+                                                 notehead.stave, notehead.voice,
+                                                 notehead.entity, direction);
+}
+
+std::optional<NoteAuditionRequest> audition_for_accidental_step(
+    const Project& project, const NoteheadItem& notehead,
+    AccidentalStepDirection direction) {
+  // The same notehead-arm check make_step_accidental_command uses, so an
+  // invalid or stale notehead auditions nothing exactly when the command
+  // would build nothing.
+  const std::optional<NoteheadSet> set = NoteheadSet::create({notehead});
+  if (!set.has_value())
+    return std::nullopt;
+  if (!validate_selection(project, Selection{*set}).empty())
+    return std::nullopt;
+
+  // Resolve the notehead's current spelling. validate_selection already
+  // proved the id names a Note, ChordNote, or GraceNote in the addressed
+  // voice; the scan here recovers its SpelledPitch (the same value
+  // StepAccidentalCommand's own resolution reads), so the audited post-edit
+  // pitch can never disagree with the pitch the command writes.
+  const Node* node = project.find_node(notehead.node);
+  if (node == nullptr)
+    return std::nullopt;
+  const TrackLane* lane = node->lane(notehead.track);
+  if (lane == nullptr)
+    return std::nullopt;
+  const StaveVoices* stave = lane->stave(notehead.stave);
+  if (stave == nullptr)
+    return std::nullopt;
+  const VoiceContent& voice = stave->voice(notehead.voice);
+
+  std::optional<SpelledPitch> current;
+  for (const VoiceEvent& event : voice.events()) {
+    if (const auto* n = std::get_if<Note>(&event)) {
+      if (n->id == notehead.entity)
+        current = n->pitch;
+    } else if (const auto* c = std::get_if<Chord>(&event)) {
+      for (const ChordNote& chord_note : c->notes) {
+        if (chord_note.id == notehead.entity)
+          current = chord_note.pitch;
+      }
+    }
+    if (current.has_value())
+      break;
+  }
+  if (!current.has_value()) {
+    for (const GraceGroup& group : voice.grace_groups()) {
+      for (const GraceNote& grace : group.notes) {
+        if (grace.id == notehead.entity)
+          current = grace.pitch;
+      }
+      if (current.has_value())
+        break;
+    }
+  }
+  if (!current.has_value())
+    return std::nullopt;
+
+  const std::optional<SpelledPitch> target =
+      step_notehead_accidental(*current, direction);
+  if (!target.has_value())
+    return std::nullopt;
+  const std::optional<MidiPitch> midi = target->to_midi_pitch();
+  if (!midi.has_value())
+    return std::nullopt;
+
+  NoteAuditionRequest request;
+  request.track_id = notehead.track;
+  request.velocity = velocity_for_dynamic(project.default_dynamic());
+  request.pitches.push_back(*midi);
+  return request;
+}
+
 std::optional<NoteAuditionRequest> audition_for_note_entry(
     const Project& project, NodeId node_id, TrackId track_id, StaveId stave_id,
     Rational position, const NotePaletteEntrySpec& armed,

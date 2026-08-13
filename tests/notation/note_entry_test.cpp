@@ -14,6 +14,8 @@
 
 namespace {
 
+using graphscore::Accidental;
+using graphscore::AccidentalStepDirection;
 using graphscore::Chord;
 using graphscore::ChordNote;
 using graphscore::Command;
@@ -38,6 +40,7 @@ using graphscore::make_note;
 using graphscore::make_note_entry_command;
 using graphscore::make_rest;
 using graphscore::make_slur;
+using graphscore::make_step_accidental_command;
 using graphscore::Measure;
 using graphscore::MidiChannel;
 using graphscore::Node;
@@ -1874,6 +1877,51 @@ TEST(NoteEntryTest, MoveNoteheadCommandWrongKindReturnsNull) {
                           *Voice::create(1), original.id};
   EXPECT_EQ(make_move_notehead_command(fixture.project, item,
                                        NoteheadStepDirection::kUp),
+            nullptr);
+}
+
+// ---- make_step_accidental_command (M5-phase-21) ----------------------------
+
+TEST(NoteEntryTest, StepAccidentalCommandValidSingleNotehead) {
+  Fixture            fixture;
+  const SpelledPitch c4       = *SpelledPitch::create(Letter::kC, 4);
+  const Note         original = append_quarter_note(fixture, c4);
+  fixture.normalize_voice();
+
+  const NoteheadItem item{fixture.node_id, fixture.track(), fixture.stave_id(),
+                          *Voice::create(1), original.id};
+
+  auto cmd = make_step_accidental_command(fixture.project, item,
+                                          AccidentalStepDirection::kRaise);
+  ASSERT_NE(cmd, nullptr);
+  EXPECT_TRUE(cmd->execute(fixture.project).ok());
+  const Note& stepped = std::get<Note>(fixture.voice().events().front());
+  EXPECT_EQ(stepped.id, original.id);
+  EXPECT_EQ(stepped.pitch,
+            *SpelledPitch::create(Letter::kC, 4, Accidental::kSharp));
+}
+
+TEST(NoteEntryTest, StepAccidentalCommandStaleNoteheadReturnsNull) {
+  Fixture            fixture;
+  const SpelledPitch c4 = *SpelledPitch::create(Letter::kC, 4);
+  append_quarter_note(fixture, c4);
+  fixture.normalize_voice();
+
+  const NoteheadItem item{fixture.node_id, fixture.track(), fixture.stave_id(),
+                          *Voice::create(1), NotationEntityId::generate()};
+  EXPECT_EQ(make_step_accidental_command(fixture.project, item,
+                                         AccidentalStepDirection::kRaise),
+            nullptr);
+}
+
+TEST(NoteEntryTest, StepAccidentalCommandWrongKindReturnsNull) {
+  Fixture    fixture;
+  const Rest original = append_whole_rest(fixture);
+  // A top-level Rest id is not a notehead identity.
+  const NoteheadItem item{fixture.node_id, fixture.track(), fixture.stave_id(),
+                          *Voice::create(1), original.id};
+  EXPECT_EQ(make_step_accidental_command(fixture.project, item,
+                                         AccidentalStepDirection::kLower),
             nullptr);
 }
 

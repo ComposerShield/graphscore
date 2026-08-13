@@ -61,6 +61,7 @@ constexpr std::string_view kKeyEventsTestFlag      = "--test-key-events";
 constexpr std::string_view kKeyEventsShellTestFlag = "--test-key-events-shell";
 constexpr std::string_view kKeySelectionTestFlag   = "--test-key-selection";
 constexpr std::string_view kNoteheadMoveTestFlag   = "--test-notehead-move";
+constexpr std::string_view kAccidentalStepTestFlag = "--test-accidental-step";
 
 const char* describe(graphscore::ShellError error) {
   switch (error) {
@@ -370,6 +371,11 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // M5-phase-20 adds unmodified Up/Down: with exactly one selected notehead,
   // the notehead moves one diatonic staff step (move_selected_notehead). This
   // never conflicts with Shift+Up/Down above, which stays range extension.
+  //
+  // M5-phase-21 adds unmodified `-`/`=`: with exactly one selected notehead,
+  // its accidental steps one rung down/up the double-flat .. double-sharp
+  // ladder (step_selected_accidental). Shift+`-`/`=` is not a binding either
+  // phase owns, so it falls into the Shift branch above and is a no-op there.
   void on_key_press(graphscore::KeyEvent event) override {
     if (active_tool_ != graphscore::ActiveTool::kSelection) {
       return;
@@ -417,8 +423,10 @@ class SelectionToolHandler final : public graphscore::InputHandler {
     }
 
     // M5-phase-20: unmodified Up/Down moves the single selected notehead one
-    // diatonic staff step. Any other modifier chord is not a binding this
-    // phase owns and is a no-op (the full action table is M5-phase-26/27's).
+    // diatonic staff step. M5-phase-21: unmodified `-`/`=` steps that
+    // notehead's accidental one rung down/up the double-flat .. double-sharp
+    // ladder. Any other modifier chord is not a binding these phases own and
+    // is a no-op (the full action table is M5-phase-26/27's).
     if (event.modifiers.control || event.modifiers.alt ||
         event.modifiers.meta) {
       return;
@@ -431,6 +439,14 @@ class SelectionToolHandler final : public graphscore::InputHandler {
       case graphscore::KeyCode::kDown:
         std::ignore =
             move_selected_notehead(graphscore::NoteheadStepDirection::kDown);
+        break;
+      case graphscore::KeyCode::kMinus:
+        std::ignore = step_selected_accidental(
+            graphscore::AccidentalStepDirection::kLower);
+        break;
+      case graphscore::KeyCode::kEquals:
+        std::ignore = step_selected_accidental(
+            graphscore::AccidentalStepDirection::kRaise);
         break;
       case graphscore::KeyCode::kUnknown:
       default:
@@ -637,6 +653,21 @@ class SelectionToolHandler final : public graphscore::InputHandler {
     move_command_factory_ = std::move(factory);
   }
 
+  // The step that builds the reversible command for an accidental step.
+  // `run()` and the accidental-step tests keep the default
+  // (make_step_accidental_command); the rollback-failure tests replace it
+  // with a wrapper whose undo fails a configured number of times, so a
+  // deterministic rollback failure can be injected without relying on actual
+  // allocation failure.
+  using AccidentalCommandFactory =
+      std::function<std::unique_ptr<graphscore::Command>(
+          const graphscore::Project&, const graphscore::NoteheadItem&,
+          graphscore::AccidentalStepDirection)>;
+
+  void set_accidental_command_factory(AccidentalCommandFactory factory) {
+    accidental_command_factory_ = std::move(factory);
+  }
+
   // Builds the retained incremental layout cache from the current project and
   // layout, so a later refresh_layout() reuses unaffected systems instead of
   // full-resetting on its first call (which rebuilds everything and hides a
@@ -733,6 +764,77 @@ class SelectionToolHandler final : public graphscore::InputHandler {
       }
       // Project restored exactly: re-seed the retained cache from it so the
       // next move stays incremental.
+      layout_cache_.reset();
+      warm_layout_cache();
+      return false;
+    }
+
+    // Publication succeeded: commit the command (clears redo, exactly
+    // execute_new's normal success path). Capacity was reserved before
+    // execute, so this cannot fail here.
+    if (!transaction.commit().ok()) {
+      return false;
+    }
+    last_audition_ = audition;
+    return true;
+  }
+
+  // Steps the single selected notehead's accidental one rung along the
+  // double-flat .. double-sharp ladder (M5-phase-21). Requires the committed
+  // selection to be a NoteheadSet with exactly one item; any other selection
+  // -- none, a range, a non-notehead arm, or a multi-notehead set -- is a
+  // no-op returning false. The step runs as one reversible command through
+  // the handler's CommandHistory, exactly as move_selected_notehead above
+  // does: same provisional-transaction, same rollback and poisoned-history
+  // handling, same incremental layout refresh and surface publication, and
+  // the same short audition request for the post-edit pitch (M5-phase-15; an
+  // accidental step changes the sounding pitch, so it auditions).
+  //
+  // Either end of the ladder is a hard reject, never a clamp: `-` on a
+  // double-flat and `=` on a double-sharp build no command, execute nothing,
+  // push no undo entry, and issue no audition. The same is true when the
+  // resulting spelling would leave the sounding MIDI range.
+  bool step_selected_accidental(graphscore::AccidentalStepDirection direction) {
+    if (history_.poisoned()) {
+      // A prior rollback failed and has not been recovered: the authoritative
+      // project may disagree with the visible layout/surface. Refuse the
+      // mutation rather than pretend the history is consistent.
+      return false;
+    }
+    const auto* set = current_notehead_set();
+    if (set == nullptr || set->items().size() != 1u) {
+      return false;
+    }
+    const graphscore::NoteheadItem&                      item = set->items()[0];
+    const std::optional<graphscore::NoteAuditionRequest> audition =
+        graphscore::audition_for_accidental_step(project_, item, direction);
+    std::unique_ptr<graphscore::Command> command =
+        accidental_command_factory_(project_, item, direction);
+    if (command == nullptr) {
+      return false;
+    }
+
+    // Provisional execute: apply the spelling mutation WITHOUT clearing the
+    // redo stack, so a failed publication can restore the exact prior
+    // history (including any pre-existing redo) rather than destroying it.
+    graphscore::CommandHistory::Transaction transaction =
+        history_.begin_transaction(std::move(command), project_);
+    if (!transaction.active()) {
+      return false;
+    }
+
+    if (!refresh_layout()) {
+      const graphscore::Result rollback = transaction.abort();
+      if (!rollback.ok()) {
+        // The rollback failed: the history is now poisoned (the command and
+        // its exact project are retained for recover()). Attempt recovery
+        // once; a one-shot failure recovers here, while a persistent failure
+        // leaves the handler unavailable and further steps blocked.
+        recover_from_failed_rollback();
+        return false;
+      }
+      // Project restored exactly: re-seed the retained cache from it so the
+      // next step stays incremental.
       layout_cache_.reset();
       warm_layout_cache();
       return false;
@@ -1040,7 +1142,8 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   graphscore::NotationLayout     layout_;
   graphscore::WriterShell*       shell_;
   graphscore::SelectionDragState drag_;
-  // Reversible-command history for notehead moves (M5-phase-20). Undo/redo
+  // Reversible-command history for notehead moves (M5-phase-20) and
+  // accidental steps (M5-phase-21). Undo/redo
   // key bindings belong to M5-phase-26; this phase routes each mutation
   // through begin_transaction()/commit()/abort() so it is undoable once
   // those bindings exist and a failed surface publication restores the exact
@@ -1051,6 +1154,11 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // replace it with a deterministic failing wrapper.
   MoveCommandFactory move_command_factory_ =
       &graphscore::make_move_notehead_command;
+  // The accidental-step command factory; see set_accidental_command_factory().
+  // The default builds the real StepAccidentalCommand; the rollback-failure
+  // tests replace it with a deterministic failing wrapper.
+  AccidentalCommandFactory accidental_command_factory_ =
+      &graphscore::make_step_accidental_command;
   // Glyph metrics used to refresh the retained layout after a move; see
   // set_metrics() and refresh_layout().
   const graphscore::GlyphMetrics* metrics_ = nullptr;
@@ -3106,11 +3214,12 @@ int key_events_test() {
   shell.set_input_handler(&handler);
 
   // --- test: every KeyCode value round-trips unchanged -------------------
-  constexpr std::array<graphscore::KeyCode, 7> kAllCodes{
+  constexpr std::array<graphscore::KeyCode, 9> kAllCodes{
       graphscore::KeyCode::kUnknown, graphscore::KeyCode::kLeft,
       graphscore::KeyCode::kRight,   graphscore::KeyCode::kUp,
       graphscore::KeyCode::kDown,    graphscore::KeyCode::kHome,
-      graphscore::KeyCode::kEnd,
+      graphscore::KeyCode::kEnd,     graphscore::KeyCode::kMinus,
+      graphscore::KeyCode::kEquals,
   };
   for (const graphscore::KeyCode code : kAllCodes) {
     const std::size_t    before = handler.events.size();
@@ -3199,29 +3308,33 @@ int key_events_shell_test() {
 
   // Raw SDL_Scancode values, verified against the fetched SDL3 headers
   // (SDL3/SDL_scancode.h at the pinned commit): LEFT=80, RIGHT=79, UP=82,
-  // DOWN=81, HOME=74, END=77. SDL_SCANCODE_A=4 is a mapped character-key
-  // scancode outside this sub-phase's minimal set and must translate to
-  // kUnknown.
-  constexpr std::uint32_t kScancodeLeft  = 80;
-  constexpr std::uint32_t kScancodeRight = 79;
-  constexpr std::uint32_t kScancodeUp    = 82;
-  constexpr std::uint32_t kScancodeDown  = 81;
-  constexpr std::uint32_t kScancodeHome  = 74;
-  constexpr std::uint32_t kScancodeEnd   = 77;
-  constexpr std::uint32_t kScancodeA     = 4;
+  // DOWN=81, HOME=74, END=77, MINUS=45, EQUALS=46. SDL_SCANCODE_A=4 is a
+  // mapped character-key scancode outside this minimal set and must
+  // translate to kUnknown.
+  constexpr std::uint32_t kScancodeLeft   = 80;
+  constexpr std::uint32_t kScancodeRight  = 79;
+  constexpr std::uint32_t kScancodeUp     = 82;
+  constexpr std::uint32_t kScancodeDown   = 81;
+  constexpr std::uint32_t kScancodeHome   = 74;
+  constexpr std::uint32_t kScancodeEnd    = 77;
+  constexpr std::uint32_t kScancodeMinus  = 45;
+  constexpr std::uint32_t kScancodeEquals = 46;
+  constexpr std::uint32_t kScancodeA      = 4;
 
   struct ScancodeCase {
     std::uint32_t       scancode;
     graphscore::KeyCode expected;
   };
 
-  constexpr std::array<ScancodeCase, 6> kMappedScancodes{{
+  constexpr std::array<ScancodeCase, 8> kMappedScancodes{{
       {kScancodeLeft, graphscore::KeyCode::kLeft},
       {kScancodeRight, graphscore::KeyCode::kRight},
       {kScancodeUp, graphscore::KeyCode::kUp},
       {kScancodeDown, graphscore::KeyCode::kDown},
       {kScancodeHome, graphscore::KeyCode::kHome},
       {kScancodeEnd, graphscore::KeyCode::kEnd},
+      {kScancodeMinus, graphscore::KeyCode::kMinus},
+      {kScancodeEquals, graphscore::KeyCode::kEquals},
   }};
 
   for (const ScancodeCase& test_case : kMappedScancodes) {
@@ -4365,11 +4478,14 @@ struct NoteheadMoveFixture {
   return *voice;
 }
 
-// A natural spelled pitch; the octaves this test uses (4, 5) are always in
-// range, but the value is checked before dereferencing.
-[[nodiscard]] graphscore::SpelledPitch spelled(graphscore::Letter letter,
-                                               std::int8_t        octave) {
-  const auto pitch = graphscore::SpelledPitch::create(letter, octave);
+// A spelled pitch, natural unless an accidental is named; the octaves these
+// tests use (4, 5) are always in range, but the value is checked before
+// dereferencing.
+[[nodiscard]] graphscore::SpelledPitch spelled(
+    graphscore::Letter letter, std::int8_t octave,
+    graphscore::Accidental accidental = graphscore::Accidental::kNatural) {
+  const auto pitch =
+      graphscore::SpelledPitch::create(letter, octave, accidental);
   if (!pitch.has_value()) {
     return graphscore::SpelledPitch{};
   }
@@ -6061,6 +6177,847 @@ int notehead_move_test() {
   return 0;
 }
 
+// ---- M5-phase-21: accidental step ----------------------------------------
+//
+// Exercises SelectionToolHandler's unmodified `-`/`=` dispatch: with exactly
+// one selected notehead, its accidental steps one rung down/up the
+// double-flat .. double-sharp ladder, its letter/octave and identity are
+// preserved, the same notehead identity stays selected, the retained layout
+// is refreshed and re-published, and the post-edit pitch is auditioned.
+// Either end of the ladder is a hard reject that builds no command, records
+// no history entry, and issues no audition. No selection, a non-notehead
+// selection, a multi-notehead selection, a stale notehead, and Shift chords
+// remain no-ops.
+int accidental_step_test() {
+  const SelfTestMetrics metrics;
+
+  const graphscore::SpelledPitch c4 = spelled(graphscore::Letter::kC, 4);
+  const graphscore::SpelledPitch c_sharp4 =
+      spelled(graphscore::Letter::kC, 4, graphscore::Accidental::kSharp);
+  const graphscore::SpelledPitch c_double_sharp4 =
+      spelled(graphscore::Letter::kC, 4, graphscore::Accidental::kDoubleSharp);
+  const graphscore::SpelledPitch c_flat4 =
+      spelled(graphscore::Letter::kC, 4, graphscore::Accidental::kFlat);
+  const graphscore::SpelledPitch c_double_flat4 =
+      spelled(graphscore::Letter::kC, 4, graphscore::Accidental::kDoubleFlat);
+
+  // --- test 1: a real click selects the notehead, then unmodified `=`/`-`
+  //     step its accidental, retain identity/selection, re-publish a
+  //     different visible surface, and audition the post-edit pitch. ------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "accidental-step-test: fixture build failed (1)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::Voice voice1 = voice_one();
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr,
+                   "accidental-step-test: initial surface publish failed\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto before_surface = shell.test_snapshot_notation_surface();
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->first_note_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(stderr,
+                     "accidental-step-test: click did not select the "
+                     "notehead (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    const auto first_pitch = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+      return std::get<graphscore::Note>(vc.events().front()).pitch;
+    };
+    if (first_pitch() != c4) {
+      std::fprintf(stderr,
+                   "accidental-step-test: expected C4 before the step (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kEquals));
+    if (first_pitch() != c_sharp4) {
+      std::fprintf(stderr,
+                   "accidental-step-test: `=` did not raise C4 to C#4 (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(stderr,
+                     "accidental-step-test: selection changed after `=` (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    const auto after_surface = shell.test_snapshot_notation_surface();
+    if (!after_surface.has_value() || after_surface == before_surface) {
+      std::fprintf(stderr,
+                   "accidental-step-test: visible surface not re-published "
+                   "after `=` (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // Audition: the post-edit sounding pitch (C#4 = MIDI 61) on the track.
+    {
+      const auto& audition = handler.last_audition();
+      if (!audition.has_value() || audition->track_id != fx->track_id ||
+          audition->pitches.size() != 1u ||
+          audition->pitches[0].value() != 61) {
+        std::fprintf(stderr,
+                     "accidental-step-test: no C#4 audition after `=` (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kMinus));
+    if (first_pitch() != c4) {
+      std::fprintf(stderr,
+                   "accidental-step-test: `-` did not lower C#4 back to "
+                   "C4 (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kMinus));
+    if (first_pitch() != c_flat4) {
+      std::fprintf(stderr,
+                   "accidental-step-test: `-` did not lower C4 to Cb4 (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto& audition = handler.last_audition();
+      if (!audition.has_value() || audition->pitches.size() != 1u ||
+          audition->pitches[0].value() != 59) {
+        std::fprintf(stderr,
+                     "accidental-step-test: no Cb4 audition after `-` (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(stderr,
+                     "accidental-step-test: selection changed after `-` (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 1b/1c: the ladder ends are hard rejects, never clamps. `=` on a
+  //     double-sharp and `-` on a double-flat build no command, so the
+  //     project, the history, and the last audition are all untouched. -----
+  {
+    struct LadderEndCase {
+      const char*              label;
+      graphscore::KeyCode      code;
+      graphscore::SpelledPitch end;       // pitch two steps from natural
+      int                      end_midi;  // its sounding pitch
+    };
+
+    const std::array<LadderEndCase, 2> kLadderEnds{{
+        {"1b", graphscore::KeyCode::kEquals, c_double_sharp4, 62},
+        {"1c", graphscore::KeyCode::kMinus, c_double_flat4, 58},
+    }};
+
+    for (const LadderEndCase& test_case : kLadderEnds) {
+      auto fx = build_notehead_move_fixture(metrics);
+      if (!fx.has_value()) {
+        std::fprintf(stderr,
+                     "accidental-step-test: fixture build failed (%s)\n",
+                     test_case.label);
+        return 1;
+      }
+      graphscore::WriterShell shell;
+      SelectionToolHandler    handler(std::move(fx->project),
+                                      std::move(fx->layout), &shell);
+      handler.set_metrics(&metrics);
+      handler.set_surface_publisher(
+          [&shell](const graphscore::NotationLayout& layout) {
+            return publish_headless_test_surface(layout, &shell);
+          });
+      shell.set_input_handler(&handler);
+      handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+      const graphscore::Voice voice1      = voice_one();
+      const auto              first_pitch = [&]() {
+        const auto* lane =
+            handler.project().find_node(fx->node_id)->lane(fx->track_id);
+        const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+        return std::get<graphscore::Note>(vc.events().front()).pitch;
+      };
+
+      if (!select_noteheads(
+              handler,
+              {graphscore::NoteheadItem{fx->node_id, fx->track_id, fx->stave_id,
+                                        voice1, fx->first_note_id}})) {
+        std::fprintf(stderr, "accidental-step-test: selection rejected (%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+
+      // Two steps reach the end of the ladder from a natural.
+      shell.dispatch_test_key_event(plain_key(test_case.code));
+      shell.dispatch_test_key_event(plain_key(test_case.code));
+      if (first_pitch() != test_case.end ||
+          handler.test_undo_stack_size() != 2u) {
+        std::fprintf(stderr,
+                     "accidental-step-test: two steps did not reach the "
+                     "ladder end (%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+      const auto before_surface = shell.test_snapshot_notation_surface();
+
+      // The third step is off the ladder: rejected outright.
+      shell.dispatch_test_key_event(plain_key(test_case.code));
+      if (first_pitch() != test_case.end) {
+        std::fprintf(stderr,
+                     "accidental-step-test: a step past the ladder end "
+                     "changed the pitch (%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+      if (handler.test_undo_stack_size() != 2u ||
+          handler.test_redo_stack_size() != 0u) {
+        std::fprintf(stderr,
+                     "accidental-step-test: a step past the ladder end "
+                     "recorded history (%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+      if (shell.test_snapshot_notation_surface() != before_surface) {
+        std::fprintf(stderr,
+                     "accidental-step-test: a step past the ladder end "
+                     "re-published the surface (%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+      // No new audition was issued: the last one is still the successful
+      // step's post-edit pitch.
+      {
+        const auto& audition = handler.last_audition();
+        if (!audition.has_value() || audition->pitches.size() != 1u ||
+            audition->pitches[0].value() != test_case.end_midi) {
+          std::fprintf(stderr,
+                       "accidental-step-test: a step past the ladder end "
+                       "issued an audition (%s)\n",
+                       test_case.label);
+          shell.set_input_handler(nullptr);
+          return 1;
+        }
+      }
+      shell.set_input_handler(nullptr);
+    }
+  }
+
+  // --- test 1d: clicking one chord notehead steps only that notehead's
+  //     accidental; the other chord notehead is untouched. ----------------
+  {
+    auto fx = build_notehead_click_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "accidental-step-test: fixture build failed (1d)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->chord_note_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->chord_note_id) {
+        std::fprintf(stderr,
+                     "accidental-step-test: click did not select the chord "
+                     "notehead (1d)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kEquals));
+    const auto chord = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice_one());
+      for (const auto& event : vc.events()) {
+        if (const auto* c = std::get_if<graphscore::Chord>(&event)) {
+          if (c->id == fx->chord_id) {
+            return *c;
+          }
+        }
+      }
+      return graphscore::Chord{};
+    };
+    const graphscore::Chord after = chord();
+    const auto notehead_pitch     = [&after](graphscore::NotationEntityId id) {
+      for (const auto& note : after.notes) {
+        if (note.id == id) {
+          return note.pitch;
+        }
+      }
+      return graphscore::SpelledPitch{};
+    };
+    if (notehead_pitch(fx->chord_note_id) !=
+            spelled(graphscore::Letter::kE, 4,
+                    graphscore::Accidental::kSharp) ||
+        notehead_pitch(fx->chord_other_id) !=
+            spelled(graphscore::Letter::kG, 4)) {
+      std::fprintf(stderr,
+                   "accidental-step-test: chord notehead step wrong (1d)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 1e: clicking a grace notehead steps its accidental. ----------
+  {
+    auto fx = build_notehead_click_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "accidental-step-test: fixture build failed (1e)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::NotationPoint point =
+        grace_notehead_origin(handler.layout(), fx->grace_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->grace_id) {
+        std::fprintf(stderr,
+                     "accidental-step-test: click did not select the grace "
+                     "notehead (1e)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kMinus));
+    const auto grace_pitch = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice_one());
+      return vc.grace_groups()[0].notes[0].pitch;
+    };
+    if (grace_pitch() !=
+        spelled(graphscore::Letter::kF, 4, graphscore::Accidental::kFlat)) {
+      std::fprintf(stderr,
+                   "accidental-step-test: `-` did not step the grace "
+                   "note (1e)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 2/3/4/5: every no-op case leaves the project unchanged: no
+  //     selection, a stale notehead identity, a multi-notehead selection, a
+  //     Shift chord (which stays M5-phase-19b range extension), and a
+  //     Control/Alt/Meta chord (no binding this phase owns). ---------------
+  {
+    enum class NoOpCase : std::uint8_t {
+      kNoSelection,
+      kStaleIdentity,
+      kMultiNotehead,
+      kShiftChord,
+      kModifierChord,
+    };
+
+    struct NoOpSpec {
+      const char* label;
+      NoOpCase    kind;
+    };
+
+    const std::array<NoOpSpec, 5> kNoOpCases{{
+        {"2", NoOpCase::kNoSelection},
+        {"3", NoOpCase::kStaleIdentity},
+        {"4", NoOpCase::kMultiNotehead},
+        {"5", NoOpCase::kShiftChord},
+        {"5b", NoOpCase::kModifierChord},
+    }};
+
+    for (const NoOpSpec& test_case : kNoOpCases) {
+      auto fx = build_notehead_move_fixture(metrics);
+      if (!fx.has_value()) {
+        std::fprintf(stderr,
+                     "accidental-step-test: fixture build failed (%s)\n",
+                     test_case.label);
+        return 1;
+      }
+      graphscore::WriterShell shell;
+      SelectionToolHandler    handler(std::move(fx->project),
+                                      std::move(fx->layout), &shell);
+      handler.set_metrics(&metrics);
+      shell.set_input_handler(&handler);
+      handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+      const graphscore::Voice voice1 = voice_one();
+      bool                    armed  = true;
+      switch (test_case.kind) {
+        case NoOpCase::kNoSelection:
+          break;
+        case NoOpCase::kStaleIdentity:
+          armed = select_noteheads(
+              handler, {graphscore::NoteheadItem{
+                           fx->node_id, fx->track_id, fx->stave_id, voice1,
+                           graphscore::NotationEntityId::generate()}});
+          break;
+        case NoOpCase::kMultiNotehead:
+          armed = select_noteheads(
+              handler,
+              {graphscore::NoteheadItem{fx->node_id, fx->track_id, fx->stave_id,
+                                        voice1, fx->first_note_id},
+               graphscore::NoteheadItem{fx->node_id, fx->track_id, fx->stave_id,
+                                        voice1, fx->second_note_id}});
+          break;
+        case NoOpCase::kShiftChord:
+        case NoOpCase::kModifierChord:
+          armed = select_noteheads(
+              handler,
+              {graphscore::NoteheadItem{fx->node_id, fx->track_id, fx->stave_id,
+                                        voice1, fx->first_note_id}});
+          break;
+      }
+      if (!armed) {
+        std::fprintf(stderr,
+                     "accidental-step-test: selection setup rejected (%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+
+      const auto first_pitch = [&]() {
+        const auto* lane =
+            handler.project().find_node(fx->node_id)->lane(fx->track_id);
+        const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+        return std::get<graphscore::Note>(vc.events().front()).pitch;
+      };
+
+      if (test_case.kind == NoOpCase::kShiftChord) {
+        shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kEquals));
+        shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kMinus));
+      } else if (test_case.kind == NoOpCase::kModifierChord) {
+        for (const graphscore::KeyCode code :
+             {graphscore::KeyCode::kEquals, graphscore::KeyCode::kMinus}) {
+          graphscore::KeyEvent control = plain_key(code);
+          control.modifiers.control    = true;
+          shell.dispatch_test_key_event(control);
+          graphscore::KeyEvent alt = plain_key(code);
+          alt.modifiers.alt        = true;
+          shell.dispatch_test_key_event(alt);
+          graphscore::KeyEvent meta = plain_key(code);
+          meta.modifiers.meta       = true;
+          shell.dispatch_test_key_event(meta);
+        }
+      } else {
+        shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kEquals));
+        shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kMinus));
+      }
+      if (first_pitch() != c4 || handler.test_undo_stack_size() != 0u ||
+          handler.last_audition().has_value()) {
+        std::fprintf(stderr,
+                     "accidental-step-test: a no-op case mutated the "
+                     "project (%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+      if (test_case.kind == NoOpCase::kNoSelection &&
+          handler.drag_state().committed_selection().has_value()) {
+        std::fprintf(stderr,
+                     "accidental-step-test: a key press created a "
+                     "selection (%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+      shell.set_input_handler(nullptr);
+    }
+  }
+
+  // --- test 6: unmodified `=` with a committed range selection is a no-op
+  //     that leaves the range selection intact. ---------------------------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "accidental-step-test: fixture build failed (6)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    const auto& layout = handler.layout();
+    {
+      const double x1 = layout.systems[0].measures[0].bounds.x;
+      const double x2 = layout.systems[0].measures[0].bounds.x +
+                        layout.systems[0].measures[0].bounds.width;
+      const double y = layout.systems[0].staves[0].bounds.y +
+                       layout.systems[0].staves[0].bounds.height * 0.5;
+      drag_through_shell(shell, x1, y, x2, y);
+    }
+    const auto before = handler.drag_state().committed_selection();
+    if (!before.has_value()) {
+      std::fprintf(stderr,
+                   "accidental-step-test: range selection setup failed (6)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kEquals));
+    if (handler.drag_state().committed_selection() != before) {
+      std::fprintf(stderr,
+                   "accidental-step-test: `=` with a range selection changed "
+                   "the selection (6)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 7: a failing surface publisher rolls the step back completely:
+  //     project, layout, surface, selection/highlight, history, and audition
+  //     stay unchanged, and the next step succeeds. -------------------------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "accidental-step-test: fixture build failed (7)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    bool fail_next_publish = true;
+    handler.set_surface_publisher(
+        [&shell, &fail_next_publish](const graphscore::NotationLayout& layout) {
+          if (fail_next_publish) {
+            fail_next_publish = false;
+            return graphscore::ShellResult{
+                graphscore::ShellError::kRenderingSetupFailed,
+                "injected publish failure"};
+          }
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::Voice voice1      = voice_one();
+    const auto              first_pitch = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+      return std::get<graphscore::Note>(vc.events().front()).pitch;
+    };
+
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(
+          stderr, "accidental-step-test: initial surface publish failed (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->first_note_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(
+            stderr,
+            "accidental-step-test: click did not select the note (7)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    const graphscore::SpelledPitch before_pitch = first_pitch();
+    const auto        before_surface   = shell.test_snapshot_notation_surface();
+    const auto        before_highlight = shell.test_snapshot_highlight_rects();
+    const auto        before_layout    = handler.layout();
+    const bool        before_audition  = handler.last_audition().has_value();
+    const std::size_t before_undo      = handler.test_undo_stack_size();
+    const std::size_t before_redo      = handler.test_redo_stack_size();
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kEquals));
+
+    if (first_pitch() != before_pitch || first_pitch() != c4) {
+      std::fprintf(stderr,
+                   "accidental-step-test: project mutated on publish "
+                   "failure (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler.layout() != before_layout) {
+      std::fprintf(stderr,
+                   "accidental-step-test: layout committed on publish "
+                   "failure (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (shell.test_snapshot_notation_surface() != before_surface) {
+      std::fprintf(stderr,
+                   "accidental-step-test: surface changed on publish "
+                   "failure (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (shell.test_snapshot_highlight_rects() != before_highlight) {
+      std::fprintf(stderr,
+                   "accidental-step-test: highlight changed on publish "
+                   "failure (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler.test_undo_stack_size() != before_undo ||
+        handler.test_redo_stack_size() != before_redo) {
+      std::fprintf(stderr,
+                   "accidental-step-test: history changed on publish "
+                   "failure (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler.last_audition().has_value() != before_audition) {
+      std::fprintf(stderr,
+                   "accidental-step-test: audition changed on publish "
+                   "failure (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(stderr,
+                     "accidental-step-test: selection changed on publish "
+                     "failure (7)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    // The next step (publisher now healthy) must succeed.
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kEquals));
+    if (first_pitch() != c_sharp4 || handler.test_undo_stack_size() != 1u) {
+      std::fprintf(stderr,
+                   "accidental-step-test: step after rollback did not "
+                   "commit (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 8/9: rollback failure. A persistent undo failure poisons the
+  //     history and blocks further mutation; a one-shot failure recovers and
+  //     the next step succeeds. -------------------------------------------
+  {
+    struct RollbackCase {
+      const char* label;
+      int         fail_times;
+    };
+
+    const std::array<RollbackCase, 2> kRollbackCases{{
+        {"8", 1'000'000},
+        {"9", 1},
+    }};
+
+    for (const RollbackCase& test_case : kRollbackCases) {
+      auto fx = build_notehead_move_fixture(metrics);
+      if (!fx.has_value()) {
+        std::fprintf(stderr,
+                     "accidental-step-test: fixture build failed (%s)\n",
+                     test_case.label);
+        return 1;
+      }
+      graphscore::WriterShell shell;
+      SelectionToolHandler    handler(std::move(fx->project),
+                                      std::move(fx->layout), &shell);
+      handler.set_metrics(&metrics);
+      bool fail_next_publish = true;
+      handler.set_surface_publisher(
+          [&shell,
+           &fail_next_publish](const graphscore::NotationLayout& layout) {
+            if (fail_next_publish) {
+              fail_next_publish = false;
+              return graphscore::ShellResult{
+                  graphscore::ShellError::kRenderingSetupFailed,
+                  "injected publish failure"};
+            }
+            return publish_headless_test_surface(layout, &shell);
+          });
+      const int fail_times = test_case.fail_times;
+      handler.set_accidental_command_factory(
+          [fail_times](const graphscore::Project&          project,
+                       const graphscore::NoteheadItem&     item,
+                       graphscore::AccidentalStepDirection direction) {
+            auto command = graphscore::make_step_accidental_command(
+                project, item, direction);
+            if (command == nullptr) {
+              return std::unique_ptr<graphscore::Command>{};
+            }
+            return std::unique_ptr<graphscore::Command>(
+                new FailUndoCommand(std::move(command), fail_times));
+          });
+      shell.set_input_handler(&handler);
+      handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+      const graphscore::Voice voice1      = voice_one();
+      const auto              first_pitch = [&]() {
+        const auto* lane =
+            handler.project().find_node(fx->node_id)->lane(fx->track_id);
+        const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+        return std::get<graphscore::Note>(vc.events().front()).pitch;
+      };
+
+      if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+        std::fprintf(stderr,
+                     "accidental-step-test: initial surface publish failed "
+                     "(%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+      const auto before_surface = shell.test_snapshot_notation_surface();
+
+      const graphscore::NotationPoint point =
+          notehead_origin(handler.layout(), fx->first_note_id);
+      click_at(shell, point.x, point.y);
+      {
+        const auto* set = committed_notehead_set(handler);
+        if (set == nullptr || set->items().size() != 1u ||
+            set->items()[0].entity != fx->first_note_id) {
+          std::fprintf(stderr,
+                       "accidental-step-test: click did not select the note "
+                       "(%s)\n",
+                       test_case.label);
+          shell.set_input_handler(nullptr);
+          return 1;
+        }
+      }
+
+      shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kEquals));
+
+      // The surface is the last successfully published one either way.
+      if (shell.test_snapshot_notation_surface() != before_surface) {
+        std::fprintf(stderr,
+                     "accidental-step-test: surface changed on rollback "
+                     "failure (%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+
+      if (test_case.fail_times > 1) {
+        // Persistent: the rollback never completed, so the project stays at
+        // the post-edit spelling and the handler is unavailable.
+        if (first_pitch() != c_sharp4 || !handler.history_unavailable()) {
+          std::fprintf(stderr,
+                       "accidental-step-test: persistent rollback failure did "
+                       "not poison the history (%s)\n",
+                       test_case.label);
+          shell.set_input_handler(nullptr);
+          return 1;
+        }
+        // Further mutation is blocked.
+        shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kEquals));
+        if (first_pitch() != c_sharp4) {
+          std::fprintf(stderr,
+                       "accidental-step-test: a blocked step mutated the "
+                       "project (%s)\n",
+                       test_case.label);
+          shell.set_input_handler(nullptr);
+          return 1;
+        }
+      } else {
+        // One-shot: recovered, so the project is back at C4 and the next
+        // step commits normally.
+        if (first_pitch() != c4 || handler.history_unavailable()) {
+          std::fprintf(stderr,
+                       "accidental-step-test: one-shot rollback failure did "
+                       "not recover (%s)\n",
+                       test_case.label);
+          shell.set_input_handler(nullptr);
+          return 1;
+        }
+        shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kEquals));
+        if (first_pitch() != c_sharp4 || handler.test_undo_stack_size() != 1u) {
+          std::fprintf(stderr,
+                       "accidental-step-test: step after one-shot rollback "
+                       "recovery did not succeed (%s)\n",
+                       test_case.label);
+          shell.set_input_handler(nullptr);
+          return 1;
+        }
+      }
+      shell.set_input_handler(nullptr);
+    }
+  }
+
+  std::printf("accidental-step-test: ok\n");
+  return 0;
+}
+
 }  // namespace
 
 // The shell allocates (window titles, backend names), so this call path can
@@ -6076,6 +7033,7 @@ int main(int argc, char** argv) {
   bool run_key_events_shell_test = false;
   bool run_key_selection_test    = false;
   bool run_notehead_move_test    = false;
+  bool run_accidental_step_test  = false;
   for (int i = 1; i < argc; ++i) {
     if (kSmokeTestFlag == argv[i]) {
       smoke_test = true;
@@ -6098,6 +7056,9 @@ int main(int argc, char** argv) {
     if (kNoteheadMoveTestFlag == argv[i]) {
       run_notehead_move_test = true;
     }
+    if (kAccidentalStepTestFlag == argv[i]) {
+      run_accidental_step_test = true;
+    }
   }
 
   try {
@@ -6118,6 +7079,9 @@ int main(int argc, char** argv) {
     }
     if (run_notehead_move_test) {
       return notehead_move_test();
+    }
+    if (run_accidental_step_test) {
+      return accidental_step_test();
     }
     return run(smoke_test);
   } catch (const std::exception& error) {

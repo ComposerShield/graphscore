@@ -94,6 +94,7 @@ add_library(graphscore_domain STATIC
   set_track_pan_command.cpp
   set_track_solo_command.cpp
   staff_layout.cpp
+  step_accidental_command.cpp
   tempo_lane.cpp
   track.cpp
   vertical_transition.cpp

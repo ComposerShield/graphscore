@@ -44,19 +44,23 @@ struct PointerEvent {
   PointerButton button = PointerButton::kPrimary;
 };
 
-// Platform-neutral key identity. This is deliberately the minimum set
-// M5-phase-19b's Shift/keyboard range extension needs — arrows plus
-// Home/End — not a general keyboard model. Character/text keys, key
-// release, and the full platform-normalized action table belong to
-// M5-phase-26/M5-phase-27.
+// Platform-neutral key identity. This is deliberately a minimum set, not a
+// general keyboard model: the arrows and Home/End M5-phase-19b's
+// Shift/keyboard range extension needs, plus the two character keys
+// M5-phase-21's accidental step binds (`-` and `=`). Every other
+// character/text key, key release, and the full platform-normalized action
+// table belong to M5-phase-26/M5-phase-27.
 //
-// Arrows and Home/End are safe to identify by physical position: they are
-// not remapped by keyboard layout the way character keys are (compare a
-// QWERTY vs. AZERTY 'A' key, which sit at different physical scancodes for
-// the same intended letter). That is exactly why M5-phase-27's non-US-layout
-// concerns do not apply to this set, and why the SDL translation in
-// writer_shell.cpp uses the physical scancode rather than the
-// layout-dependent logical keycode.
+// Every member is translated from SDL's physical scancode in
+// writer_shell.cpp, never from the layout-dependent logical keycode. For
+// arrows and Home/End that is exact: they are not remapped by keyboard
+// layout the way character keys are (compare a QWERTY vs. AZERTY 'A' key,
+// which sit at different physical scancodes for the same intended letter).
+// kMinus and kEquals are character keys, so physical identification binds
+// the two keys that carry `-`/`=` on a US layout wherever a different layout
+// puts those characters. Deciding the correct physical/logical behavior on
+// non-US layouts is M5-phase-27's action-table work, which owns exactly that
+// question.
 enum class KeyCode : std::uint8_t {
   kUnknown,
   kLeft,
@@ -65,6 +69,8 @@ enum class KeyCode : std::uint8_t {
   kDown,
   kHome,
   kEnd,
+  kMinus,
+  kEquals,
 };
 
 // Platform-neutral key modifiers, translated from SDL3's combined
