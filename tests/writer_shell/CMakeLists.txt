@@ -143,3 +143,22 @@ else()
   # exercises only the headless key_events_test (above), which passes
   # without a rendering backend.
 endif()
+
+# M5-phase-19b-iii: exercise SelectionToolHandler's accessible range
+# controls and its on_key_press override through the writer executable's
+# own --test-key-selection path -- Shift extension, the accessible
+# start/end/staff-scope controls, and their equivalence with a pointer
+# drag over the same musical coordinates. This is a headless code path --
+# no window, no SDL -- built on WriterShell's dispatch_test_pointer_event
+# and dispatch_test_key_event seams.
+#
+# The headless test uses no rendering backend and works in both writer-ON
+# and writer-OFF configurations.
+add_test(NAME graphscore_writer_key_selection_test
+  COMMAND graphscore_writer_app --test-key-selection
+)
+
+set_tests_properties(graphscore_writer_key_selection_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "key-selection-test: ok"
+  TIMEOUT 30
+)

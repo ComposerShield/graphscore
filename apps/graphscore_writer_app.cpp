@@ -58,6 +58,7 @@ constexpr std::string_view kSelectionToolShellTestFlag =
     "--test-selection-tool-shell";
 constexpr std::string_view kKeyEventsTestFlag      = "--test-key-events";
 constexpr std::string_view kKeyEventsShellTestFlag = "--test-key-events-shell";
+constexpr std::string_view kKeySelectionTestFlag   = "--test-key-selection";
 
 const char* describe(graphscore::ShellError error) {
   switch (error) {
@@ -219,6 +220,14 @@ class SelfTestMetrics final : public graphscore::GlyphMetrics {
 
 // ---- selection-tool InputHandler -------------------------------------------
 
+// Provisional keyboard range-extension step for Shift+Left/Right
+// (M5-phase-19b-iii): one quarter of a whole note. Superseded by
+// M5-phase-27's platform-normalized action table, which chooses the actual
+// step per action (diatonic step, beat, measure, ...); defined once here
+// rather than scattered as a repeated literal.
+constexpr graphscore::Rational kProvisionalRangeExtensionStep =
+    *graphscore::Rational::create(1, 4);
+
 // Owns the drag state machine and active tool at the application assembly
 // layer. Registered with WriterShell before open_window(), so the shell's
 // event loop dispatches real pointer events to it.
@@ -300,6 +309,11 @@ class SelectionToolHandler final : public graphscore::InputHandler {
       // rather than committing a stale extent from the last valid move.
       if (drag_.update(project_, layout_, point).has_value()) {
         std::ignore = drag_.commit();
+        // A pointer-drag commit is the one place first_staff_/last_staff_
+        // are (re)derived from the committed selection's own items, since
+        // there is no explicit caller-supplied staff scope to track for a
+        // drag the way there is for extend_range_staff_scope() below.
+        sync_staff_endpoints_from_committed();
         update_highlight();
         return;
       }
@@ -320,6 +334,202 @@ class SelectionToolHandler final : public graphscore::InputHandler {
     // in-progress drag is cancelled above, but the previously committed
     // extent survives and should remain visible.
     update_highlight();
+  }
+
+  // Provisional keyboard bindings (M5-phase-19b-iii), superseded by
+  // M5-phase-26/M5-phase-27's normalized action table. Shift is required
+  // for every binding below; control, alt, and meta never substitute for
+  // it, and an unmodified arrow or a non-Shift chord is a no-op. Acts only
+  // when the selection tool is active and a committed ArbitraryRangeSet
+  // selection already exists to extend — this sub-phase never creates a
+  // first selection from the keyboard alone.
+  //
+  //   Shift+Left/Right  -- move the current focus edge (focus_edge_) one
+  //                        provisional step earlier/later.
+  //   Shift+Up/Down     -- extend the staff scope by one staff in score
+  //                        order (up = earlier, down = later).
+  //   Shift+Home/End    -- select_to_node_start()/select_to_node_end().
+  void on_key_press(graphscore::KeyEvent event) override {
+    if (!event.modifiers.shift) {
+      return;
+    }
+    if (active_tool_ != graphscore::ActiveTool::kSelection) {
+      return;
+    }
+    const auto* existing = current_range_set();
+    if (existing == nullptr || existing->items().empty()) {
+      return;
+    }
+    const graphscore::MusicalSpan& span = existing->items().front().span;
+    switch (event.code) {
+      case graphscore::KeyCode::kLeft: {
+        const graphscore::Rational current =
+            focus_edge_ == graphscore::RangeEdge::kStart ? span.start
+                                                         : span.end;
+        std::ignore = extend_range_edge(
+            focus_edge_, current - kProvisionalRangeExtensionStep);
+        break;
+      }
+      case graphscore::KeyCode::kRight: {
+        const graphscore::Rational current =
+            focus_edge_ == graphscore::RangeEdge::kStart ? span.start
+                                                         : span.end;
+        std::ignore = extend_range_edge(
+            focus_edge_, current + kProvisionalRangeExtensionStep);
+        break;
+      }
+      case graphscore::KeyCode::kUp:
+        std::ignore = step_staff_scope(-1);
+        break;
+      case graphscore::KeyCode::kDown:
+        std::ignore = step_staff_scope(1);
+        break;
+      case graphscore::KeyCode::kHome:
+        std::ignore = select_to_node_start();
+        break;
+      case graphscore::KeyCode::kEnd:
+        std::ignore = select_to_node_end();
+        break;
+      case graphscore::KeyCode::kUnknown:
+      default:
+        break;
+    }
+  }
+
+  // ---- accessible range controls (M5-phase-19b-iii) ------------------------
+  //
+  // Pointer-free controls that reproduce the same selection a pointer drag
+  // over the equivalent musical coordinates would produce -- callable
+  // handler methods now, exposed as accessibility-tree actions in later
+  // phases of this milestone (M5-phase-43/45/62). Every one reaches the
+  // item set, staff walk, voice-overlap check, and bounds validation
+  // through the M5-phase-19a resolvers; the only logic here is which span
+  // edge moves (see extend_range_edge below). Each returns true when the
+  // underlying resolver accepted the request and replaced the committed
+  // selection with its result (which may be identical to the previous one,
+  // e.g. moving an edge to where it already sits); a no-op call (no
+  // committed ArbitraryRangeSet selection, or a resolver rejecting the
+  // request) returns false and leaves the existing selection untouched.
+
+  // Moves one edge of the committed selection's shared span to `time`,
+  // holding the other edge fixed and swapping if the moved edge crosses
+  // it -- graphscore::extend_range_selection's own documented behavior.
+  //
+  // This is built on resolve_range_selection_spec rather than on
+  // extend_range_selection directly, and passes first_staff_/last_staff_
+  // explicitly, so an edge-only extension can still recover a staff that
+  // extend_range_selection's own item-derived fixed-range reconstruction
+  // would lose (see extend_range_selection's own doc comment on
+  // graphscore_notation.hpp, and first_staff_/last_staff_'s own comment
+  // below). The span-move-and-swap arithmetic here is bookkeeping over
+  // which edge moves, not a musical resolution rule; the actual staff
+  // walk, voice-overlap check, and bounds validation are all
+  // resolve_range_selection_spec's. Because this bypasses
+  // extend_range_selection, the move-and-swap-and-reject-zero-length rule
+  // implemented below duplicates extend_range_selection's own copy
+  // (src/notation/notation.cpp) instead of reusing it -- if that
+  // function's crossing semantics ever change, this copy must change with
+  // it too.
+  bool extend_range_edge(graphscore::RangeEdge edge,
+                         graphscore::Rational  time) {
+    const auto* existing = current_range_set();
+    if (existing == nullptr || existing->items().empty()) {
+      return false;
+    }
+    if (!first_staff_.has_value() || !last_staff_.has_value()) {
+      return false;
+    }
+    const graphscore::MusicalSpan& current_span =
+        existing->items().front().span;
+    graphscore::Rational start = current_span.start;
+    graphscore::Rational end   = current_span.end;
+    if (edge == graphscore::RangeEdge::kStart) {
+      start = time;
+    } else {
+      end = time;
+    }
+    if (start > end) {
+      std::swap(start, end);
+    }
+    if (start == end) {
+      return false;
+    }
+    const graphscore::NodeId node_id = existing->items().front().node;
+    auto resolved                    = graphscore::resolve_range_selection_spec(
+        project_, graphscore::RangeSelectionSpec{
+                      node_id, graphscore::MusicalSpan{start, end},
+                      *first_staff_, *last_staff_});
+    if (!resolved.has_value()) {
+      return false;
+    }
+    const auto* resolved_set =
+        std::get_if<graphscore::ArbitraryRangeSet>(&*resolved);
+    if (resolved_set == nullptr || resolved_set->items().empty()) {
+      return false;
+    }
+    // extend_range_selection's own contract: the edge that now carries
+    // `time` is not necessarily `edge` itself once a crossing swap has
+    // happened, so recompute focus_edge_ from where `time` actually
+    // landed in the resolved span rather than assuming it is unchanged.
+    const graphscore::MusicalSpan& resolved_span =
+        resolved_set->items().front().span;
+    focus_edge_ = (resolved_span.start == time) ? graphscore::RangeEdge::kStart
+                                                : graphscore::RangeEdge::kEnd;
+    drag_.set_committed_selection(std::move(resolved));
+    update_highlight();
+    return true;
+  }
+
+  // Replaces the committed selection's staff scope with the score-order
+  // range spanning `first_staff` and `last_staff`, holding the shared span
+  // fixed. `first_staff`/`last_staff` become the new first_staff_/
+  // last_staff_ exactly as passed -- not reconstructed from the resulting
+  // items -- so a staff between them carrying no content overlapping the
+  // current span is still tracked as part of the scope.
+  bool extend_range_staff_scope(graphscore::MeasureScope first_staff,
+                                graphscore::MeasureScope last_staff) {
+    const auto* existing = current_range_set();
+    if (existing == nullptr) {
+      return false;
+    }
+    auto extended = graphscore::extend_range_selection_staff_scope(
+        project_, *existing, first_staff, last_staff);
+    if (!extended.has_value()) {
+      return false;
+    }
+    drag_.set_committed_selection(std::move(extended));
+    first_staff_ = first_staff;
+    last_staff_  = last_staff;
+    update_highlight();
+    return true;
+  }
+
+  // The start edge at Rational(0).
+  bool select_to_node_start() {
+    return extend_range_edge(graphscore::RangeEdge::kStart,
+                             graphscore::Rational(0));
+  }
+
+  // The end edge at the committed selection's own node's timeline total
+  // length. resolve_range_selection_spec (reached through
+  // extend_range_edge) rejects an out-of-bounds span rather than clamping
+  // it, so the exact node end must be looked up rather than guessed.
+  bool select_to_node_end() {
+    const auto* existing = current_range_set();
+    if (existing == nullptr || existing->items().empty()) {
+      return false;
+    }
+    const graphscore::Node* node =
+        project_.find_node(existing->items().front().node);
+    if (node == nullptr) {
+      return false;
+    }
+    const graphscore::NodeTimeline* timeline = node->timeline();
+    if (timeline == nullptr) {
+      return false;
+    }
+    return extend_range_edge(graphscore::RangeEdge::kEnd,
+                             timeline->measures().total_length());
   }
 
   // ---- tool switching ------------------------------------------------------
@@ -355,7 +565,110 @@ class SelectionToolHandler final : public graphscore::InputHandler {
     return layout_;
   }
 
+  [[nodiscard]] std::optional<graphscore::MeasureScope> first_staff()
+      const noexcept {
+    return first_staff_;
+  }
+
+  [[nodiscard]] std::optional<graphscore::MeasureScope> last_staff()
+      const noexcept {
+    return last_staff_;
+  }
+
  private:
+  // The committed selection's own ArbitraryRangeSet, or nullptr when there
+  // is no committed selection or it is not that arm. Every accessible
+  // range control above requires this to be non-null before doing
+  // anything.
+  [[nodiscard]] const graphscore::ArbitraryRangeSet* current_range_set()
+      const noexcept {
+    const auto& committed = drag_.committed_selection();
+    if (!committed.has_value()) {
+      return nullptr;
+    }
+    return std::get_if<graphscore::ArbitraryRangeSet>(&*committed);
+  }
+
+  // Derives first_staff_/last_staff_ from the committed selection's own
+  // items, in score order: the lowest and highest score-order position
+  // among them. Called only after a pointer-drag commit, where there is no
+  // caller-supplied staff scope to track directly. A staff at the extreme
+  // of the drag whose own voices carried no overlapping content at commit
+  // time contributes no item, so it is unrecoverable here -- the same
+  // limitation extend_range_selection's own doc comment describes for
+  // reconstructing a held-fixed staff range from items. That limitation is
+  // inherent to deriving endpoints from items and is not fixed by this
+  // sub-phase; extend_range_staff_scope's own explicit first_staff/
+  // last_staff parameters are what let a later edge-only extension
+  // preserve a staff this function itself could lose.
+  void sync_staff_endpoints_from_committed() {
+    const auto* set = current_range_set();
+    if (set == nullptr || set->items().empty()) {
+      first_staff_.reset();
+      last_staff_.reset();
+      return;
+    }
+    const std::vector<graphscore::MeasureScope> order =
+        graphscore::score_ordered_staves(project_);
+    std::optional<std::size_t> lower;
+    std::optional<std::size_t> upper;
+    for (const auto& item : set->items()) {
+      const graphscore::MeasureScope scope{item.track, item.stave};
+      const auto it = std::find(order.begin(), order.end(), scope);
+      if (it == order.end()) {
+        continue;
+      }
+      const auto index =
+          static_cast<std::size_t>(std::distance(order.begin(), it));
+      if (!lower.has_value() || index < *lower) {
+        lower = index;
+      }
+      if (!upper.has_value() || index > *upper) {
+        upper = index;
+      }
+    }
+    if (lower.has_value() && upper.has_value()) {
+      first_staff_ = order[*lower];
+      last_staff_  = order[*upper];
+    } else {
+      first_staff_.reset();
+      last_staff_.reset();
+    }
+  }
+
+  // Widens the staff scope by one staff in score order: direction < 0
+  // moves first_staff_ one position earlier (Shift+Up), direction > 0
+  // moves last_staff_ one position later (Shift+Down). Running off either
+  // end of score_ordered_staves is a no-op returning false, not a wrap.
+  bool step_staff_scope(int direction) {
+    if (!first_staff_.has_value() || !last_staff_.has_value()) {
+      return false;
+    }
+    const std::vector<graphscore::MeasureScope> order =
+        graphscore::score_ordered_staves(project_);
+    const auto first_it = std::find(order.begin(), order.end(), *first_staff_);
+    const auto last_it  = std::find(order.begin(), order.end(), *last_staff_);
+    if (first_it == order.end() || last_it == order.end()) {
+      return false;
+    }
+    auto first_index =
+        static_cast<std::size_t>(std::distance(order.begin(), first_it));
+    auto last_index =
+        static_cast<std::size_t>(std::distance(order.begin(), last_it));
+    if (direction < 0) {
+      if (first_index == 0) {
+        return false;
+      }
+      --first_index;
+    } else {
+      if (last_index + 1 >= order.size()) {
+        return false;
+      }
+      ++last_index;
+    }
+    return extend_range_staff_scope(order[first_index], order[last_index]);
+  }
+
   void update_highlight() {
     if (shell_ == nullptr) {
       return;
@@ -379,6 +692,23 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   graphscore::ActiveTool    active_tool_ = graphscore::ActiveTool::kSelection;
   graphscore::PointerButton initiating_button_ =
       graphscore::PointerButton::kUnknown;
+
+  // Which edge of the committed selection's span the next Shift+Left/Right
+  // step moves (M5-phase-19b-iii). extend_range_edge() recomputes this
+  // after every successful call, since a crossing extension swaps which
+  // edge now carries the moved value.
+  graphscore::RangeEdge focus_edge_ = graphscore::RangeEdge::kEnd;
+
+  // The staff scope of the committed selection. A pointer-drag commit
+  // derives these from the committed selection's own items
+  // (sync_staff_endpoints_from_committed()); extend_range_staff_scope()
+  // instead sets them to its own caller-supplied endpoints directly,
+  // which is what lets a later edge-only extension preserve a staff the
+  // item-derivation would lose (see extend_range_edge()'s own comment).
+  // Both are std::nullopt exactly when there is no committed
+  // ArbitraryRangeSet selection.
+  std::optional<graphscore::MeasureScope> first_staff_;
+  std::optional<graphscore::MeasureScope> last_staff_;
 };
 
 // ---- normal run ------------------------------------------------------------
@@ -2559,6 +2889,950 @@ int key_events_shell_test() {
   return 0;
 }
 
+// ---- key-selection tests (M5-phase-19b-iii) --------------------------------
+//
+// Exercises SelectionToolHandler's accessible range controls and its
+// on_key_press override -- interpreting Shift extension and the
+// start/end/staff-scope controls, wired through the platform-neutral key
+// events M5-phase-19b-ii delivers. Headless: no window, no SDL, works in
+// both writer-ON and writer-OFF configurations.
+
+struct KeySelectionProject {
+  graphscore::Project                project;
+  graphscore::NodeId                 node_id;
+  std::array<graphscore::TrackId, 3> track_ids{};
+  std::array<graphscore::StaveId, 3> stave_ids{};
+  graphscore::NotationLayout         layout;
+};
+
+// Builds a three-track, two-measure (4/4 each) fixture: track_ids[0] and
+// track_ids[1] each carry one whole note per measure, spanning the full
+// [0, 2) node timeline. track_ids[2] carries a single whole note in the
+// first measure only, so its content spans exactly [0, 1) and does not
+// overlap [1, 2) at all -- reproducing the "staff at the extreme of the
+// range whose own voices carry no overlapping content" scenario
+// extend_range_selection's own doc comment on graphscore_notation.hpp
+// describes, for the staff-endpoint-preservation test below.
+[[nodiscard]] std::optional<KeySelectionProject> build_key_selection_project(
+    const graphscore::GlyphMetrics& metrics) {
+  graphscore::Project                project{graphscore::ProjectId::generate(),
+                              "KeySelection"};
+  std::array<graphscore::TrackId, 3> track_ids{};
+  for (std::size_t i = 0; i < track_ids.size(); ++i) {
+    const auto midi_channel =
+        graphscore::MidiChannel::create(static_cast<std::uint8_t>(i));
+    if (!midi_channel.has_value()) {
+      return std::nullopt;
+    }
+    const auto added = project.add_track(
+        "Track",
+        graphscore::StaffLayout::single_staff(graphscore::Clef::kTreble),
+        *midi_channel);
+    if (!added.has_value()) {
+      return std::nullopt;
+    }
+    track_ids[i] = *added;
+  }
+
+  const graphscore::NodeId                 node_id = project.add_node("Node");
+  std::array<graphscore::StaveId, 3>       stave_ids{};
+  std::vector<graphscore::StaveDefinition> stave_defs;
+  for (std::size_t i = 0; i < track_ids.size(); ++i) {
+    auto* lane = project.find_node(node_id)->lane(track_ids[i]);
+    const graphscore::StaveId stave_id =
+        project.active_tracks()[i].layout().staves()[0].id;
+    stave_ids[i] = stave_id;
+    lane->ensure_stave(stave_id);
+    stave_defs.push_back(project.active_tracks()[i].layout().staves()[0]);
+  }
+
+  const auto time_sig = graphscore::TimeSignature::create(4, 4);
+  if (!time_sig.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<graphscore::Measure> measures(
+      2, graphscore::Measure{*time_sig, graphscore::KeySignature{}});
+  auto timeline =
+      graphscore::NodeTimeline::create(std::move(measures), stave_defs);
+  if (!timeline.has_value()) {
+    return std::nullopt;
+  }
+  project.find_node(node_id)->set_timeline(std::move(*timeline));
+
+  const auto whole_duration =
+      graphscore::Duration::create(graphscore::NoteValue::kWhole, 0);
+  if (!whole_duration.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::Duration whole  = *whole_duration;
+  const auto                 voice1 = graphscore::Voice::create(1);
+  if (!voice1.has_value()) {
+    return std::nullopt;
+  }
+  const auto pitch =
+      graphscore::SpelledPitch::create(graphscore::Letter::kC, 4);
+  if (!pitch.has_value()) {
+    return std::nullopt;
+  }
+
+  for (std::size_t i = 0; i < 2; ++i) {
+    graphscore::VoiceContent& vc = project.find_node(node_id)
+                                       ->lane(track_ids[i])
+                                       ->stave(stave_ids[i])
+                                       ->voice(*voice1);
+    if (!vc.append(graphscore::make_note(*pitch, whole)).ok()) {
+      return std::nullopt;
+    }
+    if (!vc.append(graphscore::make_note(*pitch, whole)).ok()) {
+      return std::nullopt;
+    }
+  }
+  {
+    graphscore::VoiceContent& vc = project.find_node(node_id)
+                                       ->lane(track_ids[2])
+                                       ->stave(stave_ids[2])
+                                       ->voice(*voice1);
+    if (!vc.append(graphscore::make_note(*pitch, whole)).ok()) {
+      return std::nullopt;
+    }
+  }
+
+  graphscore::NotationLayoutResult layout_result =
+      graphscore::layout_notation(project, node_id, metrics);
+  if (!layout_result || !layout_result.layout.has_value()) {
+    return std::nullopt;
+  }
+
+  return KeySelectionProject{std::move(project), node_id, track_ids, stave_ids,
+                             std::move(*layout_result.layout)};
+}
+
+// Presses at (x1, y1), then moves and releases at (x2, y2): a two-point
+// drag through the headless pointer seam, matching selection_tool_test's
+// own pattern.
+void drag_through_shell(graphscore::WriterShell& shell, double x1, double y1,
+                        double x2, double y2) {
+  const graphscore::PointerEvent press{x1, y1,
+                                       graphscore::PointerButton::kPrimary};
+  const graphscore::PointerEvent release{x2, y2,
+                                         graphscore::PointerButton::kPrimary};
+  shell.dispatch_test_pointer_event(0, press);
+  shell.dispatch_test_pointer_event(1, release);
+  shell.dispatch_test_pointer_event(2, release);
+}
+
+[[nodiscard]] graphscore::KeyEvent shift_key(graphscore::KeyCode code) {
+  graphscore::KeyEvent event;
+  event.code            = code;
+  event.modifiers.shift = true;
+  return event;
+}
+
+// Rational::create only fails on a zero denominator; every call site below
+// passes a small nonzero literal, so the std::nullopt arm is unreachable in
+// practice. Checked explicitly (rather than dereferencing the optional
+// inline) so the value is read the same way every other runtime
+// Rational/Duration/SpelledPitch construction in this file is: via a
+// named, has_value()-checked local. (kProvisionalRangeExtensionStep above
+// is the one constexpr exception: an inline dereference there is
+// evaluated at compile time, not runtime.)
+[[nodiscard]] graphscore::Rational rational(std::int64_t numerator,
+                                            std::int64_t denominator) {
+  const auto value = graphscore::Rational::create(numerator, denominator);
+  if (!value.has_value()) {
+    return graphscore::Rational(0);
+  }
+  return *value;
+}
+
+// The committed selection's own ArbitraryRangeSet, or nullptr when there is
+// no committed selection or it is not that arm -- the free-function
+// counterpart of SelectionToolHandler::current_range_set(), used by the
+// tests below to read the committed selection back through the same
+// has_value()-checked-before-dereferenced pattern the rest of this file
+// uses.
+[[nodiscard]] const graphscore::ArbitraryRangeSet* committed_range_set(
+    const SelectionToolHandler& handler) {
+  const auto& committed = handler.drag_state().committed_selection();
+  if (!committed.has_value()) {
+    return nullptr;
+  }
+  return std::get_if<graphscore::ArbitraryRangeSet>(&*committed);
+}
+
+int key_selection_test() {
+  const SelfTestMetrics metrics;
+
+  // --- test 1: equivalence -- the phase's core acceptance criterion.
+  //     A pointer drag and a keyboard-driven extension from a different
+  //     starting selection must reach the identical committed Selection,
+  //     compared with the defaulted ArbitraryRangeSet/Selection
+  //     operator==. --------------------------------------------------
+  {
+    // Both handlers below operate on independent copies of the same
+    // project (same NodeId/TrackId/StaveId values), not two separately
+    // built fixtures -- build_key_selection_project generates fresh
+    // NodeId/TrackId/StaveId values on every call, so two independently
+    // built fixtures could never satisfy Selection's own operator==
+    // regardless of whether the span/staff-scope logic agrees.
+    auto dp = build_key_selection_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: build_key_selection_project (1) "
+                   "failed\n");
+      return 1;
+    }
+
+    graphscore::Project              project_a = dp->project;
+    graphscore::NotationLayoutResult layout_result_a =
+        graphscore::layout_notation(project_a, dp->node_id, metrics);
+    if (!layout_result_a || !layout_result_a.layout.has_value()) {
+      std::fprintf(stderr, "key-selection-test: layout_notation (a) failed\n");
+      return 1;
+    }
+    graphscore::WriterShell shell_a;
+    SelectionToolHandler    handler_a(
+        std::move(project_a), std::move(*layout_result_a.layout), &shell_a);
+    shell_a.set_input_handler(&handler_a);
+    handler_a.set_active_tool(graphscore::ActiveTool::kSelection);
+    const auto& layout_a = handler_a.layout();
+    {
+      const double x1 = layout_a.systems[0].measures[0].bounds.x;
+      const double x2 = layout_a.systems[0].measures[1].bounds.x +
+                        layout_a.systems[0].measures[1].bounds.width;
+      const double y = layout_a.systems[0].staves[1].bounds.y +
+                       layout_a.systems[0].staves[1].bounds.height * 0.5;
+      drag_through_shell(shell_a, x1, y, x2, y);
+    }
+    const auto target = handler_a.drag_state().committed_selection();
+    shell_a.set_input_handler(nullptr);
+    if (!target.has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: target selection missing "
+                   "(equivalence)\n");
+      return 1;
+    }
+
+    graphscore::Project              project_b = dp->project;
+    graphscore::NotationLayoutResult layout_result_b =
+        graphscore::layout_notation(project_b, dp->node_id, metrics);
+    if (!layout_result_b || !layout_result_b.layout.has_value()) {
+      std::fprintf(stderr, "key-selection-test: layout_notation (b) failed\n");
+      return 1;
+    }
+    graphscore::WriterShell shell_b;
+    SelectionToolHandler    handler_b(
+        std::move(project_b), std::move(*layout_result_b.layout), &shell_b);
+    shell_b.set_input_handler(&handler_b);
+    handler_b.set_active_tool(graphscore::ActiveTool::kSelection);
+    const auto& layout_b = handler_b.layout();
+    {
+      // A different starting selection: the same track/staff, but only the
+      // first measure.
+      const double x1 = layout_b.systems[0].measures[0].bounds.x;
+      const double x2 = layout_b.systems[0].measures[0].bounds.x +
+                        layout_b.systems[0].measures[0].bounds.width;
+      const double y = layout_b.systems[0].staves[1].bounds.y +
+                       layout_b.systems[0].staves[1].bounds.height * 0.5;
+      drag_through_shell(shell_b, x1, y, x2, y);
+    }
+    if (!handler_b.drag_state().committed_selection().has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: starting selection missing "
+                   "(equivalence)\n");
+      shell_b.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!handler_b.select_to_node_end()) {
+      std::fprintf(stderr,
+                   "key-selection-test: select_to_node_end failed "
+                   "(equivalence)\n");
+      shell_b.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler_b.drag_state().committed_selection() != target) {
+      std::fprintf(stderr,
+                   "key-selection-test: keyboard-reached selection did not "
+                   "equal the pointer-drag selection (equivalence)\n");
+      shell_b.set_input_handler(nullptr);
+      return 1;
+    }
+    shell_b.set_input_handler(nullptr);
+  }
+
+  // --- test 2: edge extension in both directions produces the expected
+  //     span. -----------------------------------------------------------
+  {
+    auto dp = build_key_selection_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: build_key_selection_project (2) "
+                   "failed\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(dp->project), std::move(dp->layout),
+                                 &shell);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    const auto& layout = handler.layout();
+    {
+      const double x1 = layout.systems[0].measures[0].bounds.x;
+      const double x2 = layout.systems[0].measures[0].bounds.x +
+                        layout.systems[0].measures[0].bounds.width;
+      const double y = layout.systems[0].staves[0].bounds.y +
+                       layout.systems[0].staves[0].bounds.height * 0.5;
+      drag_through_shell(shell, x1, y, x2, y);
+    }
+    const std::vector<graphscore::NotationRect> rects_before_edge =
+        shell.test_snapshot_highlight_rects();
+    if (rects_before_edge.empty()) {
+      std::fprintf(stderr,
+                   "key-selection-test: highlight empty after drag setup "
+                   "(2)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!handler.extend_range_edge(graphscore::RangeEdge::kEnd,
+                                   graphscore::Rational(2))) {
+      std::fprintf(stderr,
+                   "key-selection-test: extend_range_edge(kEnd) failed\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_range_set(handler);
+      if (set == nullptr ||
+          set->items().front().span !=
+              (graphscore::MusicalSpan{graphscore::Rational(0),
+                                       graphscore::Rational(2)})) {
+        std::fprintf(stderr,
+                     "key-selection-test: extend_range_edge(kEnd) span "
+                     "mismatch\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    {
+      const std::vector<graphscore::NotationRect> rects_after_edge =
+          shell.test_snapshot_highlight_rects();
+      if (rects_after_edge == rects_before_edge) {
+        std::fprintf(stderr,
+                     "key-selection-test: highlight rects did not change "
+                     "after extend_range_edge(kEnd) (2)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    if (!handler.extend_range_edge(graphscore::RangeEdge::kStart,
+                                   graphscore::Rational(1))) {
+      std::fprintf(stderr,
+                   "key-selection-test: extend_range_edge(kStart) failed\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_range_set(handler);
+      if (set == nullptr ||
+          set->items().front().span !=
+              (graphscore::MusicalSpan{graphscore::Rational(1),
+                                       graphscore::Rational(2)})) {
+        std::fprintf(stderr,
+                     "key-selection-test: extend_range_edge(kStart) span "
+                     "mismatch\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 3: focus-edge tracking across a crossing -- the next
+  //     extension moves the edge a user would expect, proving the
+  //     recompute takes effect. ------------------------------------------
+  {
+    auto dp = build_key_selection_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: build_key_selection_project (3) "
+                   "failed\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(dp->project), std::move(dp->layout),
+                                 &shell);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    const auto& layout = handler.layout();
+    {
+      const double x1 = layout.systems[0].measures[0].bounds.x;
+      const double x2 = layout.systems[0].measures[0].bounds.x +
+                        layout.systems[0].measures[0].bounds.width;
+      const double y = layout.systems[0].staves[0].bounds.y +
+                       layout.systems[0].staves[0].bounds.height * 0.5;
+      drag_through_shell(shell, x1, y, x2, y);
+    }
+    // span [0, 1) -> [1/4, 1): kStart moves to 1/4, no crossing.
+    if (!handler.extend_range_edge(graphscore::RangeEdge::kStart,
+                                   kProvisionalRangeExtensionStep)) {
+      std::fprintf(stderr, "key-selection-test: setup step 1 failed (3)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // span [1/4, 1) -> [1, 3/2): kStart moves to 3/2, crossing the fixed
+    // end (1) -- the span swaps, and focus_edge_ must become kEnd since
+    // the moved value (3/2) now lands on the span's own end.
+    if (!handler.extend_range_edge(graphscore::RangeEdge::kStart,
+                                   rational(3, 2))) {
+      std::fprintf(stderr, "key-selection-test: setup step 2 failed (3)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_range_set(handler);
+      if (set == nullptr || set->items().front().span !=
+                                (graphscore::MusicalSpan{
+                                    graphscore::Rational(1), rational(3, 2)})) {
+        std::fprintf(stderr,
+                     "key-selection-test: crossing setup span mismatch "
+                     "(3)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    // Shift+Left must now move the end (focus_edge_ == kEnd after the
+    // crossing above), producing [1, 5/4) -- not the start, which would
+    // instead produce [3/4, 3/2) if the recompute had not taken effect.
+    shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kLeft));
+    {
+      const auto* set = committed_range_set(handler);
+      if (set == nullptr || set->items().front().span !=
+                                (graphscore::MusicalSpan{
+                                    graphscore::Rational(1), rational(5, 4)})) {
+        std::fprintf(stderr,
+                     "key-selection-test: Shift+Left after crossing moved "
+                     "the wrong edge\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 4: staff scope +/-1 in both directions, including that
+  //     running off either end is a no-op leaving the selection
+  //     unchanged. -----------------------------------------------------
+  {
+    auto dp = build_key_selection_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: build_key_selection_project (4) "
+                   "failed\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(dp->project), std::move(dp->layout),
+                                 &shell);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    const auto& layout = handler.layout();
+    {
+      const double x1 = layout.systems[0].measures[0].bounds.x;
+      const double x2 = layout.systems[0].measures[0].bounds.x +
+                        layout.systems[0].measures[0].bounds.width;
+      const double y = layout.systems[0].staves[1].bounds.y +
+                       layout.systems[0].staves[1].bounds.height * 0.5;
+      drag_through_shell(shell, x1, y, x2, y);
+    }
+    const std::vector<graphscore::NotationRect> rects_before_scope =
+        shell.test_snapshot_highlight_rects();
+    if (rects_before_scope.empty()) {
+      std::fprintf(stderr,
+                   "key-selection-test: highlight empty after drag setup "
+                   "(4)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kUp));
+    {
+      const std::vector<graphscore::NotationRect> rects_after_scope =
+          shell.test_snapshot_highlight_rects();
+      if (rects_after_scope == rects_before_scope) {
+        std::fprintf(stderr,
+                     "key-selection-test: highlight rects did not change "
+                     "after Shift+Up widened the staff scope (4)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    const graphscore::MeasureScope top{dp->track_ids[0], dp->stave_ids[0]};
+    if (handler.first_staff() != top) {
+      std::fprintf(stderr,
+                   "key-selection-test: Shift+Up did not widen first_staff_ "
+                   "(4)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_range_set(handler);
+      if (set == nullptr || set->items().size() != 2u) {
+        std::fprintf(stderr,
+                     "key-selection-test: Shift+Up item count mismatch "
+                     "(4)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    // Shift+Up again: first_staff_ is already at index 0 -- no-op.
+    const auto before_clamp_up = handler.drag_state().committed_selection();
+    shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kUp));
+    if (handler.drag_state().committed_selection() != before_clamp_up) {
+      std::fprintf(stderr,
+                   "key-selection-test: Shift+Up at the top staff was not a "
+                   "no-op (4)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kDown));
+    {
+      const auto* set = committed_range_set(handler);
+      if (set == nullptr || set->items().size() != 3u) {
+        std::fprintf(stderr,
+                     "key-selection-test: Shift+Down item count mismatch "
+                     "(4)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    // Shift+Down again: last_staff_ is already at the bottom staff --
+    // no-op.
+    const auto before_clamp_down = handler.drag_state().committed_selection();
+    shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kDown));
+    if (handler.drag_state().committed_selection() != before_clamp_down) {
+      std::fprintf(stderr,
+                   "key-selection-test: Shift+Down at the bottom staff was "
+                   "not a no-op (4)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 5: Shift+Home reaches exactly Rational(0); Shift+End reaches
+  //     exactly the node's total_length(). --------------------------------
+  {
+    auto dp = build_key_selection_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: build_key_selection_project (5) "
+                   "failed\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(dp->project), std::move(dp->layout),
+                                 &shell);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    const auto& layout = handler.layout();
+    {
+      const double x1 = layout.systems[0].measures[0].bounds.x;
+      const double x2 = layout.systems[0].measures[0].bounds.x +
+                        layout.systems[0].measures[0].bounds.width;
+      const double y = layout.systems[0].staves[0].bounds.y +
+                       layout.systems[0].staves[0].bounds.height * 0.5;
+      drag_through_shell(shell, x1, y, x2, y);
+    }
+    shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kEnd));
+    {
+      const auto* set = committed_range_set(handler);
+      if (set == nullptr ||
+          set->items().front().span.end != graphscore::Rational(2)) {
+        std::fprintf(stderr,
+                     "key-selection-test: Shift+End did not reach "
+                     "total_length()\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    {
+      const double x1 = layout.systems[0].measures[1].bounds.x;
+      const double x2 = layout.systems[0].measures[1].bounds.x +
+                        layout.systems[0].measures[1].bounds.width;
+      const double y = layout.systems[0].staves[0].bounds.y +
+                       layout.systems[0].staves[0].bounds.height * 0.5;
+      drag_through_shell(shell, x1, y, x2, y);
+    }
+    shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kHome));
+    {
+      const auto* set = committed_range_set(handler);
+      if (set == nullptr ||
+          set->items().front().span.start != graphscore::Rational(0)) {
+        std::fprintf(stderr,
+                     "key-selection-test: Shift+Home did not reach "
+                     "Rational(0)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 6: no committed selection -> every binding is a no-op and
+  //     nothing crashes. -------------------------------------------------
+  {
+    auto dp = build_key_selection_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: build_key_selection_project (6) "
+                   "failed\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(dp->project), std::move(dp->layout),
+                                 &shell);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    if (handler.extend_range_edge(graphscore::RangeEdge::kEnd,
+                                  graphscore::Rational(1)) ||
+        handler.extend_range_staff_scope(
+            graphscore::MeasureScope{dp->track_ids[0], dp->stave_ids[0]},
+            graphscore::MeasureScope{dp->track_ids[1], dp->stave_ids[1]}) ||
+        handler.select_to_node_start() || handler.select_to_node_end()) {
+      std::fprintf(stderr,
+                   "key-selection-test: a direct control call succeeded "
+                   "with no committed selection\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    constexpr std::array<graphscore::KeyCode, 6> kAllBoundCodes{
+        graphscore::KeyCode::kLeft, graphscore::KeyCode::kRight,
+        graphscore::KeyCode::kUp,   graphscore::KeyCode::kDown,
+        graphscore::KeyCode::kHome, graphscore::KeyCode::kEnd,
+    };
+    for (const graphscore::KeyCode code : kAllBoundCodes) {
+      shell.dispatch_test_key_event(shift_key(code));
+      if (handler.drag_state().committed_selection().has_value()) {
+        std::fprintf(stderr,
+                     "key-selection-test: a key binding created a "
+                     "selection with none committed\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 7: unmodified arrows and wrong-modifier chords (control, alt,
+  //     meta -- none substitutes for shift) are no-ops. -------------------
+  {
+    auto dp = build_key_selection_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: build_key_selection_project (7) "
+                   "failed\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(dp->project), std::move(dp->layout),
+                                 &shell);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    const auto& layout = handler.layout();
+    {
+      const double x1 = layout.systems[0].measures[0].bounds.x;
+      const double x2 = layout.systems[0].measures[0].bounds.x +
+                        layout.systems[0].measures[0].bounds.width;
+      const double y = layout.systems[0].staves[0].bounds.y +
+                       layout.systems[0].staves[0].bounds.height * 0.5;
+      drag_through_shell(shell, x1, y, x2, y);
+    }
+    const auto before = handler.drag_state().committed_selection();
+    if (!before.has_value()) {
+      std::fprintf(stderr, "key-selection-test: setup selection missing (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // Unmodified Left.
+    {
+      graphscore::KeyEvent event;
+      event.code = graphscore::KeyCode::kLeft;
+      shell.dispatch_test_key_event(event);
+    }
+    if (handler.drag_state().committed_selection() != before) {
+      std::fprintf(stderr,
+                   "key-selection-test: unmodified Left changed the "
+                   "selection\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // Control+Left (wrong modifier -- control does not substitute for
+    // shift).
+    {
+      graphscore::KeyEvent event;
+      event.code              = graphscore::KeyCode::kLeft;
+      event.modifiers.control = true;
+      shell.dispatch_test_key_event(event);
+    }
+    if (handler.drag_state().committed_selection() != before) {
+      std::fprintf(stderr,
+                   "key-selection-test: Control+Left changed the "
+                   "selection\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // Alt+Left (wrong modifier -- alt does not substitute for shift).
+    {
+      graphscore::KeyEvent event;
+      event.code          = graphscore::KeyCode::kLeft;
+      event.modifiers.alt = true;
+      shell.dispatch_test_key_event(event);
+    }
+    if (handler.drag_state().committed_selection() != before) {
+      std::fprintf(stderr,
+                   "key-selection-test: Alt+Left changed the selection\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // Meta+Left (wrong modifier -- meta does not substitute for shift).
+    {
+      graphscore::KeyEvent event;
+      event.code           = graphscore::KeyCode::kLeft;
+      event.modifiers.meta = true;
+      shell.dispatch_test_key_event(event);
+    }
+    if (handler.drag_state().committed_selection() != before) {
+      std::fprintf(stderr,
+                   "key-selection-test: Meta+Left changed the selection\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 8: the override takes effect through the InputHandler* seam,
+  //     not the base class's non-pure no-op default. ----------------------
+  {
+    auto dp = build_key_selection_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: build_key_selection_project (8) "
+                   "failed\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(dp->project), std::move(dp->layout),
+                                 &shell);
+    graphscore::InputHandler* base = &handler;
+    shell.set_input_handler(base);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    const auto& layout = handler.layout();
+    {
+      const double x1 = layout.systems[0].measures[0].bounds.x;
+      const double x2 = layout.systems[0].measures[0].bounds.x +
+                        layout.systems[0].measures[0].bounds.width;
+      const double y = layout.systems[0].staves[0].bounds.y +
+                       layout.systems[0].staves[0].bounds.height * 0.5;
+      drag_through_shell(shell, x1, y, x2, y);
+    }
+    const auto before = handler.drag_state().committed_selection();
+    shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kRight));
+    if (handler.drag_state().committed_selection() == before) {
+      std::fprintf(stderr,
+                   "key-selection-test: Shift+Right through the "
+                   "InputHandler* seam did not reach the override\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 9: staff endpoints survive an edge-only extension: an
+  //     extreme staff contributing no items keeps its place in the
+  //     tracked scope, and is recovered once the widened span overlaps
+  //     it. -------------------------------------------------------------
+  {
+    auto dp = build_key_selection_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: build_key_selection_project (9) "
+                   "failed\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(dp->project), std::move(dp->layout),
+                                 &shell);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    const auto& layout = handler.layout();
+    // Drag the second measure only on track 0.
+    {
+      const double x1 = layout.systems[0].measures[1].bounds.x;
+      const double x2 = layout.systems[0].measures[1].bounds.x +
+                        layout.systems[0].measures[1].bounds.width;
+      const double y = layout.systems[0].staves[0].bounds.y +
+                       layout.systems[0].staves[0].bounds.height * 0.5;
+      drag_through_shell(shell, x1, y, x2, y);
+    }
+    const graphscore::MeasureScope first{dp->track_ids[0], dp->stave_ids[0]};
+    const graphscore::MeasureScope last{dp->track_ids[2], dp->stave_ids[2]};
+    if (!handler.extend_range_staff_scope(first, last)) {
+      std::fprintf(stderr,
+                   "key-selection-test: extend_range_staff_scope setup "
+                   "failed (9)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // track_ids[2] carries content only in [0, 1); the committed span is
+    // [1, 2), so it contributes no item here, even though it is part of
+    // the tracked scope.
+    {
+      const auto* set = committed_range_set(handler);
+      if (set == nullptr || set->items().size() != 2u) {
+        std::fprintf(stderr,
+                     "key-selection-test: pre-extension item count "
+                     "mismatch (9)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    if (handler.first_staff() != first || handler.last_staff() != last) {
+      std::fprintf(stderr,
+                   "key-selection-test: staff scope not tracked before "
+                   "extension (9)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!handler.extend_range_edge(graphscore::RangeEdge::kStart,
+                                   graphscore::Rational(0))) {
+      std::fprintf(stderr,
+                   "key-selection-test: extend_range_edge(kStart) failed "
+                   "(9)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // The widened span [0, 2) now overlaps track_ids[2]'s content too.
+    {
+      const auto* set = committed_range_set(handler);
+      if (set == nullptr || set->items().size() != 3u) {
+        std::fprintf(stderr,
+                     "key-selection-test: post-extension item count "
+                     "mismatch (9)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    if (handler.first_staff() != first || handler.last_staff() != last) {
+      std::fprintf(stderr,
+                   "key-selection-test: staff scope not preserved across "
+                   "an edge-only extension (9)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 10: a resolver rejection during extend_range_edge is a true
+  //     no-op -- the committed selection must never be cleared, only left
+  //     exactly as it was, when the requested span falls outside the
+  //     node's bounds. -----------------------------------------------------
+  {
+    auto dp = build_key_selection_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: build_key_selection_project (10) "
+                   "failed\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(dp->project), std::move(dp->layout),
+                                 &shell);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    const auto& layout = handler.layout();
+    {
+      const double x1 = layout.systems[0].measures[0].bounds.x;
+      const double x2 = layout.systems[0].measures[0].bounds.x +
+                        layout.systems[0].measures[0].bounds.width;
+      const double y = layout.systems[0].staves[0].bounds.y +
+                       layout.systems[0].staves[0].bounds.height * 0.5;
+      drag_through_shell(shell, x1, y, x2, y);
+    }
+    const auto before = handler.drag_state().committed_selection();
+    if (!before.has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: setup selection missing (10)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // rational(99, 1) is well past the node's total_length() of 2, so
+    // resolve_range_selection_spec must reject the request.
+    if (handler.extend_range_edge(graphscore::RangeEdge::kEnd,
+                                  rational(99, 1))) {
+      std::fprintf(stderr,
+                   "key-selection-test: extend_range_edge accepted an "
+                   "out-of-bounds span (10)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler.drag_state().committed_selection() != before) {
+      std::fprintf(stderr,
+                   "key-selection-test: a rejected extend_range_edge "
+                   "changed the committed selection (10)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 11: the active-tool gate -- Shift+arrow bindings must not
+  //     touch the committed selection while a non-selection tool is
+  //     active. ---------------------------------------------------------
+  {
+    auto dp = build_key_selection_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: build_key_selection_project (11) "
+                   "failed\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(dp->project), std::move(dp->layout),
+                                 &shell);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    const auto& layout = handler.layout();
+    {
+      const double x1 = layout.systems[0].measures[0].bounds.x;
+      const double x2 = layout.systems[0].measures[0].bounds.x +
+                        layout.systems[0].measures[0].bounds.width;
+      const double y = layout.systems[0].staves[0].bounds.y +
+                       layout.systems[0].staves[0].bounds.height * 0.5;
+      drag_through_shell(shell, x1, y, x2, y);
+    }
+    const auto before = handler.drag_state().committed_selection();
+    if (!before.has_value()) {
+      std::fprintf(stderr,
+                   "key-selection-test: setup selection missing (11)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.set_active_tool(graphscore::ActiveTool::kNoteEntry);
+    shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kRight));
+    shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kUp));
+    if (handler.drag_state().committed_selection() != before) {
+      std::fprintf(stderr,
+                   "key-selection-test: Shift+Right/Up changed the "
+                   "committed selection while kNoteEntry was active\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  std::printf("key-selection-test: ok\n");
+  return 0;
+}
+
 }  // namespace
 
 // The shell allocates (window titles, backend names), so this call path can
@@ -2572,6 +3846,7 @@ int main(int argc, char** argv) {
   bool run_selection_shell_test  = false;
   bool run_key_events_test       = false;
   bool run_key_events_shell_test = false;
+  bool run_key_selection_test    = false;
   for (int i = 1; i < argc; ++i) {
     if (kSmokeTestFlag == argv[i]) {
       smoke_test = true;
@@ -2588,6 +3863,9 @@ int main(int argc, char** argv) {
     if (kKeyEventsShellTestFlag == argv[i]) {
       run_key_events_shell_test = true;
     }
+    if (kKeySelectionTestFlag == argv[i]) {
+      run_key_selection_test = true;
+    }
   }
 
   try {
@@ -2602,6 +3880,9 @@ int main(int argc, char** argv) {
     }
     if (run_key_events_shell_test) {
       return key_events_shell_test();
+    }
+    if (run_key_selection_test) {
+      return key_selection_test();
     }
     return run(smoke_test);
   } catch (const std::exception& error) {
