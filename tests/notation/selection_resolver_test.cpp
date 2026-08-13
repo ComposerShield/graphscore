@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -3138,9 +3139,16 @@ TEST(SelectionResolverTest, TinyAreaDeltaPreservesWinner) {
   layout.hit_regions.erase(lose_pos);
 
   // Replace it with a synthetic that has the same semantic/ownership but
-  // a width perturbed by one ULP, so the area differs by < 1e-9.
+  // a width perturbed upwards by the fewest ULPs that move the area at
+  // all, so the area differs by > 0 but < 1e-9.  One ULP of the width is
+  // only a fraction of an ULP of the product, so whether it survives the
+  // multiplication depends on mantissa alignment; step until it does
+  // rather than assume a single step suffices.
   NotationRect alt_bounds = win_bounds;
-  alt_bounds.width        = std::nextafter(alt_bounds.width, INFINITY);
+  do {
+    alt_bounds.width = std::nextafter(alt_bounds.width,
+                                      std::numeric_limits<double>::infinity());
+  } while (alt_bounds.width * alt_bounds.height == win_area);
   HitRegion synthetic{NotationId{"syn/tiny-area/notehead-column/hit"},
                       lose_semantic,
                       HitRole::kEvent,
