@@ -39,7 +39,7 @@ Provide a polished, directly editable focused notation system inside a node, wit
 
 ### Selection and keyboard behavior
 
-- [ ] M5-phase-16 Select individual noteheads, whole chord events, rests, markings, ranges, and insertion carets through explicit hit regions.
+- [x] M5-phase-16 Select individual noteheads, whole chord events, rests, markings, ranges, and insertion carets through explicit hit regions.
   - [x] M5-phase-16a Represent rests and markings in the domain selection model.
   - [x] M5-phase-16b Emit stem hit regions so a whole chord event has clickable geometry.
   - [x] M5-phase-16c Resolve a pointer position to a notehead, chord, or rest selection.
@@ -48,7 +48,7 @@ Provide a polished, directly editable focused notation system inside a node, wit
   - [x] M5-phase-16f Emit a notehead-column hit region, below the noteheads' own priority, so a stemless whole-note chord can select its whole event.
   - [x] M5-phase-16g Resolve range selections through hit regions; the selection tool and measure targets below drive them.
   - [x] M5-phase-16h Resolve the hit-priority and voice-disambiguation gaps the resolvers above left open: a tie segment's fixed four-staff-space band shadows the articulation glyphs on a chord carrying both, and blankets a close-voiced stemless chord so the notehead-column affordance cannot reach a tied whole-note chord; two stemless chords in different voices at one onset emit overlapping equal-area columns that `hit_test` separates only by `Uuid` ordering, so a click can select the other voice's chord.
-  - [ ] M5-phase-16i Reconcile per-system tuplet-digit suppression with the domain's own run keying: the engraver suppresses against the first record in the system it is laying out, while the domain keys `kIncompleteTupletGroup` to the true global run start, so the two can disagree across a system break.
+  - [x] M5-phase-16i Reconcile per-system tuplet-digit suppression with the domain's own run keying: the engraver suppresses against the first record in the system it is laying out, while the domain keys `kIncompleteTupletGroup` to the true global run start, so the two can disagree across a system break.
 - [x] M5-phase-17 Add a dedicated selection tool whose pointer drag creates a contiguous musical-time selection across the intersected staves/voices rather than selecting engraving glyph bounds individually.
   - [x] M5-phase-17a Resolve a two-point drag to a contiguous musical-time range selection across the intersected staves and voices.
   - [x] M5-phase-17b Hold drag state and the active tool at the app layer, and wire pointer press/move/release to the resolver.

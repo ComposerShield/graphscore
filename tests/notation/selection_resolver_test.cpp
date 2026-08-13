@@ -881,6 +881,70 @@ TEST(SelectionResolverTest,
   EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
 }
 
+// ---- M5-phase-16i regression: a malformed (incomplete) tuplet run spanning
+// a system break suppresses its digit on every system it occupies, keyed to
+// the run's true global first event -- not merely the event the per-system
+// engraver's local fragment happens to anchor against. The domain keys
+// kIncompleteTupletGroup to the true global run start, so the second
+// system's local fragment (whose lookback context is a mid-run event) must
+// still recognize the diagnostic and omit the digit. ----
+
+TEST(SelectionResolverTest,
+     AnIncompleteTupletRunAcrossASystemBreakSuppressesItsDigitOnBothSystems) {
+  Fixture            fixture(2);
+  const auto         ratio   = *TupletRatio::create(3, 2);
+  const Duration     triplet = *Duration::create(NoteValue::kEighth, 0, ratio);
+  const SpelledPitch pitch   = *SpelledPitch::create(Letter::kE, 4);
+  std::vector<Note>  notes;
+  // 12 eighth-note triplets exactly fill measure 0 (12 * 1/12 == 1 whole
+  // note); 2 more open measure 1 with the same ratio. The true run (14
+  // events) is not a whole multiple of 3, so the domain flags
+  // kIncompleteTupletGroup against notes[0]. The engraver's per-system
+  // fragment for measure 1 prepends measure 0's own last event (notes[11])
+  // as lookback context, so its local scan anchors measure 1's would-be
+  // digit at notes[11] -- a mid-run event. Suppression must still fire.
+  for (int index = 0; index < 14; ++index) {
+    notes.push_back(make_note(pitch, triplet));
+    ASSERT_TRUE(fixture.voice().append(notes.back()).ok());
+  }
+
+  const FixedMetrics    metrics;
+  NotationLayoutOptions options;
+  options.system_width        = 50.0;
+  options.left_margin         = 1.0;
+  options.right_margin        = 1.0;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics, options));
+  ASSERT_EQ(layout.systems.size(), 2u);
+  ASSERT_EQ(layout.systems[1].first_measure, 1u);
+
+  // Neither system emits a tuplet digit (and therefore no digit hit region):
+  // system 0's digit would anchor at the true run start and system 1's at the
+  // mid-run lookback context, and both must suppress against the same
+  // incomplete-run diagnostic.
+  for (const NotationEntityId& anchor : {notes[0].id, notes[11].id}) {
+    EXPECT_FALSE(std::ranges::any_of(layout.commands, [&](const auto& command) {
+      const auto* glyph = std::get_if<GlyphCommand>(&command);
+      return glyph != nullptr &&
+             glyph->id.value == anchor.to_string() + "/tuplet/digit/0";
+    })) << anchor.to_string();
+    EXPECT_EQ(
+        find_hit_region(layout, anchor.to_string() + "/tuplet/digit/0/hit"),
+        nullptr)
+        << anchor.to_string();
+  }
+
+  // The incomplete-run diagnostic is emitted once, deterministically keyed to
+  // the true global run start.
+  ASSERT_EQ(layout.diagnostics.size(), 1u);
+  EXPECT_EQ(layout.diagnostics[0].entity_id, notes[0].id);
+  EXPECT_EQ(
+      layout.diagnostics[0].policy,
+      "omitted-invalid-reference:" +
+          std::to_string(static_cast<int>(
+              graphscore::NotationDiagnosticCode::kIncompleteTupletGroup)));
+}
+
 // ---- Stale-layout guards: a kMarking hit whose named marking can no
 // longer be found, or no longer carries the shape its kind requires,
 // yields std::nullopt rather than a Selection validate_selection would

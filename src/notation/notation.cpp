@@ -2596,8 +2596,29 @@ template <typename Record>
             event_duration(events[local_events[end].event_index]).resolved();
         ++end;
       }
+      // The domain keys kIncompleteTupletGroup to the run's true global first
+      // event (its backward walk over the whole voice), while first_record is
+      // only the first event of this system's local fragment -- a mid-run
+      // event whenever the run began in an earlier system. Walk back to the
+      // true run start before comparing so a malformed run suppresses its
+      // digit on every system it spans, not just the one holding the run start.
+      const NotationEntityId true_run_start = [&]() {
+        if (!ratio.has_value()) {
+          return first_record.id;
+        }
+        std::size_t index = first_record.event_index;
+        while (index > 0) {
+          const std::optional<TupletRatio> previous =
+              event_duration(events[index - 1]).tuplet();
+          if (!previous.has_value() || *previous != *ratio) {
+            break;
+          }
+          --index;
+        }
+        return event_id(events[index]);
+      }();
       const auto is_incomplete_tuplet_diagnostic = [&](const auto& diagnostic) {
-        return diagnostic.entity_id == first_record.id &&
+        return diagnostic.entity_id == true_run_start &&
                diagnostic.code ==
                    NotationDiagnosticCode::kIncompleteTupletGroup;
       };
