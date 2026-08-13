@@ -2189,6 +2189,35 @@ TEST(NotationIncrementalReferenceDeltaTest, RemoveOneAddTwoGraceGroups) {
   EXPECT_LE(updated.work.reference_visits, 5U);
 }
 
+TEST(NotationIncrementalReferenceDeltaTest, UpdateGraceGroupPitchInPlace) {
+  // A pitch-only grace-notehead update through the narrow domain primitive
+  // (VoiceContent::set_notehead_pitch) emits a kUpdate grace-group delta. The
+  // retained cache must replace the group record in place, so the grace
+  // notehead re-renders at the new pitch and the incremental layout still
+  // equals a fresh layout.
+  IncrementalReferenceFixture f;
+  const GraceNote             note{.pitch    = pitch(Letter::kD),
+                                   .duration = eighth(),
+                                   .type     = GraceNoteType::kAcciaccatura};
+  const auto                  group = make_grace_group(f.early_event(), {note});
+  const auto                  note_id = group.notes.front().id;
+  ASSERT_TRUE(f.voice().add_grace_group(group).ok());
+  ASSERT_TRUE(
+      f.cache.update(f.fixture.project, f.fixture.node_id, f.metrics, f.options,
+                     {{NotationInvalidationKind::kLocalContent, 0, 0}}));
+
+  ASSERT_TRUE(f.voice().set_notehead_pitch(note_id, pitch(Letter::kE)).ok());
+
+  const auto updated =
+      f.cache.update(f.fixture.project, f.fixture.node_id, f.metrics, f.options,
+                     {{NotationInvalidationKind::kLocalContent, 0, 0}});
+  ASSERT_TRUE(updated);
+
+  f.assert_id_present(*updated.layout, note_id.to_string());
+  f.assert_incremental_equals_fresh(updated);
+  EXPECT_LE(updated.work.reference_visits, 3U);
+}
+
 TEST(NotationIncrementalPedalDeltaTest, RemoveOneAddTwoPedals) {
   IncrementalReferenceFixture f;
   const auto                  old_p = make_pedal_span(Rational(0), Rational(1));

@@ -892,4 +892,9 @@ std::vector<NotationRect> WriterShell::test_snapshot_highlight_rects() const {
   return impl_->highlight_rects;
 }
 
+std::optional<RasterSurface> WriterShell::test_snapshot_notation_surface()
+    const {
+  return impl_->notation_surface;
+}
+
 }  // namespace graphscore

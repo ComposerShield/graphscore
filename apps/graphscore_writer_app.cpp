@@ -40,6 +40,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -59,6 +60,7 @@ constexpr std::string_view kSelectionToolShellTestFlag =
 constexpr std::string_view kKeyEventsTestFlag      = "--test-key-events";
 constexpr std::string_view kKeyEventsShellTestFlag = "--test-key-events-shell";
 constexpr std::string_view kKeySelectionTestFlag   = "--test-key-selection";
+constexpr std::string_view kNoteheadMoveTestFlag   = "--test-notehead-move";
 
 const char* describe(graphscore::ShellError error) {
   switch (error) {
@@ -272,6 +274,7 @@ class SelectionToolHandler final : public graphscore::InputHandler {
       return;
     }
     initiating_button_ = event.button;
+    moved_during_drag_ = false;
     // Press alone may preserve the old committed highlight; update_highlight
     // shows the committed extent because begin() clears live_extent.
     update_highlight();
@@ -285,7 +288,8 @@ class SelectionToolHandler final : public graphscore::InputHandler {
     if (!std::isfinite(point.x) || !std::isfinite(point.y)) {
       return;
     }
-    std::ignore = drag_.update(project_, layout_, point);
+    moved_during_drag_ = true;
+    std::ignore        = drag_.update(project_, layout_, point);
     update_highlight();
   }
 
@@ -299,10 +303,23 @@ class SelectionToolHandler final : public graphscore::InputHandler {
     if (event.button != initiating_button_) {
       return;
     }
+    const graphscore::NotationPoint point{event.x, event.y};
+    // A press followed by a release with no intervening move is a click, not
+    // a range drag: resolve the single notehead/chord/rest/marking/caret the
+    // point names (M5-phase-16's resolve_selection_at), so an unmodified
+    // Up/Down then has a committed single-notehead selection to act on.
+    // Range-drag behavior is unchanged: any movement keeps the drag path.
+    if (!moved_during_drag_) {
+      drag_.cancel();
+      if (std::isfinite(point.x) && std::isfinite(point.y)) {
+        resolve_single_click_selection(point);
+      }
+      update_highlight();
+      return;
+    }
     // Resolve the final release point before committing, so the committed
     // extent matches the pointer position at release, not the last motion
     // position.
-    const graphscore::NotationPoint point{event.x, event.y};
     if (std::isfinite(point.x) && std::isfinite(point.y)) {
       // update() resolves the range one more time at the release point.
       // If it returns nullopt (off-stave, invalid), the drag is cancelled
@@ -338,57 +355,82 @@ class SelectionToolHandler final : public graphscore::InputHandler {
 
   // Provisional keyboard bindings (M5-phase-19b-iii), superseded by
   // M5-phase-26/M5-phase-27's normalized action table. Shift is required
-  // for every binding below; control, alt, and meta never substitute for
-  // it, and an unmodified arrow or a non-Shift chord is a no-op. Acts only
-  // when the selection tool is active and a committed ArbitraryRangeSet
-  // selection already exists to extend — this sub-phase never creates a
-  // first selection from the keyboard alone.
+  // for every range-extension binding below; control, alt, and meta never
+  // substitute for it, and an unmodified arrow or a non-Shift chord is a
+  // no-op. Acts only when the selection tool is active and a committed
+  // ArbitraryRangeSet selection already exists to extend -- this sub-phase
+  // never creates a first selection from the keyboard alone.
   //
   //   Shift+Left/Right  -- move the current focus edge (focus_edge_) one
   //                        provisional step earlier/later.
   //   Shift+Up/Down     -- extend the staff scope by one staff in score
   //                        order (up = earlier, down = later).
   //   Shift+Home/End    -- select_to_node_start()/select_to_node_end().
+  //
+  // M5-phase-20 adds unmodified Up/Down: with exactly one selected notehead,
+  // the notehead moves one diatonic staff step (move_selected_notehead). This
+  // never conflicts with Shift+Up/Down above, which stays range extension.
   void on_key_press(graphscore::KeyEvent event) override {
-    if (!event.modifiers.shift) {
-      return;
-    }
     if (active_tool_ != graphscore::ActiveTool::kSelection) {
       return;
     }
-    const auto* existing = current_range_set();
-    if (existing == nullptr || existing->items().empty()) {
+    if (event.modifiers.shift) {
+      const auto* existing = current_range_set();
+      if (existing == nullptr || existing->items().empty()) {
+        return;
+      }
+      const graphscore::MusicalSpan& span = existing->items().front().span;
+      switch (event.code) {
+        case graphscore::KeyCode::kLeft: {
+          const graphscore::Rational current =
+              focus_edge_ == graphscore::RangeEdge::kStart ? span.start
+                                                           : span.end;
+          std::ignore = extend_range_edge(
+              focus_edge_, current - kProvisionalRangeExtensionStep);
+          break;
+        }
+        case graphscore::KeyCode::kRight: {
+          const graphscore::Rational current =
+              focus_edge_ == graphscore::RangeEdge::kStart ? span.start
+                                                           : span.end;
+          std::ignore = extend_range_edge(
+              focus_edge_, current + kProvisionalRangeExtensionStep);
+          break;
+        }
+        case graphscore::KeyCode::kUp:
+          std::ignore = step_staff_scope(-1);
+          break;
+        case graphscore::KeyCode::kDown:
+          std::ignore = step_staff_scope(1);
+          break;
+        case graphscore::KeyCode::kHome:
+          std::ignore = select_to_node_start();
+          break;
+        case graphscore::KeyCode::kEnd:
+          std::ignore = select_to_node_end();
+          break;
+        case graphscore::KeyCode::kUnknown:
+        default:
+          break;
+      }
       return;
     }
-    const graphscore::MusicalSpan& span = existing->items().front().span;
+
+    // M5-phase-20: unmodified Up/Down moves the single selected notehead one
+    // diatonic staff step. Any other modifier chord is not a binding this
+    // phase owns and is a no-op (the full action table is M5-phase-26/27's).
+    if (event.modifiers.control || event.modifiers.alt ||
+        event.modifiers.meta) {
+      return;
+    }
     switch (event.code) {
-      case graphscore::KeyCode::kLeft: {
-        const graphscore::Rational current =
-            focus_edge_ == graphscore::RangeEdge::kStart ? span.start
-                                                         : span.end;
-        std::ignore = extend_range_edge(
-            focus_edge_, current - kProvisionalRangeExtensionStep);
-        break;
-      }
-      case graphscore::KeyCode::kRight: {
-        const graphscore::Rational current =
-            focus_edge_ == graphscore::RangeEdge::kStart ? span.start
-                                                         : span.end;
-        std::ignore = extend_range_edge(
-            focus_edge_, current + kProvisionalRangeExtensionStep);
-        break;
-      }
       case graphscore::KeyCode::kUp:
-        std::ignore = step_staff_scope(-1);
+        std::ignore =
+            move_selected_notehead(graphscore::NoteheadStepDirection::kUp);
         break;
       case graphscore::KeyCode::kDown:
-        std::ignore = step_staff_scope(1);
-        break;
-      case graphscore::KeyCode::kHome:
-        std::ignore = select_to_node_start();
-        break;
-      case graphscore::KeyCode::kEnd:
-        std::ignore = select_to_node_end();
+        std::ignore =
+            move_selected_notehead(graphscore::NoteheadStepDirection::kDown);
         break;
       case graphscore::KeyCode::kUnknown:
       default:
@@ -550,6 +592,162 @@ class SelectionToolHandler final : public graphscore::InputHandler {
     return active_tool_;
   }
 
+  // Supplies the glyph metrics used to refresh the retained layout after a
+  // notehead move (M5-phase-20). Must be set before any notehead move that
+  // expects the layout to refresh; the pointer/range-selection paths never
+  // need it. `run()` sets the production font; the notehead-move test sets
+  // SelfTestMetrics.
+  void set_metrics(const graphscore::GlyphMetrics* metrics) noexcept {
+    metrics_ = metrics;
+  }
+
+  // The step that publishes the rasterised notation surface for a refreshed
+  // layout to the shell. `run()` wires it to rasterize_notation +
+  // set_notation_surface; the headless notehead-move test wires a
+  // deterministic test publisher so the same publish step is observable
+  // without a font or rendering backend. Unset (empty) means the layout is
+  // refreshed in memory but no surface is published, which is only correct
+  // on the range-selection paths that never mutate notation.
+  using SurfacePublisher =
+      std::function<graphscore::ShellResult(const graphscore::NotationLayout&)>;
+
+  void set_surface_publisher(SurfacePublisher publisher) {
+    publish_surface_ = std::move(publisher);
+  }
+
+  // Supplies the layout options the incremental layout cache uses. Must match
+  // the options the retained layout was produced with. `run()` keeps the
+  // default options; the cross-measure-tie test sets narrow one-measure-per-
+  // system options so a tie chain spanning two measures also spans two
+  // systems, which is what makes the full-chain invalidation observable.
+  void set_layout_options(graphscore::NotationLayoutOptions options) {
+    layout_options_ = options;
+  }
+
+  // The step that builds the reversible command for a notehead move. `run()`
+  // and the notehead-move tests keep the default (make_move_notehead_command);
+  // the rollback-failure tests replace it with a wrapper whose undo fails a
+  // configured number of times, so a deterministic rollback failure can be
+  // injected without relying on actual allocation failure.
+  using MoveCommandFactory = std::function<std::unique_ptr<graphscore::Command>(
+      const graphscore::Project&, const graphscore::NoteheadItem&,
+      graphscore::NoteheadStepDirection)>;
+
+  void set_move_command_factory(MoveCommandFactory factory) {
+    move_command_factory_ = std::move(factory);
+  }
+
+  // Builds the retained incremental layout cache from the current project and
+  // layout, so a later refresh_layout() reuses unaffected systems instead of
+  // full-resetting on its first call (which rebuilds everything and hides a
+  // stale invalidation scope). run() calls this at startup -- immediately
+  // after set_metrics() -- so the first production edit is already
+  // incremental; the notehead-move tests call it to reproduce that startup
+  // seeding before asserting rebuild scope.
+  void warm_layout_cache() {
+    if (metrics_ == nullptr) {
+      return;
+    }
+    std::ignore = layout_cache_.update(project_, layout_.node_id, *metrics_,
+                                       layout_options_, {});
+  }
+
+  // Stores a selection directly, mirroring SelectionDragState's own
+  // keyboard/accessible entry point (M5-phase-19b). A pointer click reaches
+  // this through resolve_selection_at (resolve_single_click_selection);
+  // Shift/keyboard range extension and the accessible controls reach it
+  // through the range methods above. Kept public so those paths and the
+  // no-op tests below share one entry point.
+  void set_committed_selection(std::optional<graphscore::Selection> selection) {
+    drag_.set_committed_selection(std::move(selection));
+    update_highlight();
+  }
+
+  // Moves the single selected notehead one diatonic staff step (M5-phase-20).
+  // Requires the committed selection to be a NoteheadSet with exactly one
+  // item; any other selection -- none, a range, a non-notehead arm, or a
+  // multi-notehead set -- is a no-op returning false. The move runs as one
+  // reversible command through the handler's CommandHistory. On success the
+  // same notehead identity stays selected (MoveNoteheadCommand preserves ids),
+  // the retained layout is refreshed incrementally and re-published to the
+  // shell, and the short audition request for the post-edit pitch is recorded
+  // (M5-phase-15; nothing plays it until Milestone 08).
+  //
+  // The move is one provisional CommandHistory transaction: the pitch
+  // mutation executes without clearing the redo stack, the candidate layout
+  // is refreshed and its surface published, and only then does the
+  // transaction commit (clearing redo). If the cache refresh or the surface
+  // publish fails, the transaction aborts — undoing the pitch mutation and
+  // restoring the exact prior history, including any pre-existing redo —
+  // and the layout cache is re-seeded from the restored project, so project,
+  // layout, surface, selection/highlight, history, and audition all remain
+  // exactly as they were before the move. A stale notehead identity or a
+  // pitch step that would leave the SpelledPitch/MIDI range fails the same
+  // way, leaving everything unchanged.
+  //
+  // Abort reliability: MoveNoteheadCommand::undo() restores from its pre-edit
+  // snapshot, so the rollback of a just-applied pitch mutation cannot fail
+  // for any ordinary recoverable publication failure; only a process-level
+  // allocation failure inside undo itself can. If it does, the move hands
+  // the poisoned history to recover_from_failed_rollback() below: the layout
+  // cache is NOT re-seeded from a project that disagrees with the visible
+  // layout/surface, and a further move is blocked until recovery succeeds.
+  bool move_selected_notehead(graphscore::NoteheadStepDirection direction) {
+    if (history_.poisoned()) {
+      // A prior rollback failed and has not been recovered: the authoritative
+      // project may disagree with the visible layout/surface. Refuse the
+      // mutation rather than pretend the history is consistent.
+      return false;
+    }
+    const auto* set = current_notehead_set();
+    if (set == nullptr || set->items().size() != 1u) {
+      return false;
+    }
+    const graphscore::NoteheadItem&                      item = set->items()[0];
+    const std::optional<graphscore::NoteAuditionRequest> audition =
+        graphscore::audition_for_notehead_move(project_, item, direction);
+    std::unique_ptr<graphscore::Command> command =
+        move_command_factory_(project_, item, direction);
+    if (command == nullptr) {
+      return false;
+    }
+
+    // Provisional execute: apply the pitch mutation WITHOUT clearing the
+    // redo stack, so a failed publication can restore the exact prior
+    // history (including any pre-existing redo) rather than destroying it.
+    graphscore::CommandHistory::Transaction transaction =
+        history_.begin_transaction(std::move(command), project_);
+    if (!transaction.active()) {
+      return false;
+    }
+
+    if (!refresh_layout()) {
+      const graphscore::Result rollback = transaction.abort();
+      if (!rollback.ok()) {
+        // The rollback failed: the history is now poisoned (the command and
+        // its exact project are retained for recover()). Attempt recovery
+        // once; a one-shot failure recovers here, while a persistent failure
+        // leaves the handler unavailable and further moves blocked.
+        recover_from_failed_rollback();
+        return false;
+      }
+      // Project restored exactly: re-seed the retained cache from it so the
+      // next move stays incremental.
+      layout_cache_.reset();
+      warm_layout_cache();
+      return false;
+    }
+
+    // Publication succeeded: commit the command (clears redo, exactly
+    // execute_new's normal success path). Capacity was reserved before
+    // execute, so this cannot fail here.
+    if (!transaction.commit().ok()) {
+      return false;
+    }
+    last_audition_ = audition;
+    return true;
+  }
+
   // ---- test access ---------------------------------------------------------
 
   [[nodiscard]] const graphscore::SelectionDragState& drag_state()
@@ -564,6 +762,70 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   [[nodiscard]] const graphscore::NotationLayout& layout() const noexcept {
     return layout_;
   }
+
+  // The audition request the most recent successful notehead move issued, or
+  // nullopt when no move has succeeded yet (or the last move had nothing to
+  // audition). A failed or no-op move leaves this unchanged.
+  [[nodiscard]] const std::optional<graphscore::NoteAuditionRequest>&
+  last_audition() const noexcept {
+    return last_audition_;
+  }
+
+  // The incremental-layout work the most recent refresh_layout() recorded:
+  // which measures/systems were rebuilt vs reused. Test-only; lets a test
+  // prove a cold-cache first local move rebuilds only the affected system
+  // (finding 1) rather than every system.
+  [[nodiscard]] const graphscore::NotationLayoutWork& test_last_layout_work()
+      const noexcept {
+    return last_layout_work_;
+  }
+
+  // The number of commands on the undo/redo stacks. Test-only; lets a
+  // failing-publisher test prove a rollback leaves history unchanged.
+  [[nodiscard]] std::size_t test_undo_stack_size() const noexcept {
+    return history_.undo_stack_size();
+  }
+
+  [[nodiscard]] std::size_t test_redo_stack_size() const noexcept {
+    return history_.redo_stack_size();
+  }
+
+  // True while a failed rollback has left the history poisoned and the
+  // handler unavailable: further moves (and any undo/redo through the same
+  // history) are blocked until the history recovers. Test-only; the
+  // rollback-failure tests assert this to prove the explicit unavailable
+  // state, rather than a silent half-rolled-back project.
+  [[nodiscard]] bool history_unavailable() const noexcept {
+    return history_.poisoned();
+  }
+
+  // Retries the rollback of a failed move's provisional command once the
+  // history has been poisoned by that failure. On success the authoritative
+  // project and history are restored; the visible layout/surface/highlight
+  // were never committed (refresh_layout() failed before committing layout_),
+  // so they are already coherent with the restored project, and the retained
+  // incremental cache is re-seeded from it. On a persistent failure the
+  // history stays poisoned and the handler remains unavailable. Either way
+  // the move did not complete.
+  void recover_from_failed_rollback() {
+    const graphscore::Result recovered = history_.recover();
+    if (!recovered.ok()) {
+      return;
+    }
+    layout_cache_.reset();
+    warm_layout_cache();
+  }
+
+  // Test-only: undo/redo the most recent notehead move through the handler's
+  // CommandHistory, so a test can establish a non-empty redo stack before a
+  // failed publication and then prove that redo survives the abort and
+  // remains executable. These mirror the M5-phase-26 undo/redo bindings that
+  // will route through the same history; unlike those future bindings they do
+  // not refresh the layout/surface, so a test that calls them must only
+  // assert project/history state, never visible geometry.
+  [[nodiscard]] bool test_undo() { return history_.undo(project_).ok(); }
+
+  [[nodiscard]] bool test_redo() { return history_.redo(project_).ok(); }
 
   [[nodiscard]] std::optional<graphscore::MeasureScope> first_staff()
       const noexcept {
@@ -587,6 +849,18 @@ class SelectionToolHandler final : public graphscore::InputHandler {
       return nullptr;
     }
     return std::get_if<graphscore::ArbitraryRangeSet>(&*committed);
+  }
+
+  // The committed selection's own NoteheadSet, or nullptr when there is no
+  // committed selection or it is not that arm. move_selected_notehead above
+  // requires exactly this arm with exactly one item.
+  [[nodiscard]] const graphscore::NoteheadSet* current_notehead_set()
+      const noexcept {
+    const auto& committed = drag_.committed_selection();
+    if (!committed.has_value()) {
+      return nullptr;
+    }
+    return std::get_if<graphscore::NoteheadSet>(&*committed);
   }
 
   // Derives first_staff_/last_staff_ from the committed selection's own
@@ -685,10 +959,122 @@ class SelectionToolHandler final : public graphscore::InputHandler {
     }
   }
 
+  // Resolves a non-drag click to the single notehead/chord/rest/marking/caret
+  // selection the point names (M5-phase-16's resolve_selection_at) and stores
+  // it as the committed selection. A point that names nothing (off-stave, or a
+  // stale layout) leaves the committed selection unchanged, matching the
+  // pre-M5-phase-20 click behavior.
+  void resolve_single_click_selection(const graphscore::NotationPoint point) {
+    std::optional<graphscore::Selection> selection =
+        graphscore::resolve_selection_at(project_, layout_, palette_, point);
+    if (selection.has_value()) {
+      drag_.set_committed_selection(std::move(selection));
+    }
+  }
+
+  // The exact invalidation scope the incremental layout cache needs after the
+  // selected notehead's pitch moves: the notehead's own measure as
+  // kLocalContent for a local move, or the full connected tie-chain measure
+  // range as kCrossMeasureSpan when the chain crosses a barline. The measure
+  // range comes from graphscore::notehead_move_scope, the shared source of
+  // truth the MoveNoteheadCommand also walks, so the layout invalidation can
+  // never drift from the mutation's actual extent.
+  [[nodiscard]] std::optional<graphscore::NotationInvalidation>
+  notehead_invalidation(const graphscore::NoteheadItem& item) const {
+    const std::optional<graphscore::NoteheadMoveScope> scope =
+        graphscore::notehead_move_scope(project_, item);
+    if (!scope.has_value()) {
+      return std::nullopt;
+    }
+    const graphscore::NotationInvalidationKind kind =
+        scope->first_measure == scope->last_measure
+            ? graphscore::NotationInvalidationKind::kLocalContent
+            : graphscore::NotationInvalidationKind::kCrossMeasureSpan;
+    return graphscore::NotationInvalidation{kind, scope->first_measure,
+                                            scope->last_measure};
+  }
+
+  // Re-lays out the node after a successful domain mutation through the
+  // retained incremental layout cache (M5-phase-8), then publishes the
+  // rasterised surface to the shell and commits the new layout as visible.
+  // The publish happens BEFORE the layout is committed, so a publish failure
+  // leaves layout_ (and therefore the highlight geometry) unchanged for the
+  // caller to roll back. Returns false when the cache refresh fails, when no
+  // invalidation can be computed, or when the surface publish fails; true
+  // means the new layout is committed and published.
+  //
+  // Requires metrics_ to have been set (run() and the notehead-move test both
+  // do); returns true otherwise so the range-selection paths that never move
+  // a notehead remain no-ops.
+  bool refresh_layout() {
+    if (metrics_ == nullptr) {
+      return true;
+    }
+    const auto* set = current_notehead_set();
+    if (set == nullptr || set->items().size() != 1u) {
+      return true;
+    }
+    const std::optional<graphscore::NotationInvalidation> invalidation =
+        notehead_invalidation(set->items()[0]);
+    if (!invalidation.has_value()) {
+      return false;
+    }
+    graphscore::IncrementalNotationLayoutResult result = layout_cache_.update(
+        project_, layout_.node_id, *metrics_, layout_options_, {*invalidation});
+    if (!result || !result.layout.has_value()) {
+      return false;
+    }
+    last_layout_work_ = result.work;
+    if (publish_surface_) {
+      const graphscore::ShellResult publish = publish_surface_(*result.layout);
+      if (!publish.ok()) {
+        return false;
+      }
+    }
+    layout_ = std::move(*result.layout);
+    update_highlight();
+    return true;
+  }
+
   graphscore::Project            project_;
   graphscore::NotationLayout     layout_;
   graphscore::WriterShell*       shell_;
   graphscore::SelectionDragState drag_;
+  // Reversible-command history for notehead moves (M5-phase-20). Undo/redo
+  // key bindings belong to M5-phase-26; this phase routes each mutation
+  // through begin_transaction()/commit()/abort() so it is undoable once
+  // those bindings exist and a failed surface publication restores the exact
+  // prior history (including any pre-existing redo).
+  graphscore::CommandHistory history_;
+  // The notehead-move command factory; see set_move_command_factory(). The
+  // default builds the real MoveNoteheadCommand; the rollback-failure tests
+  // replace it with a deterministic failing wrapper.
+  MoveCommandFactory move_command_factory_ =
+      &graphscore::make_move_notehead_command;
+  // Glyph metrics used to refresh the retained layout after a move; see
+  // set_metrics() and refresh_layout().
+  const graphscore::GlyphMetrics* metrics_ = nullptr;
+  // The armed palette used only to resolve a click to a selection
+  // (resolve_selection_at's armed voice for stemless-chord disambiguation and
+  // insertion-caret naming). Defaults to a quarter-note, voice-1 note-entry
+  // state; the note-entry tool's palette wiring is a later milestone.
+  graphscore::NotePaletteState palette_;
+  // Retained incremental layout state (M5-phase-8). Seeded at startup by
+  // warm_layout_cache() (run()) and re-seeded after any failed-move rollback,
+  // so refresh_layout() is always incremental on the first move.
+  graphscore::NotationLayoutCache   layout_cache_;
+  graphscore::NotationLayoutOptions layout_options_;
+  // The surface publish step; see set_surface_publisher().
+  SurfacePublisher publish_surface_;
+  // The audition request the most recent successful move issued; see
+  // last_audition().
+  std::optional<graphscore::NoteAuditionRequest> last_audition_;
+  // The incremental-layout work the most recent refresh_layout() recorded;
+  // see test_last_layout_work().
+  graphscore::NotationLayoutWork last_layout_work_;
+  // True once the pointer has moved during the current drag, so a
+  // press-and-release-without-move is distinguished from a genuine range drag.
+  bool                      moved_during_drag_ = false;
   graphscore::ActiveTool    active_tool_ = graphscore::ActiveTool::kSelection;
   graphscore::PointerButton initiating_button_ =
       graphscore::PointerButton::kUnknown;
@@ -712,6 +1098,31 @@ class SelectionToolHandler final : public graphscore::InputHandler {
 };
 
 // ---- normal run ------------------------------------------------------------
+
+// Rasterizes `layout`'s commands with `font` and publishes the resulting
+// surface to `shell`. Returns kRenderingSetupFailed when rasterization fails,
+// otherwise the shell's own set_notation_surface result. Shared by run()'s
+// startup rasterization and the handler's post-mutation surface publisher, so
+// the two can never drift on surface dimensions or raster options.
+[[nodiscard]] graphscore::ShellResult publish_notation_surface(
+    const graphscore::NotationLayout& layout,
+    const graphscore::BravuraFont& font, graphscore::WriterShell* shell,
+    const graphscore::RasterOptions& base_options) {
+  graphscore::RasterOptions opts = base_options;
+  opts.width                     = static_cast<std::uint32_t>(
+                   std::ceil(layout.bounds.x + layout.bounds.width)) +
+               16U;
+  opts.height = static_cast<std::uint32_t>(
+                    std::ceil(layout.bounds.y + layout.bounds.height)) +
+                16U;
+  auto raster = graphscore::rasterize_notation(layout.commands, font, opts);
+  if (!raster || !raster.surface.has_value()) {
+    return graphscore::ShellResult{
+        graphscore::ShellError::kRenderingSetupFailed,
+        "graphscore_writer_app: failed to rasterise notation"};
+  }
+  return shell->set_notation_surface(std::move(*raster.surface));
+}
 
 // Load the production Bravura font. Returns nullopt on failure; the
 // diagnostic is already printed to stderr by the rendering layer.
@@ -761,30 +1172,15 @@ int run(bool smoke_test) {
 
   // Rasterise the notation to an RGBA8 surface so the shell can upload it
   // to a GPU texture and compose the highlight on top.
-  const graphscore::NotationLayout& layout = default_project->layout;
-  graphscore::RasterOptions         raster_opts;
-  raster_opts.width = static_cast<std::uint32_t>(
-                          std::ceil(layout.bounds.x + layout.bounds.width)) +
-                      16U;
-  raster_opts.height = static_cast<std::uint32_t>(
-                           std::ceil(layout.bounds.y + layout.bounds.height)) +
-                       16U;
+  graphscore::RasterOptions raster_opts;
   raster_opts.pixels_per_unit = 1.0;
   raster_opts.origin          = {0.0, 0.0};
   raster_opts.color           = {0, 0, 0, 255};
   raster_opts.opacity         = 255;
 
-  auto raster = graphscore::rasterize_notation(layout.commands,
-                                               *font_loaded->font, raster_opts);
-  if (!raster || !raster.surface.has_value()) {
-    std::fprintf(stderr,
-                 "graphscore_writer_app: failed to rasterise notation\n");
-    return 1;
-  }
-
-  graphscore::WriterShell shell;
-  const auto              surf_result =
-      shell.set_notation_surface(std::move(*raster.surface));
+  graphscore::WriterShell       shell;
+  const graphscore::ShellResult surf_result = publish_notation_surface(
+      default_project->layout, *font_loaded->font, &shell, raster_opts);
   if (!surf_result.ok()) {
     std::fprintf(stderr,
                  "graphscore_writer_app: set_notation_surface failed: %s\n",
@@ -795,6 +1191,16 @@ int run(bool smoke_test) {
   SelectionToolHandler handler(std::move(default_project->project),
                                std::move(default_project->layout), &shell);
 
+  handler.set_metrics(font_loaded->font.get());
+  // Seed the retained layout cache from the startup layout before any edit,
+  // so the first notehead move refreshes only the affected system rather
+  // than full-resetting the cold cache (M5-phase-8 incremental engraving).
+  handler.warm_layout_cache();
+  handler.set_surface_publisher(
+      [font = font_loaded->font.get(), &shell,
+       raster_opts](const graphscore::NotationLayout& layout) {
+        return publish_notation_surface(layout, *font, &shell, raster_opts);
+      });
   handler.set_active_tool(graphscore::ActiveTool::kSelection);
   shell.set_input_handler(&handler);
 
@@ -3833,6 +4239,1828 @@ int key_selection_test() {
   return 0;
 }
 
+// ---- notehead move tests (M5-phase-20) -------------------------------------
+//
+// Exercises SelectionToolHandler's unmodified Up/Down dispatch: with exactly
+// one selected notehead, the notehead moves one diatonic staff step, its
+// accidental is preserved, the same notehead identity stays selected, and the
+// retained layout is refreshed. No selection, a non-notehead selection, a
+// multi-notehead selection, a stale notehead, and Shift chords remain no-ops
+// (Shift stays M5-phase-19 range extension).
+
+struct NoteheadMoveFixture {
+  graphscore::Project          project;
+  graphscore::NodeId           node_id;
+  graphscore::TrackId          track_id;
+  graphscore::StaveId          stave_id;
+  graphscore::NotationEntityId first_note_id;
+  graphscore::NotationEntityId second_note_id;
+  graphscore::NotationLayout   layout;
+};
+
+// One single-staff node with a complete voice: two quarter notes (C4, D4)
+// followed by normalized rests filling a 4/4 measure. Complete so the move
+// command's normalize step is a no-op and undo/redo stay exact.
+[[nodiscard]] std::optional<NoteheadMoveFixture> build_notehead_move_fixture(
+    const graphscore::GlyphMetrics& metrics) {
+  graphscore::Project project{graphscore::ProjectId::generate(),
+                              "NoteheadMove"};
+  const auto          midi_channel = graphscore::MidiChannel::create(0);
+  if (!midi_channel.has_value()) {
+    return std::nullopt;
+  }
+  const auto track_added = project.add_track(
+      "Track", graphscore::StaffLayout::single_staff(graphscore::Clef::kTreble),
+      *midi_channel);
+  if (!track_added.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::TrackId track_id = *track_added;
+  const graphscore::NodeId  node_id  = project.add_node("Node");
+  auto*                     lane = project.find_node(node_id)->lane(track_id);
+  const graphscore::StaveId stave_id =
+      project.active_tracks()[0].layout().staves()[0].id;
+  lane->ensure_stave(stave_id);
+
+  std::vector<graphscore::StaveDefinition> stave_defs;
+  stave_defs.push_back(project.active_tracks()[0].layout().staves()[0]);
+  const auto time_sig = graphscore::TimeSignature::create(4, 4);
+  if (!time_sig.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<graphscore::Measure> measures(
+      1, graphscore::Measure{*time_sig, graphscore::KeySignature{}});
+  auto timeline =
+      graphscore::NodeTimeline::create(std::move(measures), stave_defs);
+  if (!timeline.has_value()) {
+    return std::nullopt;
+  }
+  project.find_node(node_id)->set_timeline(std::move(*timeline));
+
+  const auto quarter_dur =
+      graphscore::Duration::create(graphscore::NoteValue::kQuarter, 0);
+  if (!quarter_dur.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::Duration quarter = *quarter_dur;
+  const auto                 voice1  = graphscore::Voice::create(1);
+  if (!voice1.has_value()) {
+    return std::nullopt;
+  }
+  graphscore::VoiceContent& vc = lane->stave(stave_id)->voice(*voice1);
+
+  const auto pitch_c4 =
+      graphscore::SpelledPitch::create(graphscore::Letter::kC, 4);
+  const auto pitch_d4 =
+      graphscore::SpelledPitch::create(graphscore::Letter::kD, 4);
+  if (!pitch_c4.has_value() || !pitch_d4.has_value()) {
+    return std::nullopt;
+  }
+  if (!vc.append(graphscore::make_note(*pitch_c4, quarter)).ok()) {
+    return std::nullopt;
+  }
+  if (!vc.append(graphscore::make_note(*pitch_d4, quarter)).ok()) {
+    return std::nullopt;
+  }
+  const graphscore::Rational node_end =
+      project.find_node(node_id)->timeline()->node_end();
+  if (!vc.normalize(node_end).ok()) {
+    return std::nullopt;
+  }
+
+  const graphscore::NotationEntityId first_id =
+      graphscore::event_id(vc.events()[0]);
+  const graphscore::NotationEntityId second_id =
+      graphscore::event_id(vc.events()[1]);
+
+  graphscore::NotationLayoutResult layout_result =
+      graphscore::layout_notation(project, node_id, metrics);
+  if (!layout_result || !layout_result.layout.has_value()) {
+    return std::nullopt;
+  }
+
+  return NoteheadMoveFixture{std::move(project),
+                             node_id,
+                             track_id,
+                             stave_id,
+                             first_id,
+                             second_id,
+                             std::move(*layout_result.layout)};
+}
+
+[[nodiscard]] graphscore::KeyEvent plain_key(graphscore::KeyCode code) {
+  graphscore::KeyEvent event;
+  event.code = code;
+  return event;
+}
+
+// Voice 1, the only voice this test's fixture writes. Voice::create(1) cannot
+// fail (index 1 is always in range), but the value is checked rather than
+// dereferenced so the unchecked-optional-access check sees a guarded access.
+[[nodiscard]] graphscore::Voice voice_one() {
+  const auto voice = graphscore::Voice::create(1);
+  if (!voice.has_value()) {
+    return graphscore::Voice{};
+  }
+  return *voice;
+}
+
+// A natural spelled pitch; the octaves this test uses (4, 5) are always in
+// range, but the value is checked before dereferencing.
+[[nodiscard]] graphscore::SpelledPitch spelled(graphscore::Letter letter,
+                                               std::int8_t        octave) {
+  const auto pitch = graphscore::SpelledPitch::create(letter, octave);
+  if (!pitch.has_value()) {
+    return graphscore::SpelledPitch{};
+  }
+  return *pitch;
+}
+
+// Sets the committed selection to the given notehead items. Returns false
+// (leaving the handler untouched) if NoteheadSet::create rejects the items.
+[[nodiscard]] bool select_noteheads(
+    SelectionToolHandler&                 handler,
+    std::vector<graphscore::NoteheadItem> items) {
+  const auto set = graphscore::NoteheadSet::create(std::move(items));
+  if (!set.has_value()) {
+    return false;
+  }
+  handler.set_committed_selection(graphscore::Selection{*set});
+  return true;
+}
+
+// The committed selection's own NoteheadSet, or nullptr when there is no
+// committed selection or it is not that arm — the free-function counterpart
+// of SelectionToolHandler::current_notehead_set().
+[[nodiscard]] const graphscore::NoteheadSet* committed_notehead_set(
+    const SelectionToolHandler& handler) {
+  const auto& committed = handler.drag_state().committed_selection();
+  if (!committed.has_value()) {
+    return nullptr;
+  }
+  return std::get_if<graphscore::NoteheadSet>(&*committed);
+}
+
+// Presses and releases the primary button at (x, y) with no intervening move:
+// a click, which on_pointer_release resolves through resolve_selection_at
+// rather than through the range-drag path.
+void click_at(graphscore::WriterShell& shell, double x, double y) {
+  const graphscore::PointerEvent press{x, y,
+                                       graphscore::PointerButton::kPrimary};
+  const graphscore::PointerEvent release{x, y,
+                                         graphscore::PointerButton::kPrimary};
+  shell.dispatch_test_pointer_event(0, press);
+  shell.dispatch_test_pointer_event(2, release);
+}
+
+// The origin of the "<id>/notehead" GlyphCommand in `layout` — ground truth
+// read out of the real layout, never a reproduction of notation.cpp's own
+// placement formulas. Clicking this point selects that notehead.
+[[nodiscard]] graphscore::NotationPoint notehead_origin(
+    const graphscore::NotationLayout&   layout,
+    const graphscore::NotationEntityId& id) {
+  const std::string target = id.to_string() + "/notehead";
+  for (const auto& command : layout.commands) {
+    const auto* glyph = std::get_if<graphscore::GlyphCommand>(&command);
+    if (glyph != nullptr && glyph->id.value == target) {
+      return glyph->origin;
+    }
+  }
+  return graphscore::NotationPoint{};
+}
+
+// The origin of the "<id>/grace-notehead" GlyphCommand in `layout` (a grace
+// notehead uses a distinct glyph role from an ordinary/chord notehead).
+[[nodiscard]] graphscore::NotationPoint grace_notehead_origin(
+    const graphscore::NotationLayout&   layout,
+    const graphscore::NotationEntityId& id) {
+  const std::string target = id.to_string() + "/grace-notehead";
+  for (const auto& command : layout.commands) {
+    const auto* glyph = std::get_if<graphscore::GlyphCommand>(&command);
+    if (glyph != nullptr && glyph->id.value == target) {
+      return glyph->origin;
+    }
+  }
+  return graphscore::NotationPoint{};
+}
+
+// A headless surface publisher: encodes a hash of the layout's glyph origins
+// into a small RGBA surface and publishes it through the shell's real
+// set_notation_surface path, so the notehead-move test can observe that a
+// mutation refresh re-published a *different* visible surface without a font
+// or rendering backend. Moving a notehead changes that notehead's glyph
+// origin, and therefore the surface.
+[[nodiscard]] graphscore::ShellResult publish_headless_test_surface(
+    const graphscore::NotationLayout& layout, graphscore::WriterShell* shell) {
+  std::uint32_t hash = 2166136261u;
+  for (const auto& command : layout.commands) {
+    const auto* glyph = std::get_if<graphscore::GlyphCommand>(&command);
+    if (glyph == nullptr) {
+      continue;
+    }
+    const auto mix = [&hash](double value) {
+      hash ^= static_cast<std::uint32_t>(value * 1000.0);
+      hash *= 16777619u;
+    };
+    mix(glyph->origin.x);
+    mix(glyph->origin.y);
+  }
+  graphscore::RasterSurface surface;
+  surface.width  = 2;
+  surface.height = 2;
+  surface.rgba.resize(16);
+  surface.rgba[0] = static_cast<std::uint8_t>(hash >> 24);
+  surface.rgba[1] = static_cast<std::uint8_t>(hash >> 16);
+  surface.rgba[2] = static_cast<std::uint8_t>(hash >> 8);
+  surface.rgba[3] = static_cast<std::uint8_t>(hash);
+  return shell->set_notation_surface(std::move(surface));
+}
+
+// A single-staff fixture for the chord/grace click tests: a leading C4
+// quarter (so the grace-attached principal sits off the very first beat),
+// the grace principal D4 quarter, a two-note chord (E4, G4 quarter), and a
+// grace group (F4 eighth) attached to the principal. The lead is present so
+// the grace notehead engraves at a positive x and is reachable by a click.
+struct NoteheadClickFixture {
+  graphscore::Project          project;
+  graphscore::NodeId           node_id;
+  graphscore::TrackId          track_id;
+  graphscore::StaveId          stave_id;
+  graphscore::NotationEntityId chord_id;        // top-level Chord event id
+  graphscore::NotationEntityId chord_note_id;   // E4 (moved chord notehead)
+  graphscore::NotationEntityId chord_other_id;  // G4 (untouched chord notehead)
+  graphscore::NotationEntityId grace_id;        // F4 grace notehead
+  graphscore::NotationLayout   layout;
+};
+
+[[nodiscard]] std::optional<NoteheadClickFixture> build_notehead_click_fixture(
+    const graphscore::GlyphMetrics& metrics) {
+  graphscore::Project project{graphscore::ProjectId::generate(), "Click"};
+  const auto          midi_channel = graphscore::MidiChannel::create(0);
+  if (!midi_channel.has_value()) {
+    return std::nullopt;
+  }
+  const auto track_added = project.add_track(
+      "Track", graphscore::StaffLayout::single_staff(graphscore::Clef::kTreble),
+      *midi_channel);
+  if (!track_added.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::TrackId track_id = *track_added;
+  const graphscore::NodeId  node_id  = project.add_node("Node");
+  auto*                     lane = project.find_node(node_id)->lane(track_id);
+  const graphscore::StaveId stave_id =
+      project.active_tracks()[0].layout().staves()[0].id;
+  lane->ensure_stave(stave_id);
+
+  std::vector<graphscore::StaveDefinition> stave_defs;
+  stave_defs.push_back(project.active_tracks()[0].layout().staves()[0]);
+  const auto time_sig = graphscore::TimeSignature::create(4, 4);
+  if (!time_sig.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<graphscore::Measure> measures(
+      1, graphscore::Measure{*time_sig, graphscore::KeySignature{}});
+  auto timeline =
+      graphscore::NodeTimeline::create(std::move(measures), stave_defs);
+  if (!timeline.has_value()) {
+    return std::nullopt;
+  }
+  project.find_node(node_id)->set_timeline(std::move(*timeline));
+
+  const auto quarter =
+      graphscore::Duration::create(graphscore::NoteValue::kQuarter, 0);
+  const auto eighth =
+      graphscore::Duration::create(graphscore::NoteValue::kEighth, 0);
+  if (!quarter.has_value() || !eighth.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::Voice   voice1 = voice_one();
+  graphscore::VoiceContent& vc     = lane->stave(stave_id)->voice(voice1);
+
+  const auto c4 = graphscore::SpelledPitch::create(graphscore::Letter::kC, 4);
+  const auto d4 = graphscore::SpelledPitch::create(graphscore::Letter::kD, 4);
+  const auto e4 = graphscore::SpelledPitch::create(graphscore::Letter::kE, 4);
+  const auto g4 = graphscore::SpelledPitch::create(graphscore::Letter::kG, 4);
+  const auto f4 = graphscore::SpelledPitch::create(graphscore::Letter::kF, 4);
+  if (!c4.has_value() || !d4.has_value() || !e4.has_value() ||
+      !g4.has_value() || !f4.has_value()) {
+    return std::nullopt;
+  }
+
+  if (!vc.append(graphscore::make_note(*c4, *quarter)).ok()) {
+    return std::nullopt;
+  }
+  const graphscore::Note principal = graphscore::make_note(*d4, *quarter);
+  if (!vc.append(principal).ok()) {
+    return std::nullopt;
+  }
+  const graphscore::ChordNote moved{graphscore::NotationEntityId::generate(),
+                                    *e4, false};
+  const graphscore::ChordNote other{graphscore::NotationEntityId::generate(),
+                                    *g4, false};
+  const graphscore::NotationEntityId chord_note_id  = moved.id;
+  const graphscore::NotationEntityId chord_other_id = other.id;
+  const graphscore::Chord            chord =
+      graphscore::make_chord(*quarter, {moved, other});
+  const graphscore::NotationEntityId chord_id = chord.id;
+  if (!vc.append(chord).ok()) {
+    return std::nullopt;
+  }
+  const graphscore::GraceGroup group = graphscore::make_grace_group(
+      principal.id, {graphscore::GraceNote{
+                        graphscore::NotationEntityId::generate(), *f4, *eighth,
+                        graphscore::GraceNoteType::kAcciaccatura, true}});
+  const graphscore::NotationEntityId grace_id = group.notes[0].id;
+  if (!vc.add_grace_group(group).ok()) {
+    return std::nullopt;
+  }
+  const graphscore::Rational node_end =
+      project.find_node(node_id)->timeline()->node_end();
+  if (!vc.normalize(node_end).ok()) {
+    return std::nullopt;
+  }
+
+  graphscore::NotationLayoutResult layout_result =
+      graphscore::layout_notation(project, node_id, metrics);
+  if (!layout_result || !layout_result.layout.has_value()) {
+    return std::nullopt;
+  }
+
+  return NoteheadClickFixture{
+      std::move(project), node_id,  track_id,
+      stave_id,           chord_id, chord_note_id,
+      chord_other_id,     grace_id, std::move(*layout_result.layout)};
+}
+
+// A single-staff, two-measure fixture whose voice is three quarter rests then
+// a tied C4 quarter in measure 0, and a C4 quarter in measure 1 -- the tied
+// notehead and its target sit on opposite sides of the barline, so the
+// connected tie chain spans measures 0 and 1.
+struct CrossMeasureTieFixture {
+  graphscore::Project          project;
+  graphscore::NodeId           node_id;
+  graphscore::TrackId          track_id;
+  graphscore::StaveId          stave_id;
+  graphscore::NotationEntityId first_id;   // tied C4 (end of measure 0)
+  graphscore::NotationEntityId second_id;  // C4 (start of measure 1)
+  graphscore::NotationLayout   layout;
+};
+
+[[nodiscard]] std::optional<CrossMeasureTieFixture>
+build_cross_measure_tie_fixture(
+    const graphscore::GlyphMetrics&          metrics,
+    const graphscore::NotationLayoutOptions& options) {
+  graphscore::Project project{graphscore::ProjectId::generate(), "CrossTie"};
+  const auto          midi_channel = graphscore::MidiChannel::create(0);
+  if (!midi_channel.has_value()) {
+    return std::nullopt;
+  }
+  const auto track_added = project.add_track(
+      "Track", graphscore::StaffLayout::single_staff(graphscore::Clef::kTreble),
+      *midi_channel);
+  if (!track_added.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::TrackId track_id = *track_added;
+  const graphscore::NodeId  node_id  = project.add_node("Node");
+  auto*                     lane = project.find_node(node_id)->lane(track_id);
+  const graphscore::StaveId stave_id =
+      project.active_tracks()[0].layout().staves()[0].id;
+  lane->ensure_stave(stave_id);
+
+  std::vector<graphscore::StaveDefinition> stave_defs;
+  stave_defs.push_back(project.active_tracks()[0].layout().staves()[0]);
+  const auto time_sig = graphscore::TimeSignature::create(4, 4);
+  if (!time_sig.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<graphscore::Measure> measures(
+      2, graphscore::Measure{*time_sig, graphscore::KeySignature{}});
+  auto timeline =
+      graphscore::NodeTimeline::create(std::move(measures), stave_defs);
+  if (!timeline.has_value()) {
+    return std::nullopt;
+  }
+  project.find_node(node_id)->set_timeline(std::move(*timeline));
+
+  const auto quarter =
+      graphscore::Duration::create(graphscore::NoteValue::kQuarter, 0);
+  if (!quarter.has_value()) {
+    return std::nullopt;
+  }
+  const auto pitch_c4 =
+      graphscore::SpelledPitch::create(graphscore::Letter::kC, 4);
+  if (!pitch_c4.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::Voice   voice1 = voice_one();
+  graphscore::VoiceContent& vc     = lane->stave(stave_id)->voice(voice1);
+
+  for (int i = 0; i < 3; ++i) {
+    if (!vc.append(graphscore::make_rest(*quarter)).ok()) {
+      return std::nullopt;
+    }
+  }
+  const graphscore::Note first =
+      graphscore::make_note(*pitch_c4, *quarter, true);
+  const graphscore::NotationEntityId first_id = first.id;
+  if (!vc.append(first).ok()) {
+    return std::nullopt;
+  }
+  const graphscore::Note second = graphscore::make_note(*pitch_c4, *quarter);
+  const graphscore::NotationEntityId second_id = second.id;
+  if (!vc.append(second).ok()) {
+    return std::nullopt;
+  }
+  const graphscore::Rational node_end =
+      project.find_node(node_id)->timeline()->node_end();
+  if (!vc.normalize(node_end).ok()) {
+    return std::nullopt;
+  }
+
+  graphscore::NotationLayoutResult layout_result =
+      graphscore::layout_notation(project, node_id, metrics, options);
+  if (!layout_result || !layout_result.layout.has_value()) {
+    return std::nullopt;
+  }
+
+  return CrossMeasureTieFixture{std::move(project),
+                                node_id,
+                                track_id,
+                                stave_id,
+                                first_id,
+                                second_id,
+                                std::move(*layout_result.layout)};
+}
+
+// A single-staff, two-measure fixture whose two measures land in two separate
+// systems (via narrow options) and whose voice carries one UNTIED note in each
+// measure. Moving the measure-0 note is a single-measure (local) edit, so the
+// fixture proves a cold-cache first move rebuilds only the affected system.
+struct TwoSystemLocalFixture {
+  graphscore::Project          project;
+  graphscore::NodeId           node_id;
+  graphscore::TrackId          track_id;
+  graphscore::StaveId          stave_id;
+  graphscore::NotationEntityId first_id;   // C4 quarter (measure 0)
+  graphscore::NotationEntityId second_id;  // E4 quarter (measure 1)
+  graphscore::NotationLayout   layout;
+};
+
+[[nodiscard]] std::optional<TwoSystemLocalFixture>
+build_two_system_local_fixture(
+    const graphscore::GlyphMetrics&          metrics,
+    const graphscore::NotationLayoutOptions& options) {
+  graphscore::Project project{graphscore::ProjectId::generate(), "TwoSystem"};
+  const auto          midi_channel = graphscore::MidiChannel::create(0);
+  if (!midi_channel.has_value()) {
+    return std::nullopt;
+  }
+  const auto track_added = project.add_track(
+      "Track", graphscore::StaffLayout::single_staff(graphscore::Clef::kTreble),
+      *midi_channel);
+  if (!track_added.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::TrackId track_id = *track_added;
+  const graphscore::NodeId  node_id  = project.add_node("Node");
+  auto*                     lane = project.find_node(node_id)->lane(track_id);
+  const graphscore::StaveId stave_id =
+      project.active_tracks()[0].layout().staves()[0].id;
+  lane->ensure_stave(stave_id);
+
+  std::vector<graphscore::StaveDefinition> stave_defs;
+  stave_defs.push_back(project.active_tracks()[0].layout().staves()[0]);
+  const auto time_sig = graphscore::TimeSignature::create(4, 4);
+  if (!time_sig.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<graphscore::Measure> measures(
+      2, graphscore::Measure{*time_sig, graphscore::KeySignature{}});
+  auto timeline =
+      graphscore::NodeTimeline::create(std::move(measures), stave_defs);
+  if (!timeline.has_value()) {
+    return std::nullopt;
+  }
+  project.find_node(node_id)->set_timeline(std::move(*timeline));
+
+  const auto quarter =
+      graphscore::Duration::create(graphscore::NoteValue::kQuarter, 0);
+  if (!quarter.has_value()) {
+    return std::nullopt;
+  }
+  const auto pitch_c4 =
+      graphscore::SpelledPitch::create(graphscore::Letter::kC, 4);
+  const auto pitch_e4 =
+      graphscore::SpelledPitch::create(graphscore::Letter::kE, 4);
+  if (!pitch_c4.has_value() || !pitch_e4.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::Voice   voice1 = voice_one();
+  graphscore::VoiceContent& vc     = lane->stave(stave_id)->voice(voice1);
+
+  const graphscore::Note first = graphscore::make_note(*pitch_c4, *quarter);
+  const graphscore::NotationEntityId first_id = first.id;
+  if (!vc.append(first).ok()) {
+    return std::nullopt;
+  }
+  // Three explicit rests fill the rest of measure 0, so measure 1's note
+  // starts exactly on the barline.
+  for (int i = 0; i < 3; ++i) {
+    if (!vc.append(graphscore::make_rest(*quarter)).ok()) {
+      return std::nullopt;
+    }
+  }
+  const graphscore::Note second = graphscore::make_note(*pitch_e4, *quarter);
+  const graphscore::NotationEntityId second_id = second.id;
+  if (!vc.append(second).ok()) {
+    return std::nullopt;
+  }
+  const graphscore::Rational node_end =
+      project.find_node(node_id)->timeline()->node_end();
+  if (!vc.normalize(node_end).ok()) {
+    return std::nullopt;
+  }
+
+  graphscore::NotationLayoutResult layout_result =
+      graphscore::layout_notation(project, node_id, metrics, options);
+  if (!layout_result || !layout_result.layout.has_value()) {
+    return std::nullopt;
+  }
+
+  return TwoSystemLocalFixture{std::move(project),
+                               node_id,
+                               track_id,
+                               stave_id,
+                               first_id,
+                               second_id,
+                               std::move(*layout_result.layout)};
+}
+
+// A deterministic test wrapper that delegates execute/redo to a real
+// MoveNoteheadCommand but fails undo() exactly `fail_times` times before
+// delegating, so a rollback failure can be injected without relying on an
+// actual allocation failure. `fail_times <= 0` means "never fail".
+class FailUndoCommand final : public graphscore::Command {
+ public:
+  FailUndoCommand(std::unique_ptr<graphscore::Command> inner, int fail_times)
+      : inner_(std::move(inner)), fail_times_(fail_times) {}
+
+  graphscore::Result execute(graphscore::Project& project) noexcept override {
+    return inner_->execute(project);
+  }
+
+  graphscore::Result undo(graphscore::Project& project) noexcept override {
+    if (fail_times_ > 0) {
+      --fail_times_;
+      return graphscore::Result(graphscore::ResultCode::kInternalError);
+    }
+    return inner_->undo(project);
+  }
+
+  graphscore::Result redo(graphscore::Project& project) noexcept override {
+    return inner_->redo(project);
+  }
+
+ private:
+  std::unique_ptr<graphscore::Command> inner_;
+  int                                  fail_times_;
+};
+
+int notehead_move_test() {
+  const SelfTestMetrics metrics;
+
+  // --- test 1: a real click on the ordinary notehead selects it, then
+  //     unmodified Up/Down moves it, retains identity/selection, re-publishes
+  //     a different visible surface, and issues the post-edit audition. ----
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: fixture build failed (1)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::Voice voice1 = voice_one();
+    // Publish the initial surface so the test can observe a change rather
+    // than an empty-surface-to-non-empty transition.
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr,
+                   "notehead-move-test: initial surface publish failed\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto before_surface = shell.test_snapshot_notation_surface();
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->first_note_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(stderr,
+                     "notehead-move-test: click did not select the ordinary "
+                     "notehead (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    const auto first_pitch = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+      return std::get<graphscore::Note>(vc.events().front()).pitch;
+    };
+    const graphscore::SpelledPitch c4 = spelled(graphscore::Letter::kC, 4);
+    const graphscore::SpelledPitch d4 = spelled(graphscore::Letter::kD, 4);
+    if (first_pitch() != c4) {
+      std::fprintf(stderr, "notehead-move-test: expected C4 before move (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+    if (first_pitch() != d4) {
+      std::fprintf(stderr,
+                   "notehead-move-test: Up did not move C4 to D4 (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(stderr,
+                     "notehead-move-test: selection changed after Up (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    // Visible surface re-published: different surface bytes than before.
+    const auto after_surface = shell.test_snapshot_notation_surface();
+    if (!after_surface.has_value() || after_surface == before_surface) {
+      std::fprintf(stderr,
+                   "notehead-move-test: visible surface not re-published "
+                   "after Up (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // Audition: the post-edit sounding pitch (D4 = MIDI 62) on the track.
+    {
+      const auto& audition = handler.last_audition();
+      if (!audition.has_value() || audition->track_id != fx->track_id ||
+          audition->pitches.size() != 1u ||
+          audition->pitches[0].value() != 62) {
+        std::fprintf(stderr,
+                     "notehead-move-test: no D4 audition after Up (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kDown));
+    if (first_pitch() != c4) {
+      std::fprintf(stderr,
+                   "notehead-move-test: Down did not move D4 back to C4 (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(stderr,
+                     "notehead-move-test: selection changed after Down (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 1b: clicking one chord notehead selects and moves only that
+  //     notehead; the other chord notehead is untouched. ------------------
+  {
+    auto fx = build_notehead_click_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: fixture build failed (1b)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->chord_note_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->chord_note_id) {
+        std::fprintf(stderr,
+                     "notehead-move-test: click did not select the chord "
+                     "notehead (1b)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+    const auto chord = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice_one());
+      for (const auto& event : vc.events()) {
+        if (const auto* c = std::get_if<graphscore::Chord>(&event)) {
+          if (c->id == fx->chord_id) {
+            return *c;
+          }
+        }
+      }
+      return graphscore::Chord{};
+    };
+    const graphscore::Chord after = chord();
+    const auto notehead_pitch     = [&after](graphscore::NotationEntityId id) {
+      for (const auto& note : after.notes) {
+        if (note.id == id) {
+          return note.pitch;
+        }
+      }
+      return graphscore::SpelledPitch{};
+    };
+    if (notehead_pitch(fx->chord_note_id) !=
+            spelled(graphscore::Letter::kF, 4) ||
+        notehead_pitch(fx->chord_other_id) !=
+            spelled(graphscore::Letter::kG, 4)) {
+      std::fprintf(stderr,
+                   "notehead-move-test: chord notehead move wrong (1b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 1c: clicking a grace notehead selects and moves it. ----------
+  {
+    auto fx = build_notehead_click_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: fixture build failed (1c)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::NotationPoint point =
+        grace_notehead_origin(handler.layout(), fx->grace_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->grace_id) {
+        std::fprintf(stderr,
+                     "notehead-move-test: click did not select the grace "
+                     "notehead (1c)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+    const auto grace_pitch = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice_one());
+      return vc.grace_groups()[0].notes[0].pitch;
+    };
+    if (grace_pitch() != spelled(graphscore::Letter::kG, 4)) {
+      std::fprintf(stderr,
+                   "notehead-move-test: Up did not move the grace note (1c)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 1d: the production default project is an incomplete voice (two
+  //     quarter notes, no trailing rests). Moving a notehead must change only
+  //     its pitch and must not materialize unrelated rests. ----------------
+  {
+    auto dp = build_default_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: default project failed (1d)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(dp->project), std::move(dp->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::Voice voice1 = voice_one();
+    const auto*             lane =
+        handler.project().find_node(dp->node_id)->lane(dp->track_id);
+    const graphscore::NotationEntityId first_id = graphscore::event_id(
+        lane->stave(dp->stave_id)->voice(voice1).events()[0]);
+    const std::size_t before_count =
+        lane->stave(dp->stave_id)->voice(voice1).events().size();
+    if (before_count != 2u) {
+      std::fprintf(
+          stderr,
+          "notehead-move-test: default project expected 2 events (1d)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), first_id);
+    click_at(shell, point.x, point.y);
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+
+    const auto& vc       = lane->stave(dp->stave_id)->voice(voice1);
+    const bool  has_rest = std::ranges::any_of(
+        vc.events(), [](const graphscore::VoiceEvent& event) {
+          return std::holds_alternative<graphscore::Rest>(event);
+        });
+    if (vc.events().size() != 2u || has_rest) {
+      std::fprintf(stderr,
+                   "notehead-move-test: move in the incomplete default project "
+                   "changed rhythm or created rests (1d)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 1e: a cross-measure tie chain. Clicking either endpoint and
+  //     pressing Up must move the whole chain, and the incremental layout
+  //     refresh must re-layout BOTH measures so neither endpoint's retained
+  //     surface stays stale. One-measure-per-system options place the two
+  //     tied measures in two systems, so a single-measure invalidation would
+  //     visibly leave the remote system stale. ----------------------------
+  {
+    const graphscore::NotationLayoutOptions narrow_options = [] {
+      graphscore::NotationLayoutOptions options;
+      options.system_width          = 160.0;
+      options.left_margin           = 20.0;
+      options.right_margin          = 20.0;
+      options.minimum_measure_width = 120.0;
+      options.whole_note_spacing    = 120.0;
+      return options;
+    }();
+    auto fx = build_cross_measure_tie_fixture(metrics, narrow_options);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: fixture build failed (1e)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_layout_options(narrow_options);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    handler.warm_layout_cache();
+
+    if (handler.layout().systems.size() < 2u) {
+      std::fprintf(stderr,
+                   "notehead-move-test: cross-measure fixture expected at "
+                   "least two systems (1e)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr,
+                   "notehead-move-test: initial surface publish failed (1e)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto before_surface = shell.test_snapshot_notation_surface();
+
+    // Both endpoints start at C4, so their notehead glyphs share one y.
+    const double before_a = notehead_origin(handler.layout(), fx->first_id).y;
+    const double before_b = notehead_origin(handler.layout(), fx->second_id).y;
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->first_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_id) {
+        std::fprintf(stderr,
+                     "notehead-move-test: click did not select the tied "
+                     "notehead (1e)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+
+    const double after_a = notehead_origin(handler.layout(), fx->first_id).y;
+    const double after_b = notehead_origin(handler.layout(), fx->second_id).y;
+    const double delta_a = before_a - after_a;
+    const double delta_b = before_b - after_b;
+    // Both chain endpoints must have moved up by the same diatonic step. A
+    // stale remote measure would leave the far notehead's glyph at its old
+    // C4 position, giving delta_b == 0 and failing the first check.
+    if (delta_a <= 0.0 || delta_b <= 0.0) {
+      std::fprintf(stderr,
+                   "notehead-move-test: a cross-measure tie endpoint did not "
+                   "move up (1e)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (std::abs(delta_a - delta_b) > 1e-6) {
+      std::fprintf(stderr,
+                   "notehead-move-test: cross-measure tie endpoints moved by "
+                   "different amounts (1e)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // The visible surface was re-published with different content.
+    const auto after_surface = shell.test_snapshot_notation_surface();
+    if (!after_surface.has_value() || after_surface == before_surface) {
+      std::fprintf(stderr,
+                   "notehead-move-test: visible surface not re-published for "
+                   "the cross-measure move (1e)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 1f: the FIRST local move under a production-equivalent startup
+  //     (cache seeded exactly as run() seeds it) rebuilds only the affected
+  //     system, not every system. ------------------------------------------
+  {
+    const graphscore::NotationLayoutOptions narrow_options = [] {
+      graphscore::NotationLayoutOptions options;
+      options.system_width          = 160.0;
+      options.left_margin           = 20.0;
+      options.right_margin          = 20.0;
+      options.minimum_measure_width = 120.0;
+      options.whole_note_spacing    = 120.0;
+      return options;
+    }();
+    auto fx = build_two_system_local_fixture(metrics, narrow_options);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: fixture build failed (1f)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_layout_options(narrow_options);
+    // run() seeds the cache at startup; reproduce that seeding here so the
+    // first move below is the handler's first edit, not a test-only warm.
+    handler.warm_layout_cache();
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    if (handler.layout().systems.size() < 2u) {
+      std::fprintf(stderr,
+                   "notehead-move-test: two-system fixture expected at least "
+                   "two systems (1f)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->first_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_id) {
+        std::fprintf(stderr,
+                     "notehead-move-test: click did not select the measure-0 "
+                     "note (1f)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+
+    // The first edit rebuilt only system 0 and reused system 1. A cold-cache
+    // full reset would show every system in rebuilt_systems instead.
+    const auto& work = handler.test_last_layout_work();
+    if (work.rebuilt_systems != (std::vector<std::size_t>{0}) ||
+        work.reused_systems != (std::vector<std::size_t>{1})) {
+      std::fprintf(stderr,
+                   "notehead-move-test: first local move rebuilt %zu system(s) "
+                   "and reused %zu, expected rebuild {0} / reuse {1} (1f)\n",
+                   work.rebuilt_systems.size(), work.reused_systems.size());
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 2: no selection -> Up is a no-op. ----------------------------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: fixture build failed (2)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::Voice voice1      = voice_one();
+    const auto              first_pitch = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+      return std::get<graphscore::Note>(vc.events().front()).pitch;
+    };
+    const graphscore::SpelledPitch c4 = spelled(graphscore::Letter::kC, 4);
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+    if (first_pitch() != c4 ||
+        handler.drag_state().committed_selection().has_value()) {
+      std::fprintf(stderr,
+                   "notehead-move-test: Up with no selection mutated (2)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 3: stale notehead identity -> Up is a no-op. -----------------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: fixture build failed (3)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::Voice voice1 = voice_one();
+    if (!select_noteheads(handler,
+                          {graphscore::NoteheadItem{
+                              fx->node_id, fx->track_id, fx->stave_id, voice1,
+                              graphscore::NotationEntityId::generate()}})) {
+      std::fprintf(stderr, "notehead-move-test: stale selection rejected\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const auto first_pitch = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+      return std::get<graphscore::Note>(vc.events().front()).pitch;
+    };
+    const graphscore::SpelledPitch c4 = spelled(graphscore::Letter::kC, 4);
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+    if (first_pitch() != c4) {
+      std::fprintf(stderr,
+                   "notehead-move-test: Up with stale notehead mutated (3)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 4: multi-notehead selection -> Up is a no-op. ----------------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: fixture build failed (4)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::Voice voice1 = voice_one();
+    if (!select_noteheads(
+            handler,
+            {graphscore::NoteheadItem{fx->node_id, fx->track_id, fx->stave_id,
+                                      voice1, fx->first_note_id},
+             graphscore::NoteheadItem{fx->node_id, fx->track_id, fx->stave_id,
+                                      voice1, fx->second_note_id}})) {
+      std::fprintf(stderr,
+                   "notehead-move-test: multi-notehead selection rejected\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const auto first_pitch = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+      return std::get<graphscore::Note>(vc.events().front()).pitch;
+    };
+    const graphscore::SpelledPitch c4 = spelled(graphscore::Letter::kC, 4);
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+    if (first_pitch() != c4) {
+      std::fprintf(stderr,
+                   "notehead-move-test: Up with multi-notehead selection "
+                   "mutated (4)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 5: Shift+Up with a notehead selection stays range extension
+  //     (a no-op without a range set); the notehead does not move. --------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: fixture build failed (5)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::Voice voice1 = voice_one();
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice1, fx->first_note_id}})) {
+      std::fprintf(stderr, "notehead-move-test: notehead selection rejected\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const auto first_pitch = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+      return std::get<graphscore::Note>(vc.events().front()).pitch;
+    };
+    const graphscore::SpelledPitch c4 = spelled(graphscore::Letter::kC, 4);
+
+    shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kUp));
+    if (first_pitch() != c4) {
+      std::fprintf(stderr,
+                   "notehead-move-test: Shift+Up moved the notehead (5)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 6: unmodified Up with a committed range selection is a no-op
+  //     that leaves the range selection intact. ---------------------------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: fixture build failed (6)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    const auto& layout = handler.layout();
+    {
+      const double x1 = layout.systems[0].measures[0].bounds.x;
+      const double x2 = layout.systems[0].measures[0].bounds.x +
+                        layout.systems[0].measures[0].bounds.width;
+      const double y = layout.systems[0].staves[0].bounds.y +
+                       layout.systems[0].staves[0].bounds.height * 0.5;
+      drag_through_shell(shell, x1, y, x2, y);
+    }
+    const auto before = handler.drag_state().committed_selection();
+    if (!before.has_value()) {
+      std::fprintf(stderr,
+                   "notehead-move-test: range selection setup failed (6)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+    if (handler.drag_state().committed_selection() != before) {
+      std::fprintf(stderr,
+                   "notehead-move-test: Up with a range selection changed the "
+                   "selection (6)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 7: a failing surface publisher rolls the move back completely:
+  //     project, layout, surface, selection/highlight, history, and audition
+  //     stay unchanged, and the next move succeeds. ------------------------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: fixture build failed (7)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    bool fail_next_publish = true;
+    handler.set_surface_publisher(
+        [&shell, &fail_next_publish](const graphscore::NotationLayout& layout) {
+          if (fail_next_publish) {
+            fail_next_publish = false;
+            return graphscore::ShellResult{
+                graphscore::ShellError::kRenderingSetupFailed,
+                "injected publish failure"};
+          }
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::Voice voice1      = voice_one();
+    const auto              first_pitch = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+      return std::get<graphscore::Note>(vc.events().front()).pitch;
+    };
+    const graphscore::SpelledPitch c4 = spelled(graphscore::Letter::kC, 4);
+    const graphscore::SpelledPitch d4 = spelled(graphscore::Letter::kD, 4);
+
+    // Publish the initial surface so a failed move can be observed as a
+    // non-change (not an empty->non-empty transition).
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr,
+                   "notehead-move-test: initial surface publish failed (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->first_note_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(stderr,
+                     "notehead-move-test: click did not select the note (7)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    // Pre-move snapshots of every coherent observable.
+    const graphscore::SpelledPitch before_pitch = first_pitch();
+    const auto        before_surface   = shell.test_snapshot_notation_surface();
+    const auto        before_highlight = shell.test_snapshot_highlight_rects();
+    const auto        before_layout    = handler.layout();
+    const bool        before_audition  = handler.last_audition().has_value();
+    const std::size_t before_undo      = handler.test_undo_stack_size();
+    const std::size_t before_redo      = handler.test_redo_stack_size();
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+
+    // The publish failed, so every observable must be unchanged.
+    if (first_pitch() != before_pitch) {
+      std::fprintf(stderr,
+                   "notehead-move-test: project mutated on publish failure "
+                   "(7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler.layout() != before_layout) {
+      std::fprintf(stderr,
+                   "notehead-move-test: layout committed on publish failure "
+                   "(7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (shell.test_snapshot_notation_surface() != before_surface) {
+      std::fprintf(stderr,
+                   "notehead-move-test: surface changed on publish failure "
+                   "(7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (shell.test_snapshot_highlight_rects() != before_highlight) {
+      std::fprintf(stderr,
+                   "notehead-move-test: highlight changed on publish failure "
+                   "(7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler.test_undo_stack_size() != before_undo ||
+        handler.test_redo_stack_size() != before_redo) {
+      std::fprintf(stderr,
+                   "notehead-move-test: history changed on publish failure "
+                   "(7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler.last_audition().has_value() != before_audition) {
+      std::fprintf(stderr,
+                   "notehead-move-test: audition changed on publish failure "
+                   "(7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(stderr,
+                     "notehead-move-test: selection changed on publish failure "
+                     "(7)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    if (first_pitch() != c4) {
+      std::fprintf(stderr,
+                   "notehead-move-test: pitch not C4 after rollback (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // The next move (publisher now healthy) must succeed and move the note.
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+    if (first_pitch() != d4) {
+      std::fprintf(stderr,
+                   "notehead-move-test: move after rollback did not move "
+                   "the note (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler.test_undo_stack_size() != 1u) {
+      std::fprintf(stderr,
+                   "notehead-move-test: successful move after rollback not "
+                   "recorded in history (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 7b: a failed publication preserves PRE-EXISTING redo history.
+  //     A prior move is undone (leaving a redo entry), then a move whose
+  //     publish fails must restore the exact project, undo/redo stacks,
+  //     surface, highlight, layout, selection, and audition; the pre-existing
+  //     redo must remain executable afterward, and a successful retry must
+  //     commit normally (clearing redo). -----------------------------------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: fixture build failed (7b)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    bool fail_next_publish = false;
+    handler.set_surface_publisher(
+        [&shell, &fail_next_publish](const graphscore::NotationLayout& layout) {
+          if (fail_next_publish) {
+            fail_next_publish = false;
+            return graphscore::ShellResult{
+                graphscore::ShellError::kRenderingSetupFailed,
+                "injected publish failure"};
+          }
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::Voice voice1      = voice_one();
+    const auto              first_pitch = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+      return std::get<graphscore::Note>(vc.events().front()).pitch;
+    };
+    const graphscore::SpelledPitch c4 = spelled(graphscore::Letter::kC, 4);
+    const graphscore::SpelledPitch d4 = spelled(graphscore::Letter::kD, 4);
+
+    // Publish the initial surface, select the notehead, and make one
+    // successful move (C4 -> D4).
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr,
+                   "notehead-move-test: initial surface publish failed (7b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->first_note_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(
+            stderr, "notehead-move-test: click did not select the note (7b)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+    if (first_pitch() != d4 || handler.test_undo_stack_size() != 1u ||
+        handler.test_redo_stack_size() != 0u) {
+      std::fprintf(stderr,
+                   "notehead-move-test: setup move did not commit (7b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // Undo it, leaving a non-empty redo stack (the exact state the earlier
+    // execute_new-clears-redo path would have destroyed).
+    if (!handler.test_undo() || first_pitch() != c4 ||
+        handler.test_undo_stack_size() != 0u ||
+        handler.test_redo_stack_size() != 1u) {
+      std::fprintf(stderr,
+                   "notehead-move-test: setup undo did not leave redo (7b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // Snapshot every coherent observable before the failing move.
+    const auto before_surface   = shell.test_snapshot_notation_surface();
+    const auto before_highlight = shell.test_snapshot_highlight_rects();
+    const auto before_layout    = handler.layout();
+    const bool before_audition  = handler.last_audition().has_value();
+
+    // Arm the publisher failure and move; the transaction must abort.
+    fail_next_publish = true;
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+
+    // The publish failed, so every observable must be unchanged — including
+    // the pre-existing redo entry, which execute_new() would have cleared.
+    if (first_pitch() != c4) {
+      std::fprintf(stderr,
+                   "notehead-move-test: project mutated on publish failure "
+                   "(7b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler.layout() != before_layout) {
+      std::fprintf(stderr,
+                   "notehead-move-test: layout committed on publish failure "
+                   "(7b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (shell.test_snapshot_notation_surface() != before_surface) {
+      std::fprintf(stderr,
+                   "notehead-move-test: surface changed on publish failure "
+                   "(7b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (shell.test_snapshot_highlight_rects() != before_highlight) {
+      std::fprintf(stderr,
+                   "notehead-move-test: highlight changed on publish failure "
+                   "(7b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler.last_audition().has_value() != before_audition) {
+      std::fprintf(stderr,
+                   "notehead-move-test: audition changed on publish failure "
+                   "(7b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler.test_undo_stack_size() != 0u ||
+        handler.test_redo_stack_size() != 1u) {
+      std::fprintf(stderr,
+                   "notehead-move-test: history (including redo) changed on "
+                   "publish failure (7b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(stderr,
+                     "notehead-move-test: selection changed on publish failure "
+                     "(7b)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    // The pre-existing redo entry must still be executable.
+    if (!handler.test_redo() || first_pitch() != d4) {
+      std::fprintf(stderr,
+                   "notehead-move-test: redo not executable after failed "
+                   "publish (7b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // Re-establish a redo entry, then a healthy retry must commit normally
+    // (clearing redo, exactly execute_new's success path).
+    if (!handler.test_undo() || handler.test_redo_stack_size() != 1u) {
+      std::fprintf(stderr,
+                   "notehead-move-test: re-establish redo failed (7b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+    if (first_pitch() != d4 || handler.test_undo_stack_size() != 1u ||
+        handler.test_redo_stack_size() != 0u) {
+      std::fprintf(stderr,
+                   "notehead-move-test: retry after rollback did not commit "
+                   "and clear redo (7b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 8: a persistent rollback failure poisons the history and blocks
+  //     further mutation: the authoritative project stays at the post-edit
+  //     pitch (the rollback never completed), the visible surface stays the
+  //     last successfully published one, and the handler is unavailable. ----
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: fixture build failed (8)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    bool fail_next_publish = true;
+    handler.set_surface_publisher(
+        [&shell, &fail_next_publish](const graphscore::NotationLayout& layout) {
+          if (fail_next_publish) {
+            fail_next_publish = false;
+            return graphscore::ShellResult{
+                graphscore::ShellError::kRenderingSetupFailed,
+                "injected publish failure"};
+          }
+          return publish_headless_test_surface(layout, &shell);
+        });
+    // Every move command's undo fails persistently (1,000,000 is effectively
+    // unbounded for this fixture), so the rollback can never complete.
+    handler.set_move_command_factory(
+        [](const graphscore::Project&        project,
+           const graphscore::NoteheadItem&   item,
+           graphscore::NoteheadStepDirection direction) {
+          auto command =
+              graphscore::make_move_notehead_command(project, item, direction);
+          if (command == nullptr) {
+            return std::unique_ptr<graphscore::Command>{};
+          }
+          return std::unique_ptr<graphscore::Command>(
+              new FailUndoCommand(std::move(command), 1'000'000));
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::Voice voice1      = voice_one();
+    const auto              first_pitch = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+      return std::get<graphscore::Note>(vc.events().front()).pitch;
+    };
+    const graphscore::SpelledPitch d4 = spelled(graphscore::Letter::kD, 4);
+
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr,
+                   "notehead-move-test: initial surface publish failed (8)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto before_surface = shell.test_snapshot_notation_surface();
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->first_note_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(stderr,
+                     "notehead-move-test: click did not select the note (8)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+
+    // The rollback never completed, so the project stays at the post-edit
+    // pitch; the surface is unchanged and the handler is unavailable.
+    if (first_pitch() != d4) {
+      std::fprintf(stderr,
+                   "notehead-move-test: project not at post-edit pitch after "
+                   "persistent rollback failure (8)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (shell.test_snapshot_notation_surface() != before_surface) {
+      std::fprintf(stderr,
+                   "notehead-move-test: surface changed on persistent rollback "
+                   "failure (8)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!handler.history_unavailable()) {
+      std::fprintf(stderr,
+                   "notehead-move-test: handler not unavailable after "
+                   "persistent rollback failure (8)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // Further mutation is blocked: another Up leaves the project untouched.
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+    if (first_pitch() != d4) {
+      std::fprintf(
+          stderr, "notehead-move-test: blocked move mutated the project (8)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 9: a one-shot rollback failure recovers coherently: the
+  //     authoritative project/history are restored, the cache/layout/highlight
+  //     stay coherent, the surface stays the last successfully published one,
+  //     and the next move succeeds. ----------------------------------------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "notehead-move-test: fixture build failed (9)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    bool fail_next_publish = true;
+    handler.set_surface_publisher(
+        [&shell, &fail_next_publish](const graphscore::NotationLayout& layout) {
+          if (fail_next_publish) {
+            fail_next_publish = false;
+            return graphscore::ShellResult{
+                graphscore::ShellError::kRenderingSetupFailed,
+                "injected publish failure"};
+          }
+          return publish_headless_test_surface(layout, &shell);
+        });
+    // The move command's undo fails exactly once, then delegates.
+    handler.set_move_command_factory(
+        [](const graphscore::Project&        project,
+           const graphscore::NoteheadItem&   item,
+           graphscore::NoteheadStepDirection direction) {
+          auto command =
+              graphscore::make_move_notehead_command(project, item, direction);
+          if (command == nullptr) {
+            return std::unique_ptr<graphscore::Command>{};
+          }
+          return std::unique_ptr<graphscore::Command>(
+              new FailUndoCommand(std::move(command), 1));
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::Voice voice1      = voice_one();
+    const auto              first_pitch = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice1);
+      return std::get<graphscore::Note>(vc.events().front()).pitch;
+    };
+    const graphscore::SpelledPitch c4 = spelled(graphscore::Letter::kC, 4);
+    const graphscore::SpelledPitch d4 = spelled(graphscore::Letter::kD, 4);
+
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr,
+                   "notehead-move-test: initial surface publish failed (9)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto before_surface = shell.test_snapshot_notation_surface();
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->first_note_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->first_note_id) {
+        std::fprintf(stderr,
+                     "notehead-move-test: click did not select the note (9)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+
+    // The rollback failed once then recovered: the project is back at C4, the
+    // handler is available again, and the surface is unchanged.
+    if (first_pitch() != c4) {
+      std::fprintf(stderr,
+                   "notehead-move-test: project not restored after one-shot "
+                   "rollback recovery (9)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler.history_unavailable()) {
+      std::fprintf(stderr,
+                   "notehead-move-test: handler still unavailable after "
+                   "one-shot rollback recovery (9)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (shell.test_snapshot_notation_surface() != before_surface) {
+      std::fprintf(
+          stderr,
+          "notehead-move-test: surface changed after one-shot rollback "
+          "recovery (9)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // The next move (publisher now healthy) succeeds and commits normally.
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+    if (first_pitch() != d4 || handler.test_undo_stack_size() != 1u) {
+      std::fprintf(stderr,
+                   "notehead-move-test: move after one-shot rollback recovery "
+                   "did not succeed (9)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  std::printf("notehead-move-test: ok\n");
+  return 0;
+}
+
 }  // namespace
 
 // The shell allocates (window titles, backend names), so this call path can
@@ -3847,6 +6075,7 @@ int main(int argc, char** argv) {
   bool run_key_events_test       = false;
   bool run_key_events_shell_test = false;
   bool run_key_selection_test    = false;
+  bool run_notehead_move_test    = false;
   for (int i = 1; i < argc; ++i) {
     if (kSmokeTestFlag == argv[i]) {
       smoke_test = true;
@@ -3866,6 +6095,9 @@ int main(int argc, char** argv) {
     if (kKeySelectionTestFlag == argv[i]) {
       run_key_selection_test = true;
     }
+    if (kNoteheadMoveTestFlag == argv[i]) {
+      run_notehead_move_test = true;
+    }
   }
 
   try {
@@ -3883,6 +6115,9 @@ int main(int argc, char** argv) {
     }
     if (run_key_selection_test) {
       return key_selection_test();
+    }
+    if (run_notehead_move_test) {
+      return notehead_move_test();
     }
     return run(smoke_test);
   } catch (const std::exception& error) {

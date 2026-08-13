@@ -291,6 +291,18 @@ class WriterShell {
   // reads highlight_rects inside the event loop without synchronisation.
   [[nodiscard]] std::vector<NotationRect> test_snapshot_highlight_rects() const;
 
+  // Test-only: return a copy of the last notation surface handed to
+  // set_notation_surface() (the surface the shell renders behind the
+  // highlight rects). A headless test observes whether a mutation refresh
+  // actually re-published different pixels, in both writer-ON and writer-OFF
+  // builds: set_notation_surface validates and stores the surface in either
+  // configuration. Returns the canonical empty surface (width==0) before any
+  // surface has been set.
+  //
+  // Thread affinity: must be called from the main thread only.
+  [[nodiscard]] std::optional<RasterSurface> test_snapshot_notation_surface()
+      const;
+
   // Test-only: read back a single pixel from the current notation texture
   // at (x, y).  Returns the RGBA byte values (offset 0 = R, 1 = G, 2 = B,
   // 3 = A) or std::nullopt when no texture or renderer is available or the

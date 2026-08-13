@@ -43,6 +43,7 @@
 #include <graphscore/domain/measure_map.hpp>
 #include <graphscore/domain/midi_ownership.hpp>
 #include <graphscore/domain/move_clef_change_command.hpp>
+#include <graphscore/domain/move_notehead_command.hpp>
 #include <graphscore/domain/move_tempo_point_command.hpp>
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/node_timeline.hpp>

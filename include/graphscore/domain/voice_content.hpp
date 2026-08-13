@@ -209,6 +209,24 @@ class VoiceContent {
   [[nodiscard]] Result replace_event(Rational position, VoiceEvent event,
                                      Rational target_length);
 
+  // Sets only the pitch of the notehead named by `id` to `pitch`. This is
+  // the one pitch-only, index-preserving mutation primitive: `id` must name
+  // a top-level Note, a ChordNote inside a Chord, or a GraceNote inside a
+  // GraceGroup, and the only change is that notehead's pitch. Its identity,
+  // tie state, articulations, and stem override (or, for a grace note, its
+  // duration, type, and slash flag) are retained verbatim, as are every
+  // other notehead, chord, grace group, event, and reference in the voice,
+  // so event ordering and rhythm are always preserved and no rest is ever
+  // created or removed.
+  //
+  // Fails, leaving the voice unchanged, if `id` does not name a Note,
+  // ChordNote, or GraceNote -- including a Rest id, a Chord's own top-level
+  // id (which names the chord column, not a notehead), a marking id, or an
+  // unknown/stale id. There is no parameter that can change a variant's
+  // kind, a duration, an id, a notehead set, or a marking.
+  [[nodiscard]] Result set_notehead_pitch(NotationEntityId id,
+                                          SpelledPitch     pitch);
+
   // Clears events and every reference collection, then advances the
   // revision so that any prior token becomes stale (not current).
   void clear();

@@ -162,3 +162,22 @@ set_tests_properties(graphscore_writer_key_selection_test PROPERTIES
   PASS_REGULAR_EXPRESSION "key-selection-test: ok"
   TIMEOUT 30
 )
+
+# M5-phase-20: exercise SelectionToolHandler's unmodified Up/Down notehead
+# move through the writer executable's own --test-notehead-move path -- the
+# single-selected-notehead diatonic step, same-selection retention, layout
+# refresh, and every no-op case (no selection, stale identity, multi-notehead,
+# non-notehead selection, Shift chord). This is a headless code path -- no
+# window, no SDL -- built on WriterShell's dispatch_test_key_event and
+# dispatch_test_pointer_event seams.
+#
+# The headless test uses no rendering backend and works in both writer-ON
+# and writer-OFF configurations.
+add_test(NAME graphscore_writer_notehead_move_test
+  COMMAND graphscore_writer_app --test-notehead-move
+)
+
+set_tests_properties(graphscore_writer_notehead_move_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "notehead-move-test: ok"
+  TIMEOUT 30
+)

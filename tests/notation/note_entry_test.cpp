@@ -33,6 +33,7 @@ using graphscore::make_chord;
 using graphscore::make_dynamic_marking;
 using graphscore::make_grace_group;
 using graphscore::make_hairpin;
+using graphscore::make_move_notehead_command;
 using graphscore::make_note;
 using graphscore::make_note_entry_command;
 using graphscore::make_rest;
@@ -44,6 +45,8 @@ using graphscore::NodeId;
 using graphscore::NodeTimeline;
 using graphscore::NotationEntityId;
 using graphscore::Note;
+using graphscore::NoteheadItem;
+using graphscore::NoteheadStepDirection;
 using graphscore::NotePaletteEntryKind;
 using graphscore::NotePaletteEntrySpec;
 using graphscore::NotePaletteState;
@@ -1828,6 +1831,50 @@ TEST(NoteEntryTest, VoiceCreationNeverMaterializesASiblingVoice) {
 
   EXPECT_FALSE(fixture.voice(2).events().empty());
   EXPECT_TRUE(fixture.voice(3).events().empty());
+}
+
+// ---- make_move_notehead_command (M5-phase-20) ------------------------------
+
+TEST(NoteEntryTest, MoveNoteheadCommandValidSingleNotehead) {
+  Fixture            fixture;
+  const SpelledPitch c4       = *SpelledPitch::create(Letter::kC, 4);
+  const Note         original = append_quarter_note(fixture, c4);
+  fixture.normalize_voice();
+
+  const NoteheadItem item{fixture.node_id, fixture.track(), fixture.stave_id(),
+                          *Voice::create(1), original.id};
+
+  auto cmd = make_move_notehead_command(fixture.project, item,
+                                        NoteheadStepDirection::kUp);
+  ASSERT_NE(cmd, nullptr);
+  EXPECT_TRUE(cmd->execute(fixture.project).ok());
+  const Note& moved = std::get<Note>(fixture.voice().events().front());
+  EXPECT_EQ(moved.id, original.id);
+  EXPECT_EQ(moved.pitch, *SpelledPitch::create(Letter::kD, 4));
+}
+
+TEST(NoteEntryTest, MoveNoteheadCommandStaleNoteheadReturnsNull) {
+  Fixture            fixture;
+  const SpelledPitch c4 = *SpelledPitch::create(Letter::kC, 4);
+  append_quarter_note(fixture, c4);
+  fixture.normalize_voice();
+
+  const NoteheadItem item{fixture.node_id, fixture.track(), fixture.stave_id(),
+                          *Voice::create(1), NotationEntityId::generate()};
+  EXPECT_EQ(make_move_notehead_command(fixture.project, item,
+                                       NoteheadStepDirection::kUp),
+            nullptr);
+}
+
+TEST(NoteEntryTest, MoveNoteheadCommandWrongKindReturnsNull) {
+  Fixture    fixture;
+  const Rest original = append_whole_rest(fixture);
+  // A top-level Rest id is not a notehead identity.
+  const NoteheadItem item{fixture.node_id, fixture.track(), fixture.stave_id(),
+                          *Voice::create(1), original.id};
+  EXPECT_EQ(make_move_notehead_command(fixture.project, item,
+                                       NoteheadStepDirection::kUp),
+            nullptr);
 }
 
 }  // namespace

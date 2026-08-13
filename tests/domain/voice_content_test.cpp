@@ -1760,3 +1760,140 @@ TEST(ReplaceEventNormalizationTest, ContractionNonOverlapAndExactTileProperty) {
     }
   }
 }
+
+// =========================================================================
+// set_notehead_pitch (narrow pitch-only mutation, M5-phase-20)
+// =========================================================================
+
+TEST(VoiceContentTest, SetNoteheadPitchNotePreservesEverythingElse) {
+  VoiceContent voice;
+  const Note   note =
+      make_note(pitch(Letter::kC), duration(NoteValue::kQuarter), true,
+                {Articulation::kAccent}, StemDirection::kUp);
+  ASSERT_TRUE(voice.append(note).ok());
+  const Rational before_length = voice.total_length();
+
+  ASSERT_TRUE(voice.set_notehead_pitch(note.id, pitch(Letter::kD)).ok());
+  const Note& moved = std::get<Note>(voice.events().front());
+  EXPECT_EQ(moved.id, note.id);
+  EXPECT_EQ(moved.pitch, pitch(Letter::kD));
+  EXPECT_TRUE(moved.tied_to_next);
+  EXPECT_EQ(moved.articulations, note.articulations);
+  EXPECT_EQ(moved.stem, note.stem);
+  EXPECT_EQ(moved.duration.resolved(), note.duration.resolved());
+  EXPECT_EQ(voice.total_length(), before_length);
+}
+
+TEST(VoiceContentTest, SetNoteheadPitchChordNotePreservesChordAndPeers) {
+  VoiceContent    voice;
+  const ChordNote tied{NotationEntityId::generate(), pitch(Letter::kC), true};
+  const ChordNote peer{NotationEntityId::generate(), pitch(Letter::kE), false};
+  const Chord     chord =
+      make_chord(duration(NoteValue::kQuarter), {tied, peer},
+                 {Articulation::kStaccato}, StemDirection::kDown);
+  ASSERT_TRUE(voice.append(chord).ok());
+  const Rational before_length = voice.total_length();
+
+  ASSERT_TRUE(voice.set_notehead_pitch(tied.id, pitch(Letter::kD)).ok());
+  const Chord& moved = std::get<Chord>(voice.events().front());
+  EXPECT_EQ(moved.id, chord.id);
+  ASSERT_EQ(moved.notes.size(), 2u);
+  EXPECT_EQ(moved.notes[0].id, tied.id);
+  EXPECT_EQ(moved.notes[0].pitch, pitch(Letter::kD));
+  EXPECT_TRUE(moved.notes[0].tied_to_next);
+  // The peer notehead is untouched: identity, pitch, and tie state.
+  EXPECT_EQ(moved.notes[1].id, peer.id);
+  EXPECT_EQ(moved.notes[1].pitch, pitch(Letter::kE));
+  EXPECT_FALSE(moved.notes[1].tied_to_next);
+  // Chord-level fields are untouched.
+  EXPECT_EQ(moved.articulations, chord.articulations);
+  EXPECT_EQ(moved.stem, chord.stem);
+  EXPECT_EQ(moved.duration.resolved(), chord.duration.resolved());
+  EXPECT_EQ(voice.total_length(), before_length);
+}
+
+TEST(VoiceContentTest, SetNoteheadPitchGracePreservesDurationTypeSlash) {
+  VoiceContent voice;
+  ASSERT_TRUE(
+      voice.append(make_note(pitch(Letter::kC), duration(NoteValue::kQuarter)))
+          .ok());
+  const NotationEntityId principal = event_id(voice.events().front());
+  const GraceGroup       group     = make_grace_group(
+      principal, {GraceNote{NotationEntityId::generate(), pitch(Letter::kD),
+                            duration(NoteValue::kEighth),
+                            GraceNoteType::kAcciaccatura, true}});
+  ASSERT_TRUE(voice.add_grace_group(group).ok());
+
+  ASSERT_TRUE(
+      voice.set_notehead_pitch(group.notes[0].id, pitch(Letter::kE)).ok());
+  ASSERT_EQ(voice.grace_groups().size(), 1u);
+  const GraceGroup& moved = voice.grace_groups().front();
+  EXPECT_EQ(moved.id, group.id);
+  EXPECT_EQ(moved.principal_event, principal);
+  ASSERT_EQ(moved.notes.size(), 1u);
+  EXPECT_EQ(moved.notes[0].id, group.notes[0].id);
+  EXPECT_EQ(moved.notes[0].pitch, pitch(Letter::kE));
+  EXPECT_EQ(moved.notes[0].duration.resolved(),
+            group.notes[0].duration.resolved());
+  EXPECT_EQ(moved.notes[0].type, group.notes[0].type);
+  EXPECT_TRUE(moved.notes[0].slashed);
+}
+
+TEST(VoiceContentTest, SetNoteheadPitchRejectsRestId) {
+  VoiceContent voice;
+  const Rest   rest = make_rest(duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(rest).ok());
+  const VoiceContent before = voice;
+
+  EXPECT_FALSE(voice.set_notehead_pitch(rest.id, pitch(Letter::kD)).ok());
+  EXPECT_EQ(voice, before);
+}
+
+TEST(VoiceContentTest, SetNoteheadPitchRejectsChordTopLevelId) {
+  VoiceContent voice;
+  const Chord  chord = make_chord(
+      duration(NoteValue::kQuarter),
+      {ChordNote{NotationEntityId::generate(), pitch(Letter::kC), false},
+        ChordNote{NotationEntityId::generate(), pitch(Letter::kE), false}});
+  ASSERT_TRUE(voice.append(chord).ok());
+  const VoiceContent before = voice;
+
+  // The chord's own top-level id names the chord column, not a notehead.
+  EXPECT_FALSE(voice.set_notehead_pitch(chord.id, pitch(Letter::kD)).ok());
+  EXPECT_EQ(voice, before);
+}
+
+TEST(VoiceContentTest, SetNoteheadPitchRejectsUnknownId) {
+  VoiceContent voice;
+  ASSERT_TRUE(
+      voice.append(make_note(pitch(Letter::kC), duration(NoteValue::kQuarter)))
+          .ok());
+  const VoiceContent before = voice;
+
+  EXPECT_FALSE(
+      voice.set_notehead_pitch(NotationEntityId::generate(), pitch(Letter::kD))
+          .ok());
+  EXPECT_EQ(voice, before);
+}
+
+TEST(VoiceContentTest, SetNoteheadPitchPreservesOrderAndRhythm) {
+  VoiceContent voice;
+  ASSERT_TRUE(
+      voice.append(make_note(pitch(Letter::kC), duration(NoteValue::kQuarter)))
+          .ok());
+  const Rest second = make_rest(duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(second).ok());
+  const Rational    before_length = voice.total_length();
+  const std::size_t before_count  = voice.events().size();
+
+  ASSERT_TRUE(voice
+                  .set_notehead_pitch(event_id(voice.events().front()),
+                                      pitch(Letter::kD))
+                  .ok());
+  EXPECT_EQ(voice.events().size(), before_count);
+  EXPECT_EQ(voice.total_length(), before_length);
+  // Order preserved: the note is still first, the rest still second.
+  EXPECT_TRUE(std::holds_alternative<Note>(voice.events().front()));
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice.events().back()));
+  EXPECT_EQ(std::get<Rest>(voice.events().back()).id, second.id);
+}

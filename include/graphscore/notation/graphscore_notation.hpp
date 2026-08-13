@@ -1721,6 +1721,51 @@ class SelectionDragState {
     Rational position, const NotePaletteEntrySpec& armed,
     std::optional<SpelledPitch> candidate_pitch);
 
+// Constructs a reversible domain command for the keyboard pitch action
+// described in docs/plan/05-notation-editor.md M5-phase-20: "Up/Down moves a
+// selected notehead one diatonic staff step and preserves its accidental."
+//
+// `notehead` is the single selected NoteheadItem
+// (graphscore/domain/selection.hpp); `direction` is up or down. The returned
+// MoveNoteheadCommand re-resolves `notehead.entity` against the project at
+// execute time, so a stale identity fails atomically rather than mutating a
+// different notehead. Pitch arithmetic and identity preservation live entirely
+// in MoveNoteheadCommand; this helper owns only the selection-to-command
+// translation, mirroring make_note_entry_command.
+//
+// Returns nullptr when `notehead` does not name a single valid notehead in the
+// project -- an unknown node/track/stave/lane, an archived track, or an entity
+// that is not a Note/ChordNote/GraceNote in the addressed voice -- which is
+// exactly validate_selection's own notehead-arm check. Building the command
+// never mutates the project; the caller applies it through a CommandHistory.
+[[nodiscard]] std::unique_ptr<Command> make_move_notehead_command(
+    const Project& project, const NoteheadItem& notehead,
+    NoteheadStepDirection direction);
+
+// The short audition request for the same keyboard pitch action
+// make_move_notehead_command above builds a command for, mirroring
+// audition_for_note_entry: this milestone produces the request as a value and
+// nothing plays it (graphscore_writer_audio consumes it in Milestone 08).
+//
+// The request sounds the single post-edit sounding MIDI pitch of the moved
+// notehead (a tied notehead moves its whole chain, every member of which
+// shares one pitch, so the one post-edit pitch is still the whole audible
+// change), through the notehead's own track at the project's default dynamic.
+// A chord notehead move auditions that notehead's post-edit pitch alone -- not
+// the whole chord -- because the composer is re-pitching one notehead, unlike
+// note entry, where building a harmony auditions the whole resulting chord.
+//
+// A pure query over the PRE-execution project: it never mutates `project` and
+// builds no command. It returns std::nullopt -- auditions nothing -- whenever
+// the move itself would fail or change nothing audible: an invalid/stale
+// notehead (the same notehead-arm check make_move_notehead_command uses), or
+// a step that would leave the SpelledPitch/MIDI range (the boundary the
+// command also rejects atomically). A caller invokes it before executing the
+// command and discards the request when execution fails.
+[[nodiscard]] std::optional<NoteAuditionRequest> audition_for_notehead_move(
+    const Project& project, const NoteheadItem& notehead,
+    NoteheadStepDirection direction);
+
 // The short audition request for the same note-entry pointer action
 // make_note_entry_command above builds a command for
 // (docs/plan/05-notation-editor.md: "Newly inserted or pitch-edited notes

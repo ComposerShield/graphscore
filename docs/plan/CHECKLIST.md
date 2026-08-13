@@ -124,6 +124,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [x] &nbsp;&nbsp;Per-staff measure hit-region increment completed
 - [x] &nbsp;&nbsp;Aligned multi-staff measure-selection increment completed
 - [x] &nbsp;&nbsp;Keyboard range-extension and accessible selection-control increment completed
+- [x] &nbsp;&nbsp;Diatonic notehead-movement increment completed
 - [ ] Whole-measure selection and copy/paste completed
 - [ ] Pointer-drag arbitrary-range selection and copy/paste completed
 - [ ] Clipboard boundary/span and paste-preview behavior validated

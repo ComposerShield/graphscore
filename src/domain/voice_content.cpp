@@ -756,6 +756,70 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
   return Result();
 }
 
+Result VoiceContent::set_notehead_pitch(NotationEntityId id,
+                                        SpelledPitch     pitch) {
+  // Top-level Note, or a ChordNote inside a Chord.
+  for (std::size_t i = 0; i < events_.size(); ++i) {
+    if (const auto* note = std::get_if<Note>(&events_[i])) {
+      if (note->id != id)
+        continue;
+      try {
+        Note modified  = *note;
+        modified.pitch = pitch;
+        events_[i]     = std::move(modified);
+      } catch (const std::bad_alloc&) {
+        return Result(ResultCode::kOutOfMemory);
+      } catch (const std::length_error&) {
+        return Result(ResultCode::kOutOfMemory);
+      }
+      advance_revision(make_event_delta({id}, false));
+      return Result();
+    }
+    if (const auto* chord = std::get_if<Chord>(&events_[i])) {
+      for (std::size_t j = 0; j < chord->notes.size(); ++j) {
+        if (chord->notes[j].id != id)
+          continue;
+        const NotationEntityId chord_id = chord->id;
+        try {
+          Chord modified          = *chord;
+          modified.notes[j].pitch = pitch;
+          events_[i]              = std::move(modified);
+        } catch (const std::bad_alloc&) {
+          return Result(ResultCode::kOutOfMemory);
+        } catch (const std::length_error&) {
+          return Result(ResultCode::kOutOfMemory);
+        }
+        advance_revision(make_event_delta({chord_id}, false));
+        return Result();
+      }
+    }
+  }
+
+  // A GraceNote inside a GraceGroup.
+  for (std::size_t g = 0; g < grace_groups_.size(); ++g) {
+    for (std::size_t j = 0; j < grace_groups_[g].notes.size(); ++j) {
+      if (grace_groups_[g].notes[j].id != id)
+        continue;
+      VoiceDelta d;
+      try {
+        GraceGroup modified     = grace_groups_[g];
+        modified.notes[j].pitch = pitch;
+        d.grace_group_ops.push_back(
+            RefOp<GraceGroup>{RefOpKind::kUpdate, modified.id, modified});
+        grace_groups_[g] = std::move(modified);
+      } catch (const std::bad_alloc&) {
+        return Result(ResultCode::kOutOfMemory);
+      } catch (const std::length_error&) {
+        return Result(ResultCode::kOutOfMemory);
+      }
+      advance_revision(std::move(d));  // noexcept commit
+      return Result();
+    }
+  }
+
+  return Result(ResultCode::kInvalidArgument);
+}
+
 Rational VoiceContent::total_length() const {
   return total_length_of(events_);
 }

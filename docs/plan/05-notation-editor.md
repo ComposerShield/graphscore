@@ -62,7 +62,7 @@ Provide a polished, directly editable focused notation system inside a node, wit
     - [x] M5-phase-19b-i Hold a keyboard-set committed range selection and expose score order in the notation layer.
     - [x] M5-phase-19b-ii Deliver platform-neutral key events carrying modifiers through the writer shell.
     - [x] M5-phase-19b-iii Interpret Shift extension and the accessible start/end/staff-scope controls in the app.
-- [ ] M5-phase-20 Up/Down moves a selected notehead one diatonic staff step and preserves its accidental.
+- [x] M5-phase-20 Up/Down moves a selected notehead one diatonic staff step and preserves its accidental.
 - [ ] M5-phase-21 `-` and `=` step through double-flat, flat, natural, sharp, and double-sharp.
 - [ ] M5-phase-22 Delete removes the selected notehead and selects the prior onset in the same voice/staff; when none exists it leaves an insertion caret at the deleted onset. Removing the last chord pitch leaves a normalized rest.
 - [ ] M5-phase-23 `R` converts the entire selected note/chord event to an equal-duration rest.

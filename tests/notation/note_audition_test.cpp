@@ -15,11 +15,17 @@ namespace {
 
 using graphscore::Accidental;
 using graphscore::audition_for_note_entry;
+using graphscore::audition_for_notehead_move;
 using graphscore::Chord;
+using graphscore::ChordNote;
 using graphscore::Duration;
 using graphscore::Dynamic;
+using graphscore::GraceGroup;
+using graphscore::GraceNote;
+using graphscore::GraceNoteType;
 using graphscore::Letter;
 using graphscore::make_chord;
+using graphscore::make_grace_group;
 using graphscore::make_note;
 using graphscore::make_note_entry_command;
 using graphscore::make_rest;
@@ -32,6 +38,8 @@ using graphscore::NodeTimeline;
 using graphscore::NotationEntityId;
 using graphscore::Note;
 using graphscore::NoteAuditionRequest;
+using graphscore::NoteheadItem;
+using graphscore::NoteheadStepDirection;
 using graphscore::NotePaletteEntryKind;
 using graphscore::NotePaletteEntrySpec;
 using graphscore::NotePaletteState;
@@ -523,6 +531,99 @@ TEST(NoteAuditionTest, AuditionAgreesWithTheCommandOnEveryRepresentativeClick) {
     if (request.has_value())
       EXPECT_FALSE(request->pitches.empty());
   }
+}
+
+// ---- audition_for_notehead_move (M5-phase-20) -------------------------------
+
+// The notehead item for the single appended Note in `fixture`'s voice 1.
+[[nodiscard]] NoteheadItem notehead_item(const Fixture&   fixture,
+                                         NotationEntityId entity) {
+  return NoteheadItem{fixture.node_id, fixture.track(), fixture.stave_id(),
+                      *Voice::create(1), entity};
+}
+
+TEST(NoteAuditionTest, MoveNoteheadAuditionsThePostEditPitch) {
+  Fixture            fixture;
+  const SpelledPitch c4   = *SpelledPitch::create(Letter::kC, 4);
+  const Note         note = append_quarter_note(fixture, c4);
+  fixture.normalize_voice();
+
+  const std::optional<NoteAuditionRequest> request = audition_for_notehead_move(
+      fixture.project, notehead_item(fixture, note.id),
+      NoteheadStepDirection::kUp);
+  ASSERT_TRUE(request.has_value());
+  EXPECT_EQ(request->track_id, fixture.track());
+  EXPECT_EQ(request->velocity,
+            velocity_for_dynamic(fixture.project.default_dynamic()));
+  ASSERT_EQ(request->pitches.size(), 1u);
+  EXPECT_EQ(request->pitches[0],
+            *SpelledPitch::create(Letter::kD, 4)->to_midi_pitch());
+}
+
+TEST(NoteAuditionTest, MoveNoteheadChordNoteheadAuditionsOnePitch) {
+  Fixture            fixture;
+  const SpelledPitch c4 = *SpelledPitch::create(Letter::kC, 4);
+  const SpelledPitch e4 = *SpelledPitch::create(Letter::kE, 4);
+  const ChordNote    moved{NotationEntityId::generate(), c4, false};
+  const Chord        chord =
+      make_chord(*Duration::create(NoteValue::kQuarter, 0),
+                 {moved, ChordNote{NotationEntityId::generate(), e4, false}});
+  ASSERT_TRUE(fixture.voice().append(chord).ok());
+  fixture.normalize_voice();
+
+  const std::optional<NoteAuditionRequest> request = audition_for_notehead_move(
+      fixture.project, notehead_item(fixture, moved.id),
+      NoteheadStepDirection::kUp);
+  ASSERT_TRUE(request.has_value());
+  // Only the moved notehead's post-edit pitch sounds, not the whole chord.
+  ASSERT_EQ(request->pitches.size(), 1u);
+  EXPECT_EQ(request->pitches[0],
+            *SpelledPitch::create(Letter::kD, 4)->to_midi_pitch());
+}
+
+TEST(NoteAuditionTest, MoveNoteheadGraceNoteAuditionsThePostEditPitch) {
+  Fixture            fixture;
+  const SpelledPitch c4        = *SpelledPitch::create(Letter::kC, 4);
+  const Note         principal = append_quarter_note(fixture, c4);
+  fixture.normalize_voice();
+  const GraceGroup group = make_grace_group(
+      principal.id, {GraceNote{NotationEntityId::generate(),
+                               *SpelledPitch::create(Letter::kD, 4),
+                               *Duration::create(NoteValue::kEighth, 0),
+                               GraceNoteType::kAcciaccatura, true}});
+  ASSERT_TRUE(fixture.voice().add_grace_group(group).ok());
+
+  const std::optional<NoteAuditionRequest> request = audition_for_notehead_move(
+      fixture.project, notehead_item(fixture, group.notes[0].id),
+      NoteheadStepDirection::kUp);
+  ASSERT_TRUE(request.has_value());
+  ASSERT_EQ(request->pitches.size(), 1u);
+  EXPECT_EQ(request->pitches[0],
+            *SpelledPitch::create(Letter::kE, 4)->to_midi_pitch());
+}
+
+TEST(NoteAuditionTest, MoveNoteheadAuditionIsSilentOnBoundary) {
+  Fixture            fixture;
+  const SpelledPitch g9   = *SpelledPitch::create(Letter::kG, 9);
+  const Note         note = append_quarter_note(fixture, g9);
+  fixture.normalize_voice();
+
+  const std::optional<NoteAuditionRequest> request = audition_for_notehead_move(
+      fixture.project, notehead_item(fixture, note.id),
+      NoteheadStepDirection::kUp);
+  EXPECT_FALSE(request.has_value());
+}
+
+TEST(NoteAuditionTest, MoveNoteheadAuditionIsSilentOnStaleNotehead) {
+  Fixture            fixture;
+  const SpelledPitch c4 = *SpelledPitch::create(Letter::kC, 4);
+  append_quarter_note(fixture, c4);
+  fixture.normalize_voice();
+
+  const std::optional<NoteAuditionRequest> request = audition_for_notehead_move(
+      fixture.project, notehead_item(fixture, NotationEntityId::generate()),
+      NoteheadStepDirection::kUp);
+  EXPECT_FALSE(request.has_value());
 }
 
 }  // namespace

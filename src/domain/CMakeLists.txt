@@ -35,6 +35,7 @@ add_library(graphscore_domain STATIC
   measure_map.cpp
   midi_ownership.cpp
   move_clef_change_command.cpp
+  move_notehead_command.cpp
   move_tempo_point_command.cpp
   node.cpp
   node_timeline.cpp
