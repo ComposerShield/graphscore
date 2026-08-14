@@ -2,7 +2,7 @@
 description: Use for hands-on implementation tasks — writing code, fixing bugs, refactoring, running commands, and testing. This agent executes the actual development work.
 mode: subagent
 model: deepseek/deepseek-v4-pro
-variant: high
+variant: medium
 color: "#3498DB"
 permission:
   edit:
