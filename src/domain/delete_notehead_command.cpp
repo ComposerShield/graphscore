@@ -17,6 +17,7 @@
 #include <graphscore/domain/notation_validation.hpp>
 #include <graphscore/domain/project.hpp>
 #include <graphscore/domain/track.hpp>
+#include "event_replacement_helpers.hpp"
 #include "marking_command_helpers.hpp"
 
 namespace graphscore {
@@ -43,137 +44,6 @@ std::optional<EventLocation> find_event(const VoiceContent& voice,
     onset = onset + event_duration(event).resolved();
   }
   return std::nullopt;
-}
-
-// Removes every slur whose start or end event is `deleted_id` and every
-// grace group whose principal event is `deleted_id`, and normalizes every
-// beam override that references `deleted_id`: the deleted id is dropped from
-// the override's run, and the override is removed when the surviving run is
-// empty, fewer than two events, or no longer a contiguous beamable run.
-// Unaffected records keep their ids and relative order. `deleted_id` is the
-// event id the delete replaced with a Rest; only references whose validity
-// depends on that event staying sounding or beamable are touched.
-Result normalize_references_for_deleted_event(VoiceContent&    voice,
-                                              NotationEntityId deleted_id) {
-  std::vector<NotationEntityId> slurs_to_remove;
-  for (const Slur& slur : voice.slurs()) {
-    if (slur.start_event == deleted_id || slur.end_event == deleted_id)
-      slurs_to_remove.push_back(slur.id);
-  }
-  for (const NotationEntityId id : slurs_to_remove) {
-    const Result result = voice.remove_slur(id);
-    if (!result.ok())
-      return result;
-  }
-
-  std::vector<NotationEntityId> groups_to_remove;
-  for (const GraceGroup& group : voice.grace_groups()) {
-    if (group.principal_event == deleted_id)
-      groups_to_remove.push_back(group.id);
-  }
-  for (const NotationEntityId id : groups_to_remove) {
-    const Result result = voice.remove_grace_group(id);
-    if (!result.ok())
-      return result;
-  }
-
-  std::unordered_map<NotationEntityId, std::size_t> positions;
-  const std::vector<VoiceEvent>&                    events = voice.events();
-  positions.reserve(events.size());
-  for (std::size_t index = 0; index < events.size(); ++index)
-    positions.emplace(event_id(events[index]), index);
-
-  struct BeamPlan {
-    NotationEntityId            id;
-    std::optional<BeamOverride> replacement;
-  };
-
-  std::vector<BeamPlan> beam_plan;
-  for (const BeamOverride& override : voice.beam_overrides()) {
-    const auto hit =
-        std::find(override.events.begin(), override.events.end(), deleted_id);
-    if (hit == override.events.end())
-      continue;
-
-    std::vector<NotationEntityId> reduced;
-    reduced.reserve(override.events.size());
-    for (const NotationEntityId eid : override.events) {
-      if (eid != deleted_id)
-        reduced.push_back(eid);
-    }
-
-    bool keep = reduced.size() >= 2u;
-    if (keep) {
-      std::vector<std::size_t> indices;
-      indices.reserve(reduced.size());
-      for (const NotationEntityId eid : reduced) {
-        const auto it = positions.find(eid);
-        if (it == positions.end() || !event_is_beamable(events[it->second])) {
-          keep = false;
-          break;
-        }
-        indices.push_back(it->second);
-      }
-      if (keep) {
-        for (std::size_t i = 1; i < indices.size(); ++i) {
-          if (indices[i] != indices[i - 1] + 1u) {
-            keep = false;
-            break;
-          }
-        }
-      }
-    }
-
-    if (keep) {
-      BeamOverride updated = override;
-      updated.events       = std::move(reduced);
-      beam_plan.push_back(BeamPlan{override.id, std::move(updated)});
-    } else {
-      beam_plan.push_back(BeamPlan{override.id, std::nullopt});
-    }
-  }
-
-  for (const BeamPlan& plan : beam_plan) {
-    const Result result =
-        plan.replacement.has_value()
-            ? voice.replace_beam_override(plan.id, *plan.replacement)
-            : voice.remove_beam_override(plan.id);
-    if (!result.ok())
-      return result;
-  }
-  return Result();
-}
-
-Result clear_incoming_ties(VoiceContent& voice, const EventLocation location,
-                           const VoiceEvent& replacement, Rational node_end) {
-  if (location.index == 0u)
-    return Result();
-
-  Rational previous_onset(0);
-  for (std::size_t index = 0; index + 1u < location.index; ++index)
-    previous_onset =
-        previous_onset + event_duration(voice.events()[index]).resolved();
-
-  const VoiceEvent& previous = voice.events()[location.index - 1u];
-  VoiceEvent        modified = previous;
-  bool              changed  = false;
-  if (auto* note = std::get_if<Note>(&modified)) {
-    if (note->tied_to_next && !event_sounds_pitch(replacement, note->pitch)) {
-      note->tied_to_next = false;
-      changed            = true;
-    }
-  } else if (auto* chord = std::get_if<Chord>(&modified)) {
-    for (ChordNote& chord_note : chord->notes) {
-      if (chord_note.tied_to_next &&
-          !event_sounds_pitch(replacement, chord_note.pitch)) {
-        chord_note.tied_to_next = false;
-        changed                 = true;
-      }
-    }
-  }
-  if (!changed)
-    return Result();
-  return voice.replace_event(previous_onset, std::move(modified), node_end);
 }
 
 }  // namespace
@@ -241,8 +111,8 @@ Result DeleteNoteheadCommand::execute(Project& project) noexcept {
           std::holds_alternative<Rest>(replacement)
               ? std::optional<NotationEntityId>(event_id(replacement))
               : std::nullopt;
-      result = clear_incoming_ties(candidate, *location, replacement,
-                                   timeline->node_end());
+      result = internal::clear_incoming_ties(candidate, location->index,
+                                             replacement, timeline->node_end());
       if (!result.ok())
         return result;
       result = candidate.replace_event(location->onset, std::move(replacement),
@@ -253,7 +123,8 @@ Result DeleteNoteheadCommand::execute(Project& project) noexcept {
       // whose validity depends on it staying sounding or beamable; normalize
       // them all before the candidate is validated.
       if (rest_id.has_value()) {
-        result = normalize_references_for_deleted_event(candidate, *rest_id);
+        result = internal::normalize_references_for_replaced_event(candidate,
+                                                                   *rest_id);
         if (!result.ok())
           return result;
       }

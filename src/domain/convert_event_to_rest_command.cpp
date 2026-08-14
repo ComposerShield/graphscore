@@ -17,6 +17,7 @@
 #include <graphscore/domain/project.hpp>
 #include <graphscore/domain/track.hpp>
 #include "command_snapshot_compare.hpp"
+#include "event_replacement_helpers.hpp"
 
 namespace graphscore {
 
@@ -63,11 +64,12 @@ Result ConvertEventToRestCommand::execute(Project& project) noexcept {
     if (!idx.has_value() || *idx >= voice->events().size())
       return Result(ResultCode::kInvalidArgument);
 
-    const VoiceEvent& existing = voice->events()[*idx];
-    const Duration&   dur      = event_duration(existing);
+    const VoiceEvent& existing   = voice->events()[*idx];
+    const bool        converting = !std::holds_alternative<Rest>(existing);
+    const Duration&   dur        = event_duration(existing);
 
     VoiceEvent replacement;
-    if (std::holds_alternative<Rest>(existing)) {
+    if (!converting) {
       replacement = existing;
     } else {
       const NotationEntityId source_id = event_id(existing);
@@ -77,9 +79,28 @@ Result ConvertEventToRestCommand::execute(Project& project) noexcept {
     VoiceContent pre_snapshot = *voice;
     VoiceContent candidate    = pre_snapshot;
 
-    Result result = candidate.replace_event(position_, replacement, node_end);
+    Result result;
+    // Converting a tied-into, slurred, or grace-principal event to a Rest
+    // normalizes those references (drops the incoming tie, the attached
+    // slur, or the grace group) exactly as DeleteNoteheadCommand does,
+    // rather than rejecting the conversion outright.
+    if (converting) {
+      result =
+          internal::clear_incoming_ties(candidate, *idx, replacement, node_end);
+      if (!result.ok())
+        return result;
+    }
+
+    result = candidate.replace_event(position_, replacement, node_end);
     if (!result.ok())
       return result;
+
+    if (converting) {
+      result = internal::normalize_references_for_replaced_event(
+          candidate, event_id(replacement));
+      if (!result.ok())
+        return result;
+    }
 
     result = candidate.validate();
     if (!result.ok())

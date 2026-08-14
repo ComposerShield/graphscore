@@ -9391,7 +9391,7 @@ TEST(CommandTest, SetEventBreaksPredecessorTieRejected) {
   EXPECT_EQ(n2_after->pitch, pitch_c4());
 }
 
-TEST(CommandTest, ConvertEventToRestBreaksPredecessorTieRejected) {
+TEST(CommandTest, ConvertEventToRestBreaksPredecessorTieNormalized) {
   auto          fx   = make_notation_setup();
   Node*         node = fx.project.find_node(fx.node_id);
   VoiceContent* voice =
@@ -9402,17 +9402,31 @@ TEST(CommandTest, ConvertEventToRestBreaksPredecessorTieRejected) {
   ASSERT_TRUE(voice->append(n1).ok());
   ASSERT_TRUE(voice->append(n2).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  const NotationEntityId n2_id = graphscore::event_id(voice->events()[1]);
 
-  // Convert the second note to rest — predecessor tie breaks.
+  // Convert the second note to rest — the predecessor's incoming tie is
+  // normalized away rather than rejecting the conversion.
   auto cmd = std::make_unique<ConvertEventToRestCommand>(
       fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1),
       *Rational::create(1, 4));
 
-  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
   const Note* n1_after = std::get_if<Note>(&voice->events()[0]);
   ASSERT_NE(n1_after, nullptr);
-  EXPECT_TRUE(n1_after->tied_to_next);
-  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[1]));
+  EXPECT_FALSE(n1_after->tied_to_next);
+  ASSERT_TRUE(std::holds_alternative<Rest>(voice->events()[1]));
+  EXPECT_EQ(graphscore::event_id(voice->events()[1]), n2_id);
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  const Note* n1_undone = std::get_if<Note>(&voice->events()[0]);
+  ASSERT_NE(n1_undone, nullptr);
+  EXPECT_TRUE(n1_undone->tied_to_next);
+  ASSERT_TRUE(std::holds_alternative<Note>(voice->events()[1]));
+  EXPECT_EQ(graphscore::event_id(voice->events()[1]), n2_id);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_FALSE(std::get<Note>(voice->events()[0]).tied_to_next);
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[1]));
 }
 
 // =========================================================================
@@ -9916,7 +9930,7 @@ TEST(CommandTest, SetEventRemapsReferenceWhenIdChanges) {
   EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
 }
 
-TEST(CommandTest, ConvertEventToRestRejectsDanglingGraceReference) {
+TEST(CommandTest, ConvertEventToRestRemovesGraceGroupWhosePrincipalConverts) {
   auto          fx   = make_notation_setup();
   Node*         node = fx.project.find_node(fx.node_id);
   VoiceContent* voice =
@@ -9925,23 +9939,144 @@ TEST(CommandTest, ConvertEventToRestRejectsDanglingGraceReference) {
   ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
   ASSERT_TRUE(voice->normalize(fx.node_end).ok());
 
-  const NotationEntityId ev_id = graphscore::event_id(voice->events()[0]);
-  ASSERT_TRUE(
-      voice
-          ->add_grace_group(graphscore::make_grace_group(
-              ev_id, {graphscore::GraceNote{
-                         .pitch    = pitch_e4(),
-                         .duration = eighth(),
-                         .type     = graphscore::GraceNoteType::kAppoggiatura,
-                         .slashed  = false}}))
-          .ok());
+  const NotationEntityId      ev_id = graphscore::event_id(voice->events()[0]);
+  const graphscore::GraceNote grace_note{
+      .pitch    = pitch_e4(),
+      .duration = eighth(),
+      .type     = graphscore::GraceNoteType::kAppoggiatura,
+      .slashed  = false};
+  const GraceGroup group = graphscore::make_grace_group(ev_id, {grace_note});
+  ASSERT_TRUE(voice->add_grace_group(group).ok());
 
-  // Convert to rest — principal event would become Rest.
+  // Convert the principal event to rest — the grace group is normalized
+  // away rather than rejecting the conversion.
   auto cmd = std::make_unique<ConvertEventToRestCommand>(
       fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0));
 
-  EXPECT_EQ(cmd->execute(fx.project).code(), ResultCode::kInvalidArgument);
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+  EXPECT_TRUE(voice->grace_groups().empty());
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
   EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[0]));
+  ASSERT_EQ(voice->grace_groups().size(), 1u);
+  EXPECT_EQ(voice->grace_groups()[0], group);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[0]));
+  EXPECT_TRUE(voice->grace_groups().empty());
+}
+
+TEST(CommandTest, ConvertEventToRestRemovesAttachedSlur) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), quarter())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), quarter())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId first_id  = graphscore::event_id(voice->events()[0]);
+  const NotationEntityId second_id = graphscore::event_id(voice->events()[1]);
+  const Slur             slur      = make_slur(first_id, second_id);
+  ASSERT_TRUE(voice->add_slur(slur).ok());
+
+  // Convert the slur's end event to rest — the slur is normalized away
+  // rather than rejecting the conversion (validate_voice_references would
+  // otherwise flag kSlurAttachedToRest).
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1),
+      *Rational::create(1, 4));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[1]));
+  EXPECT_TRUE(voice->slurs().empty());
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[1]));
+  ASSERT_EQ(voice->slurs().size(), 1u);
+  EXPECT_EQ(voice->slurs()[0], slur);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[1]));
+  EXPECT_TRUE(voice->slurs().empty());
+}
+
+TEST(CommandTest, ConvertEventToRestReducesBeamOverride) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), eighth())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), eighth())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_e4(), eighth())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+
+  const NotationEntityId first_id  = graphscore::event_id(voice->events()[0]);
+  const NotationEntityId second_id = graphscore::event_id(voice->events()[1]);
+  const NotationEntityId third_id  = graphscore::event_id(voice->events()[2]);
+  const std::vector<NotationEntityId> run{first_id, second_id, third_id};
+  const BeamOverride beam = make_beam_override(BeamOverride::Kind::kJoin, run);
+  ASSERT_TRUE(voice->add_beam_override(beam).ok());
+
+  // Converting the run's last event to rest normalizes the beam override
+  // rather than rejecting the conversion (normalize_references_for_replaced_
+  // event, shared with DeleteNoteheadCommand): the surviving {first_id,
+  // second_id} run stays contiguous and beamable, so the override is
+  // reduced, not dropped outright.
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1),
+      *Rational::create(1, 4));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[2]));
+  ASSERT_EQ(voice->beam_overrides().size(), 1u);
+  EXPECT_EQ(voice->beam_overrides()[0].events,
+            (std::vector<NotationEntityId>{first_id, second_id}));
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Note>(voice->events()[2]));
+  ASSERT_EQ(voice->beam_overrides().size(), 1u);
+  EXPECT_EQ(voice->beam_overrides()[0], beam);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_TRUE(std::holds_alternative<Rest>(voice->events()[2]));
+  ASSERT_EQ(voice->beam_overrides().size(), 1u);
+  EXPECT_EQ(voice->beam_overrides()[0].events,
+            (std::vector<NotationEntityId>{first_id, second_id}));
+}
+
+TEST(CommandTest, ConvertChordEventToRestRoundTripPreservesIdAndDuration) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  const Chord chord = make_chord(
+      half(), {ChordNote{.pitch = pitch_c4()}, ChordNote{.pitch = pitch_e4()},
+               ChordNote{.pitch = pitch_g4()}});
+  ASSERT_TRUE(voice->append(VoiceEvent(chord)).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  const NotationEntityId chord_id = chord.id;
+
+  auto cmd = std::make_unique<ConvertEventToRestCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), Rational(0));
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  const Rest* r = std::get_if<Rest>(&voice->events()[0]);
+  ASSERT_NE(r, nullptr);
+  EXPECT_EQ(r->id, chord_id);
+  EXPECT_EQ(r->duration.resolved(), half().resolved());
+
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  ASSERT_TRUE(std::holds_alternative<Chord>(voice->events()[0]));
+  EXPECT_EQ(std::get<Chord>(voice->events()[0]), chord);
+
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  ASSERT_NE(std::get_if<Rest>(&voice->events()[0]), nullptr);
+  EXPECT_EQ(graphscore::event_id(voice->events()[0]), chord_id);
 }
 
 // =========================================================================

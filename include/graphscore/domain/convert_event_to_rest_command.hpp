@@ -23,6 +23,13 @@ namespace graphscore {
 // duration does not change, a successful conversion leaves the voice
 // rhythmically unchanged, but normalisation against the node's timeline is
 // still applied as a safety measure.
+//
+// Converting an event that is tied into by its predecessor, is a slur
+// endpoint, or is a grace group's principal event does not fail: the
+// incoming tie, the attached slur, and the grace group are normalized away
+// first, exactly as DeleteNoteheadCommand normalizes the same references,
+// so "R" always succeeds on a valid single-event target rather than
+// rejecting on a reference it could instead repair.
 class ConvertEventToRestCommand : public Command {
  public:
   ConvertEventToRestCommand(NodeId node_id, TrackId track_id, StaveId stave_id,

@@ -441,6 +441,8 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
       return KeyCode::kBackspace;
     case SDL_SCANCODE_DELETE:
       return KeyCode::kDelete;
+    case SDL_SCANCODE_R:
+      return KeyCode::kR;
     default:
       return KeyCode::kUnknown;
   }

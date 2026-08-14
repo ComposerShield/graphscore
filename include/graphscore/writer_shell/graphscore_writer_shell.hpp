@@ -74,6 +74,7 @@ enum class KeyCode : std::uint8_t {
   kEquals,
   kBackspace,
   kDelete,
+  kR,
 };
 
 // Platform-neutral key modifiers, translated from SDL3's combined

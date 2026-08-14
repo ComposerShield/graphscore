@@ -63,6 +63,7 @@ constexpr std::string_view kKeySelectionTestFlag   = "--test-key-selection";
 constexpr std::string_view kNoteheadMoveTestFlag   = "--test-notehead-move";
 constexpr std::string_view kAccidentalStepTestFlag = "--test-accidental-step";
 constexpr std::string_view kNoteheadDeleteTestFlag = "--test-notehead-delete";
+constexpr std::string_view kConvertToRestTestFlag  = "--test-convert-to-rest";
 
 const char* describe(graphscore::ShellError error) {
   switch (error) {
@@ -377,6 +378,12 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // its accidental steps one rung down/up the double-flat .. double-sharp
   // ladder (step_selected_accidental). Shift+`-`/`=` is not a binding either
   // phase owns, so it falls into the Shift branch above and is a no-op there.
+  //
+  // M5-phase-23 adds unmodified `R`: with a single-item NoteheadSet or
+  // ChordSet selected, converts the entire selected note/chord event to an
+  // equal-duration rest (convert_selection_to_rest). Shift+`R` is not a
+  // binding this phase owns, so it falls into the Shift branch above and is
+  // a no-op there.
   void on_key_press(graphscore::KeyEvent event) override {
     if (active_tool_ != graphscore::ActiveTool::kSelection) {
       return;
@@ -453,6 +460,9 @@ class SelectionToolHandler final : public graphscore::InputHandler {
         std::ignore = step_selected_accidental(
             graphscore::AccidentalStepDirection::kRaise);
         break;
+      case graphscore::KeyCode::kR:
+        std::ignore = convert_selection_to_rest();
+        break;
       case graphscore::KeyCode::kUnknown:
       default:
         break;
@@ -488,6 +498,80 @@ class SelectionToolHandler final : public graphscore::InputHandler {
         // once; a persistent failure leaves the handler unavailable and
         // further edits blocked, exactly as the notehead-move/accidental-step
         // paths do.
+        recover_from_failed_rollback();
+        return false;
+      }
+      // Project restored exactly: re-seed the retained cache from it so the
+      // next edit stays incremental.
+      layout_cache_.reset();
+      warm_layout_cache();
+      return false;
+    }
+    if (!transaction.commit().ok())
+      return false;
+    set_committed_selection(std::move(next_selection));
+    return true;
+  }
+
+  // "R" (M5-phase-23): converts the entire selected note/chord event to an
+  // equal-duration rest and selects the resulting rest. Requires the
+  // committed selection to be a single-item NoteheadSet (a top-level Note or
+  // a ChordNote -- converting the WHOLE containing chord, unlike delete's
+  // per-pitch semantics) or a single-item ChordSet; every other selection is
+  // a no-op returning false, exactly the make_convert_event_to_rest_command
+  // no-op set. Produces no audition request: "R" produces silence.
+  bool convert_selection_to_rest() {
+    if (history_.poisoned())
+      return false;
+
+    // Read the committed selection once, checked, so it can be reused
+    // directly below instead of rebuilt through NoteheadSet::create/
+    // ChordSet::create -- current_notehead_set()/current_chord_set() (used
+    // elsewhere in this class) each perform this same has_value() check
+    // internally, but a pointer returned from either does not carry that
+    // proof to a later dereference of committed_selection() itself.
+    const std::optional<graphscore::Selection>& committed =
+        drag_.committed_selection();
+    if (!committed.has_value())
+      return false;
+
+    std::optional<graphscore::NoteheadItem> notehead_item;
+    std::optional<graphscore::ChordItem>    chord_item;
+    if (const auto* set = std::get_if<graphscore::NoteheadSet>(&*committed);
+        set != nullptr && set->items().size() == 1u) {
+      notehead_item = set->items().front();
+    } else if (const auto* chords =
+                   std::get_if<graphscore::ChordSet>(&*committed);
+               chords != nullptr && chords->items().size() == 1u) {
+      chord_item = chords->items().front();
+    } else {
+      return false;
+    }
+
+    const graphscore::Selection& selection = *committed;
+
+    std::optional<graphscore::Selection> next_selection =
+        graphscore::selection_after_convert_to_rest(project_, selection);
+    std::unique_ptr<graphscore::Command> command =
+        graphscore::make_convert_event_to_rest_command(project_, selection);
+    if (command == nullptr || !next_selection.has_value())
+      return false;
+
+    const std::optional<graphscore::NotationInvalidation> invalidation =
+        convert_to_rest_invalidation(notehead_item, chord_item);
+    if (!invalidation.has_value())
+      return false;
+    graphscore::CommandHistory::Transaction transaction =
+        history_.begin_transaction(std::move(command), project_);
+    if (!transaction.active())
+      return false;
+    if (!refresh_layout(invalidation)) {
+      const graphscore::Result rollback = transaction.abort();
+      if (!rollback.ok()) {
+        // The rollback failed: the history is now poisoned. Attempt recovery
+        // once; a persistent failure leaves the handler unavailable and
+        // further edits blocked, exactly as the other domain-mutation paths
+        // do.
         recover_from_failed_rollback();
         return false;
       }
@@ -1014,6 +1098,19 @@ class SelectionToolHandler final : public graphscore::InputHandler {
     return std::get_if<graphscore::NoteheadSet>(&*committed);
   }
 
+  // The committed selection's own ChordSet, or nullptr when there is no
+  // committed selection or it is not that arm. convert_selection_to_rest
+  // below accepts this arm alongside NoteheadSet, since "R" converts a
+  // ChordSet-selected chord to a rest exactly as it converts a
+  // ChordNote-selected one.
+  [[nodiscard]] const graphscore::ChordSet* current_chord_set() const noexcept {
+    const auto& committed = drag_.committed_selection();
+    if (!committed.has_value()) {
+      return nullptr;
+    }
+    return std::get_if<graphscore::ChordSet>(&*committed);
+  }
+
   // Derives first_staff_/last_staff_ from the committed selection's own
   // items, in score order: the lowest and highest score-order position
   // among them. Called only after a pointer-drag commit, where there is no
@@ -1145,6 +1242,140 @@ class SelectionToolHandler final : public graphscore::InputHandler {
                                             scope->last_measure};
   }
 
+  // Resolves node/track/stave/voice to the addressed VoiceContent, or
+  // nullptr if any link in that chain does not exist. Shared by both arms
+  // of convert_to_rest_invalidation below so the same four-step lookup is
+  // not duplicated per arm.
+  [[nodiscard]] const graphscore::VoiceContent* resolve_voice(
+      graphscore::NodeId node, graphscore::TrackId track,
+      graphscore::StaveId stave, graphscore::Voice voice) const {
+    const graphscore::Node* node_ptr = project_.find_node(node);
+    if (node_ptr == nullptr) {
+      return nullptr;
+    }
+    const graphscore::TrackLane* lane = node_ptr->lane(track);
+    if (lane == nullptr) {
+      return nullptr;
+    }
+    const graphscore::StaveVoices* stave_voices = lane->stave(stave);
+    if (stave_voices == nullptr) {
+      return nullptr;
+    }
+    return &stave_voices->voice(voice);
+  }
+
+  // The union, across every pitch in `chord`, of that pitch's own
+  // notehead_move_scope -- the shared core behind
+  // convert_to_rest_invalidation below, for both of its arms that convert
+  // a whole chord to a rest. Converting an entire chord to a rest can
+  // normalize away an incoming tie on any of its pitches (not just one),
+  // so the invalidated range must cover every pitch's own connected tie
+  // chain, not just a single representative one. Returns std::nullopt when
+  // `chord` has no notes or any pitch's own scope cannot be computed.
+  [[nodiscard]] std::optional<graphscore::NotationInvalidation>
+  chord_notes_invalidation(const graphscore::Chord& chord,
+                           graphscore::NodeId node, graphscore::TrackId track,
+                           graphscore::StaveId stave,
+                           graphscore::Voice   voice) const {
+    if (chord.notes.empty()) {
+      return std::nullopt;
+    }
+    std::optional<std::size_t> first;
+    std::optional<std::size_t> last;
+    for (const graphscore::ChordNote& note : chord.notes) {
+      const graphscore::NoteheadItem pitch_item{node, track, stave, voice,
+                                                note.id};
+      const std::optional<graphscore::NoteheadMoveScope> scope =
+          graphscore::notehead_move_scope(project_, pitch_item);
+      if (!scope.has_value()) {
+        return std::nullopt;
+      }
+      first = first.has_value() ? std::min(*first, scope->first_measure)
+                                : scope->first_measure;
+      last  = last.has_value() ? std::max(*last, scope->last_measure)
+                               : scope->last_measure;
+    }
+    if (!first.has_value() || !last.has_value()) {
+      return std::nullopt;
+    }
+    const graphscore::NotationInvalidationKind kind =
+        *first == *last
+            ? graphscore::NotationInvalidationKind::kLocalContent
+            : graphscore::NotationInvalidationKind::kCrossMeasureSpan;
+    return graphscore::NotationInvalidation{kind, *first, *last};
+  }
+
+  // convert_selection_to_rest's invalidation scope, covering both of its
+  // accepted arms as one operation -- which they are, by this phase's own
+  // settled design: a NoteheadSet item whose entity names a ChordNote
+  // converts the WHOLE containing chord exactly as a directly-addressed
+  // ChordSet item does (deliberately unlike delete's per-pitch semantics),
+  // so both cases invalidate chord_notes_invalidation's union over every
+  // pitch in that chord, not just the addressed pitch's own tie chain. A
+  // NoteheadSet item naming a top-level Note instead has no sibling
+  // pitches and falls back to the single-pitch notehead_invalidation. The
+  // NoteheadSet arm recovers which case applies via
+  // VoiceContent::position_of_event/find_event_index_at, the same
+  // top-level-event lookup selection_after_convert_to_rest itself uses
+  // (src/notation/notation.cpp's top_level_event_id_at) to recover the
+  // owning Chord's id from a ChordNote selection. Exactly one of
+  // `notehead_item`/`chord_item` is expected to be set, matching
+  // convert_selection_to_rest's own resolution above; returns std::nullopt
+  // when neither resolves to anything invalidatable.
+  [[nodiscard]] std::optional<graphscore::NotationInvalidation>
+  convert_to_rest_invalidation(
+      const std::optional<graphscore::NoteheadItem>& notehead_item,
+      const std::optional<graphscore::ChordItem>&    chord_item) const {
+    if (chord_item.has_value()) {
+      const graphscore::ChordItem&    item = *chord_item;
+      const graphscore::VoiceContent* voice =
+          resolve_voice(item.node, item.track, item.stave, item.voice);
+      if (voice == nullptr) {
+        return std::nullopt;
+      }
+      const graphscore::Chord* chord = nullptr;
+      for (const auto& event : voice->events()) {
+        const auto* candidate = std::get_if<graphscore::Chord>(&event);
+        if (candidate != nullptr && candidate->id == item.entity) {
+          chord = candidate;
+          break;
+        }
+      }
+      if (chord == nullptr) {
+        return std::nullopt;
+      }
+      return chord_notes_invalidation(*chord, item.node, item.track, item.stave,
+                                      item.voice);
+    }
+
+    if (!notehead_item.has_value()) {
+      return std::nullopt;
+    }
+    const graphscore::NoteheadItem& item = *notehead_item;
+    const graphscore::VoiceContent* voice =
+        resolve_voice(item.node, item.track, item.stave, item.voice);
+    if (voice == nullptr) {
+      return std::nullopt;
+    }
+    const std::optional<graphscore::Rational> position =
+        voice->position_of_event(item.entity);
+    if (!position.has_value()) {
+      return std::nullopt;
+    }
+    const std::optional<std::size_t> index =
+        voice->find_event_index_at(*position);
+    if (!index.has_value() || *index >= voice->events().size()) {
+      return std::nullopt;
+    }
+    if (const auto* chord =
+            std::get_if<graphscore::Chord>(&voice->events()[*index]);
+        chord != nullptr) {
+      return chord_notes_invalidation(*chord, item.node, item.track, item.stave,
+                                      item.voice);
+    }
+    return notehead_invalidation(item);
+  }
+
   // Re-lays out the node after a successful domain mutation through the
   // retained incremental layout cache (M5-phase-8), then publishes the
   // rasterised surface to the shell and commits the new layout as visible.
@@ -1157,22 +1388,34 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // Requires metrics_ to have been set (run() and the notehead-move test both
   // do); returns true otherwise so the range-selection paths that never move
   // a notehead remain no-ops.
+  //
+  // When the caller does not pass `forced`, the invalidation is derived from
+  // the committed selection's own single-item NoteheadSet, and the call is a
+  // no-op (returns true without touching layout_) for any other committed
+  // selection -- move_selected_notehead and step_selected_accidental rely on
+  // this, since both already require that same NoteheadSet arm before ever
+  // calling refresh_layout(). A caller that passes an explicit `forced`
+  // invalidation (delete_selected_notehead, convert_selection_to_rest) always
+  // reaches the actual cache refresh below, regardless of which selection
+  // arm is committed -- notably including a committed ChordSet, which
+  // current_notehead_set() cannot see.
   bool refresh_layout(
       std::optional<graphscore::NotationInvalidation> forced = std::nullopt) {
     if (metrics_ == nullptr) {
       return true;
     }
-    const auto* set = current_notehead_set();
-    if (set == nullptr || set->items().size() != 1u) {
-      return true;
+    if (!forced.has_value()) {
+      const auto* set = current_notehead_set();
+      if (set == nullptr || set->items().size() != 1u) {
+        return true;
+      }
+      forced = notehead_invalidation(set->items()[0]);
     }
-    const std::optional<graphscore::NotationInvalidation> invalidation =
-        forced.has_value() ? forced : notehead_invalidation(set->items()[0]);
-    if (!invalidation.has_value()) {
+    if (!forced.has_value()) {
       return false;
     }
     graphscore::IncrementalNotationLayoutResult result = layout_cache_.update(
-        project_, layout_.node_id, *metrics_, layout_options_, {*invalidation});
+        project_, layout_.node_id, *metrics_, layout_options_, {*forced});
     if (!result || !result.layout.has_value()) {
       return false;
     }
@@ -3264,13 +3507,13 @@ int key_events_test() {
   shell.set_input_handler(&handler);
 
   // --- test: every KeyCode value round-trips unchanged -------------------
-  constexpr std::array<graphscore::KeyCode, 11> kAllCodes{
+  constexpr std::array<graphscore::KeyCode, 12> kAllCodes{
       graphscore::KeyCode::kUnknown, graphscore::KeyCode::kLeft,
       graphscore::KeyCode::kRight,   graphscore::KeyCode::kUp,
       graphscore::KeyCode::kDown,    graphscore::KeyCode::kHome,
       graphscore::KeyCode::kEnd,     graphscore::KeyCode::kMinus,
       graphscore::KeyCode::kEquals,  graphscore::KeyCode::kBackspace,
-      graphscore::KeyCode::kDelete,
+      graphscore::KeyCode::kDelete,  graphscore::KeyCode::kR,
   };
   for (const graphscore::KeyCode code : kAllCodes) {
     const std::size_t    before = handler.events.size();
@@ -3359,7 +3602,8 @@ int key_events_shell_test() {
 
   // Raw SDL_Scancode values, verified against the fetched SDL3 headers
   // (SDL3/SDL_scancode.h at the pinned commit): LEFT=80, RIGHT=79, UP=82,
-  // DOWN=81, HOME=74, END=77, MINUS=45, EQUALS=46, BACKSPACE=42, DELETE=76.
+  // DOWN=81, HOME=74, END=77, MINUS=45, EQUALS=46, BACKSPACE=42, DELETE=76,
+  // R=21 (the USB HID keyboard usage table's row for the letter R).
   // SDL_SCANCODE_A=4 is a mapped character-key scancode outside this minimal
   // set and must translate to kUnknown.
   constexpr std::uint32_t kScancodeLeft      = 80;
@@ -3372,6 +3616,7 @@ int key_events_shell_test() {
   constexpr std::uint32_t kScancodeEquals    = 46;
   constexpr std::uint32_t kScancodeBackspace = 42;
   constexpr std::uint32_t kScancodeDelete    = 76;
+  constexpr std::uint32_t kScancodeR         = 21;
   constexpr std::uint32_t kScancodeA         = 4;
 
   struct ScancodeCase {
@@ -3379,7 +3624,7 @@ int key_events_shell_test() {
     graphscore::KeyCode expected;
   };
 
-  constexpr std::array<ScancodeCase, 10> kMappedScancodes{{
+  constexpr std::array<ScancodeCase, 11> kMappedScancodes{{
       {kScancodeLeft, graphscore::KeyCode::kLeft},
       {kScancodeRight, graphscore::KeyCode::kRight},
       {kScancodeUp, graphscore::KeyCode::kUp},
@@ -3390,6 +3635,7 @@ int key_events_shell_test() {
       {kScancodeEquals, graphscore::KeyCode::kEquals},
       {kScancodeBackspace, graphscore::KeyCode::kBackspace},
       {kScancodeDelete, graphscore::KeyCode::kDelete},
+      {kScancodeR, graphscore::KeyCode::kR},
   }};
 
   for (const ScancodeCase& test_case : kMappedScancodes) {
@@ -4572,6 +4818,41 @@ struct NoteheadMoveFixture {
   return std::get_if<graphscore::NoteheadSet>(&*committed);
 }
 
+// Sets the committed selection to the given chord items. Returns false
+// (leaving the handler untouched) if ChordSet::create rejects the items.
+[[nodiscard]] bool select_chord(SelectionToolHandler&              handler,
+                                std::vector<graphscore::ChordItem> items) {
+  const auto set = graphscore::ChordSet::create(std::move(items));
+  if (!set.has_value()) {
+    return false;
+  }
+  handler.set_committed_selection(graphscore::Selection{*set});
+  return true;
+}
+
+// The committed selection's own ChordSet, or nullptr when there is no
+// committed selection or it is not that arm — the free-function counterpart
+// of SelectionToolHandler::current_chord_set().
+[[nodiscard]] const graphscore::ChordSet* committed_chord_set(
+    const SelectionToolHandler& handler) {
+  const auto& committed = handler.drag_state().committed_selection();
+  if (!committed.has_value()) {
+    return nullptr;
+  }
+  return std::get_if<graphscore::ChordSet>(&*committed);
+}
+
+// The committed selection's own RestSet, or nullptr when there is no
+// committed selection or it is not that arm.
+[[nodiscard]] const graphscore::RestSet* committed_rest_set(
+    const SelectionToolHandler& handler) {
+  const auto& committed = handler.drag_state().committed_selection();
+  if (!committed.has_value()) {
+    return nullptr;
+  }
+  return std::get_if<graphscore::RestSet>(&*committed);
+}
+
 // Presses and releases the primary button at (x, y) with no intervening move:
 // a click, which on_pointer_release resolves through resolve_selection_at
 // rather than through the range-drag path.
@@ -4613,6 +4894,25 @@ void click_at(graphscore::WriterShell& shell, double x, double y) {
     }
   }
   return graphscore::NotationPoint{};
+}
+
+// True if `layout` still draws `id`'s own tie curve -- a PathCommand whose
+// id begins with "<id>/tie/segment/", the id shape add_span_segment
+// (src/notation/notation.cpp) builds for a tied note/chord-pitch. Used to
+// prove a retained-layout refresh actually re-laid out the measure holding
+// a cleared tie, rather than leaving that measure's stale pre-edit commands
+// (including a tie that no longer exists in the domain) in place.
+[[nodiscard]] bool has_tie_curve_command(
+    const graphscore::NotationLayout&   layout,
+    const graphscore::NotationEntityId& id) {
+  const std::string prefix = id.to_string() + "/tie/segment/";
+  for (const auto& command : layout.commands) {
+    const auto* path = std::get_if<graphscore::PathCommand>(&command);
+    if (path != nullptr && path->id.value.starts_with(prefix)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // A headless surface publisher: encodes a hash of the layout's glyph origins
@@ -4863,6 +5163,135 @@ build_cross_measure_tie_fixture(
                                 first_id,
                                 second_id,
                                 std::move(*layout_result.layout)};
+}
+
+// A single-staff, two-measure fixture whose voice is three quarter rests
+// then a two-pitch Chord {C4, E4} in measure 0 -- with ONLY E4
+// tied_to_next, not C4 -- immediately followed by a second two-pitch Chord
+// {C4, E4} at the start of measure 1. Converting measure 1's chord to a
+// rest normalizes away measure 0's E4 tie (ConvertEventToRestCommand's
+// internal::clear_incoming_ties), but the pitch a "R" press on measure 1's
+// C4 ChordNote directly names -- C4 -- never crosses the barline on its
+// own, since only E4 carried the tie. This reproduces the finding that a
+// single-pitch invalidation scope derived from the clicked pitch alone
+// misses measure 0 entirely, even though converting the whole chord can
+// clear a tie on any of its pitches. Callers pass one-measure-per-system
+// options (as build_cross_measure_tie_fixture's own callers do) so the two
+// measures land in two separate systems -- otherwise a single system
+// spanning both measures would redraw both from current content on ANY
+// invalidation inside it, masking the under-invalidation this fixture
+// exists to expose.
+struct CrossMeasureChordTieFixture {
+  graphscore::Project          project;
+  graphscore::NodeId           node_id;
+  graphscore::TrackId          track_id;
+  graphscore::StaveId          stave_id;
+  graphscore::NotationEntityId measure0_e4_id;  // tied E4 (end of measure 0)
+  graphscore::NotationEntityId
+      measure1_chord_id;                        // top-level Chord (measure 1)
+  graphscore::NotationEntityId measure1_c4_id;  // C4 ChordNote (clicked)
+  graphscore::NotationLayout   layout;
+};
+
+[[nodiscard]] std::optional<CrossMeasureChordTieFixture>
+build_cross_measure_chord_tie_fixture(
+    const graphscore::GlyphMetrics&          metrics,
+    const graphscore::NotationLayoutOptions& options) {
+  graphscore::Project project{graphscore::ProjectId::generate(),
+                              "CrossChordTie"};
+  const auto          midi_channel = graphscore::MidiChannel::create(0);
+  if (!midi_channel.has_value()) {
+    return std::nullopt;
+  }
+  const auto track_added = project.add_track(
+      "Track", graphscore::StaffLayout::single_staff(graphscore::Clef::kTreble),
+      *midi_channel);
+  if (!track_added.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::TrackId track_id = *track_added;
+  const graphscore::NodeId  node_id  = project.add_node("Node");
+  auto*                     lane = project.find_node(node_id)->lane(track_id);
+  const graphscore::StaveId stave_id =
+      project.active_tracks()[0].layout().staves()[0].id;
+  lane->ensure_stave(stave_id);
+
+  std::vector<graphscore::StaveDefinition> stave_defs;
+  stave_defs.push_back(project.active_tracks()[0].layout().staves()[0]);
+  const auto time_sig = graphscore::TimeSignature::create(4, 4);
+  if (!time_sig.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<graphscore::Measure> measures(
+      2, graphscore::Measure{*time_sig, graphscore::KeySignature{}});
+  auto timeline =
+      graphscore::NodeTimeline::create(std::move(measures), stave_defs);
+  if (!timeline.has_value()) {
+    return std::nullopt;
+  }
+  project.find_node(node_id)->set_timeline(std::move(*timeline));
+
+  const auto quarter =
+      graphscore::Duration::create(graphscore::NoteValue::kQuarter, 0);
+  if (!quarter.has_value()) {
+    return std::nullopt;
+  }
+  const auto pitch_c4 =
+      graphscore::SpelledPitch::create(graphscore::Letter::kC, 4);
+  const auto pitch_e4 =
+      graphscore::SpelledPitch::create(graphscore::Letter::kE, 4);
+  if (!pitch_c4.has_value() || !pitch_e4.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::Voice   voice1 = voice_one();
+  graphscore::VoiceContent& vc     = lane->stave(stave_id)->voice(voice1);
+
+  for (int i = 0; i < 3; ++i) {
+    if (!vc.append(graphscore::make_rest(*quarter)).ok()) {
+      return std::nullopt;
+    }
+  }
+
+  const graphscore::ChordNote measure0_c4{
+      graphscore::NotationEntityId::generate(), *pitch_c4, false};
+  const graphscore::ChordNote measure0_e4{
+      graphscore::NotationEntityId::generate(), *pitch_e4, true};
+  const graphscore::NotationEntityId measure0_e4_id = measure0_e4.id;
+  const graphscore::Chord            measure0_chord =
+      graphscore::make_chord(*quarter, {measure0_c4, measure0_e4});
+  if (!vc.append(measure0_chord).ok()) {
+    return std::nullopt;
+  }
+
+  const graphscore::ChordNote measure1_c4{
+      graphscore::NotationEntityId::generate(), *pitch_c4, false};
+  const graphscore::ChordNote measure1_e4{
+      graphscore::NotationEntityId::generate(), *pitch_e4, false};
+  const graphscore::NotationEntityId measure1_c4_id = measure1_c4.id;
+  const graphscore::Chord            measure1_chord =
+      graphscore::make_chord(*quarter, {measure1_c4, measure1_e4});
+  const graphscore::NotationEntityId measure1_chord_id = measure1_chord.id;
+  if (!vc.append(measure1_chord).ok()) {
+    return std::nullopt;
+  }
+
+  const graphscore::Rational node_end =
+      project.find_node(node_id)->timeline()->node_end();
+  if (!vc.normalize(node_end).ok()) {
+    return std::nullopt;
+  }
+
+  graphscore::NotationLayoutResult layout_result =
+      graphscore::layout_notation(project, node_id, metrics, options);
+  if (!layout_result || !layout_result.layout.has_value()) {
+    return std::nullopt;
+  }
+
+  return CrossMeasureChordTieFixture{
+      std::move(project), node_id,
+      track_id,           stave_id,
+      measure0_e4_id,     measure1_chord_id,
+      measure1_c4_id,     std::move(*layout_result.layout)};
 }
 
 // A single-staff, two-measure fixture whose two measures land in two separate
@@ -7503,6 +7932,481 @@ int notehead_delete_test() {
   return 0;
 }
 
+int convert_to_rest_test() {
+  const SelfTestMetrics metrics;
+
+  const graphscore::Voice voice1 = voice_one();
+
+  // --- test 1: a real click selects the second notehead, then `R` converts
+  //     it to a normalized equal-duration Rest, selects the resulting Rest
+  //     (RestSet on the preserved id), re-publishes a different visible
+  //     surface, and undo/redo round-trips through the handler's history.
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "convert-to-rest-test: fixture build failed (1)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(
+          stderr, "convert-to-rest-test: initial surface publish failed (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto before_surface = shell.test_snapshot_notation_surface();
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->second_note_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->second_note_id) {
+        std::fprintf(stderr,
+                     "convert-to-rest-test: click did not select the second "
+                     "notehead (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    const auto event_at = [&](std::size_t index) {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      return lane->stave(fx->stave_id)->voice(voice1).events()[index];
+    };
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kR));
+    if (!std::holds_alternative<graphscore::Rest>(event_at(1)) ||
+        !std::holds_alternative<graphscore::Note>(event_at(0))) {
+      std::fprintf(stderr,
+                   "convert-to-rest-test: R did not replace the second "
+                   "notehead with a Rest (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (graphscore::event_id(event_at(1)) != fx->second_note_id) {
+      std::fprintf(stderr,
+                   "convert-to-rest-test: the replacement Rest did not "
+                   "preserve the source note's id (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_rest_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->second_note_id) {
+        std::fprintf(stderr,
+                     "convert-to-rest-test: converted rest not selected "
+                     "after R (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    const auto after_surface = shell.test_snapshot_notation_surface();
+    if (!after_surface.has_value() || after_surface == before_surface) {
+      std::fprintf(stderr,
+                   "convert-to-rest-test: visible surface not re-published "
+                   "after R (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // Undo/redo round-trip through the handler's history.
+    if (!handler.test_undo() ||
+        !std::holds_alternative<graphscore::Note>(event_at(1))) {
+      std::fprintf(stderr,
+                   "convert-to-rest-test: undo did not restore the notehead "
+                   "(1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!handler.test_redo() ||
+        !std::holds_alternative<graphscore::Rest>(event_at(1))) {
+      std::fprintf(stderr,
+                   "convert-to-rest-test: redo did not re-apply the "
+                   "conversion (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 2: clicking one pitch of a chord (a ChordNote) converts the
+  //     WHOLE containing chord, not just that pitch, and the resulting
+  //     Rest's preserved id is the CHORD's own id, not the clicked
+  //     ChordNote's. ----------------------------------------------------
+  {
+    auto fx = build_notehead_click_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "convert-to-rest-test: fixture build failed (2)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->chord_note_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->chord_note_id) {
+        std::fprintf(stderr,
+                     "convert-to-rest-test: click did not select the chord "
+                     "notehead (2)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kR));
+    const auto* lane =
+        handler.project().find_node(fx->node_id)->lane(fx->track_id);
+    const auto&             vc = lane->stave(fx->stave_id)->voice(voice1);
+    const graphscore::Rest* converted =
+        std::get_if<graphscore::Rest>(&vc.events()[2]);
+    if (converted == nullptr || converted->id != fx->chord_id) {
+      std::fprintf(stderr,
+                   "convert-to-rest-test: R did not convert the whole chord "
+                   "with the chord's own preserved id (2)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_rest_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->chord_id) {
+        std::fprintf(stderr,
+                     "convert-to-rest-test: converted rest not selected on "
+                     "the chord's own id (2)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 3: a ChordSet selection converts the same chord, and the
+  //     layout/surface actually refresh for this arm (refresh_layout must
+  //     not silently no-op just because current_notehead_set() sees no
+  //     NoteheadSet). ----------------------------------------------------
+  {
+    auto fx = build_notehead_click_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "convert-to-rest-test: fixture build failed (3)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(
+          stderr, "convert-to-rest-test: initial surface publish failed (3)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto before_surface = shell.test_snapshot_notation_surface();
+
+    if (!select_chord(handler, {graphscore::ChordItem{fx->node_id, fx->track_id,
+                                                      fx->stave_id, voice1,
+                                                      fx->chord_id}})) {
+      std::fprintf(stderr,
+                   "convert-to-rest-test: ChordSet selection setup rejected "
+                   "(3)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_chord_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->chord_id) {
+        std::fprintf(stderr,
+                     "convert-to-rest-test: ChordSet selection setup did not "
+                     "take effect (3)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kR));
+    const auto* lane =
+        handler.project().find_node(fx->node_id)->lane(fx->track_id);
+    const auto&             vc = lane->stave(fx->stave_id)->voice(voice1);
+    const graphscore::Rest* converted =
+        std::get_if<graphscore::Rest>(&vc.events()[2]);
+    if (converted == nullptr || converted->id != fx->chord_id) {
+      std::fprintf(stderr,
+                   "convert-to-rest-test: ChordSet R did not convert the "
+                   "chord (3)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_rest_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->chord_id) {
+        std::fprintf(stderr,
+                     "convert-to-rest-test: converted rest not selected "
+                     "after ChordSet R (3)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    const auto after_surface = shell.test_snapshot_notation_surface();
+    if (!after_surface.has_value() || after_surface == before_surface) {
+      std::fprintf(stderr,
+                   "convert-to-rest-test: visible surface not re-published "
+                   "for the ChordSet arm (3)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 4: every no-op case leaves the project unchanged: no selection,
+  //     a stale notehead identity, a multi-notehead selection, a multi-item
+  //     ChordSet, a Shift chord (stays M5-phase-19b range extension), and a
+  //     Control/Alt/Meta chord (no binding this phase owns). --------------
+  {
+    enum class NoOpCase : std::uint8_t {
+      kNoSelection,
+      kStaleIdentity,
+      kMultiNotehead,
+      kMultiChord,
+      kShiftChord,
+      kModifierChord,
+    };
+
+    struct NoOpSpec {
+      const char* label;
+      NoOpCase    kind;
+    };
+
+    const std::array<NoOpSpec, 6> kNoOpCases{{
+        {"2", NoOpCase::kNoSelection},
+        {"3", NoOpCase::kStaleIdentity},
+        {"4", NoOpCase::kMultiNotehead},
+        {"4b", NoOpCase::kMultiChord},
+        {"5", NoOpCase::kShiftChord},
+        {"5b", NoOpCase::kModifierChord},
+    }};
+
+    for (const NoOpSpec& test_case : kNoOpCases) {
+      auto fx = build_notehead_move_fixture(metrics);
+      if (!fx.has_value()) {
+        std::fprintf(stderr,
+                     "convert-to-rest-test: fixture build failed (%s)\n",
+                     test_case.label);
+        return 1;
+      }
+      graphscore::WriterShell shell;
+      SelectionToolHandler    handler(std::move(fx->project),
+                                      std::move(fx->layout), &shell);
+      handler.set_metrics(&metrics);
+      shell.set_input_handler(&handler);
+      handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+      bool armed = true;
+      switch (test_case.kind) {
+        case NoOpCase::kNoSelection:
+          break;
+        case NoOpCase::kStaleIdentity:
+          armed = select_noteheads(
+              handler, {graphscore::NoteheadItem{
+                           fx->node_id, fx->track_id, fx->stave_id, voice1,
+                           graphscore::NotationEntityId::generate()}});
+          break;
+        case NoOpCase::kMultiNotehead:
+          armed = select_noteheads(
+              handler,
+              {graphscore::NoteheadItem{fx->node_id, fx->track_id, fx->stave_id,
+                                        voice1, fx->first_note_id},
+               graphscore::NoteheadItem{fx->node_id, fx->track_id, fx->stave_id,
+                                        voice1, fx->second_note_id}});
+          break;
+        case NoOpCase::kMultiChord:
+          armed = select_chord(
+              handler, {graphscore::ChordItem{
+                            fx->node_id, fx->track_id, fx->stave_id, voice1,
+                            graphscore::NotationEntityId::generate()},
+                        graphscore::ChordItem{
+                            fx->node_id, fx->track_id, fx->stave_id, voice1,
+                            graphscore::NotationEntityId::generate()}});
+          break;
+        case NoOpCase::kShiftChord:
+        case NoOpCase::kModifierChord:
+          armed = select_noteheads(
+              handler,
+              {graphscore::NoteheadItem{fx->node_id, fx->track_id, fx->stave_id,
+                                        voice1, fx->second_note_id}});
+          break;
+      }
+      if (!armed) {
+        std::fprintf(stderr,
+                     "convert-to-rest-test: selection setup rejected (%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+
+      const auto event_at = [&](std::size_t index) {
+        const auto* lane =
+            handler.project().find_node(fx->node_id)->lane(fx->track_id);
+        return lane->stave(fx->stave_id)->voice(voice1).events()[index];
+      };
+      const auto committed_before = handler.drag_state().committed_selection();
+
+      if (test_case.kind == NoOpCase::kShiftChord) {
+        shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kR));
+      } else if (test_case.kind == NoOpCase::kModifierChord) {
+        graphscore::KeyEvent control = plain_key(graphscore::KeyCode::kR);
+        control.modifiers.control    = true;
+        shell.dispatch_test_key_event(control);
+        graphscore::KeyEvent alt = plain_key(graphscore::KeyCode::kR);
+        alt.modifiers.alt        = true;
+        shell.dispatch_test_key_event(alt);
+        graphscore::KeyEvent meta = plain_key(graphscore::KeyCode::kR);
+        meta.modifiers.meta       = true;
+        shell.dispatch_test_key_event(meta);
+      } else {
+        shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kR));
+      }
+
+      if (!std::holds_alternative<graphscore::Note>(event_at(0)) ||
+          !std::holds_alternative<graphscore::Note>(event_at(1)) ||
+          handler.test_undo_stack_size() != 0u) {
+        std::fprintf(stderr,
+                     "convert-to-rest-test: a no-op case mutated the project "
+                     "(%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+      if (handler.drag_state().committed_selection() != committed_before) {
+        std::fprintf(stderr,
+                     "convert-to-rest-test: a no-op case changed the "
+                     "committed selection (%s)\n",
+                     test_case.label);
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+      shell.set_input_handler(nullptr);
+    }
+  }
+
+  // --- test 5: a ChordNote-addressed NoteheadSet selection converts the
+  //     WHOLE containing chord, so the invalidation must cover every pitch
+  //     of that chord -- including a sibling pitch's own cross-measure tie
+  //     the clicked pitch itself was never part of. Measure 0 holds a
+  //     Chord{C4, E4} with only E4 tied into measure 1's Chord{C4, E4};
+  //     pressing R on measure 1's C4 ChordNote converts measure 1's whole
+  //     chord and clears measure 0's E4 tie, but C4's own connected
+  //     component never crosses the barline. A single-pitch invalidation
+  //     scope (this finding) leaves measure 0's stale tie curve drawn. ----
+  {
+    const graphscore::NotationLayoutOptions narrow_options = [] {
+      graphscore::NotationLayoutOptions options;
+      options.system_width          = 160.0;
+      options.left_margin           = 20.0;
+      options.right_margin          = 20.0;
+      options.minimum_measure_width = 120.0;
+      options.whole_note_spacing    = 120.0;
+      return options;
+    }();
+    auto fx = build_cross_measure_chord_tie_fixture(metrics, narrow_options);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "convert-to-rest-test: fixture build failed (5)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_layout_options(narrow_options);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    // Seed the retained incremental cache BEFORE the edit, exactly as run()
+    // does at startup, so the R press below takes the incremental refresh
+    // path rather than the first-call full rebuild (every measure, any
+    // invalidation) that would otherwise mask this finding entirely.
+    handler.warm_layout_cache();
+
+    if (handler.layout().systems.size() < 2u) {
+      std::fprintf(stderr,
+                   "convert-to-rest-test: cross-measure chord-tie fixture "
+                   "expected at least two systems (5)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    if (!has_tie_curve_command(handler.layout(), fx->measure0_e4_id)) {
+      std::fprintf(stderr,
+                   "convert-to-rest-test: fixture's own measure-0 tie curve "
+                   "missing before the edit (5)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice1, fx->measure1_c4_id}})) {
+      std::fprintf(stderr,
+                   "convert-to-rest-test: NoteheadSet selection setup "
+                   "rejected (5)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kR));
+
+    const auto* lane =
+        handler.project().find_node(fx->node_id)->lane(fx->track_id);
+    const auto&             vc = lane->stave(fx->stave_id)->voice(voice1);
+    const graphscore::Rest* converted =
+        std::get_if<graphscore::Rest>(&vc.events()[4]);
+    if (converted == nullptr || converted->id != fx->measure1_chord_id) {
+      std::fprintf(stderr,
+                   "convert-to-rest-test: R did not convert measure 1's "
+                   "chord via its C4 ChordNote (5)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (has_tie_curve_command(handler.layout(), fx->measure0_e4_id)) {
+      std::fprintf(stderr,
+                   "convert-to-rest-test: measure 0's cleared E4 tie is "
+                   "still drawn -- the ChordNote arm's invalidation did not "
+                   "cover the containing chord's sibling pitch (5)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  std::printf("convert-to-rest-test: ok\n");
+  return 0;
+}
+
 }  // namespace
 
 // The shell allocates (window titles, backend names), so this call path can
@@ -7520,6 +8424,7 @@ int main(int argc, char** argv) {
   bool run_notehead_move_test    = false;
   bool run_accidental_step_test  = false;
   bool run_notehead_delete_test  = false;
+  bool run_convert_to_rest_test  = false;
   for (int i = 1; i < argc; ++i) {
     if (kSmokeTestFlag == argv[i]) {
       smoke_test = true;
@@ -7548,6 +8453,9 @@ int main(int argc, char** argv) {
     if (kNoteheadDeleteTestFlag == argv[i]) {
       run_notehead_delete_test = true;
     }
+    if (kConvertToRestTestFlag == argv[i]) {
+      run_convert_to_rest_test = true;
+    }
   }
 
   try {
@@ -7574,6 +8482,9 @@ int main(int argc, char** argv) {
     }
     if (run_notehead_delete_test) {
       return notehead_delete_test();
+    }
+    if (run_convert_to_rest_test) {
+      return convert_to_rest_test();
     }
     return run(smoke_test);
   } catch (const std::exception& error) {

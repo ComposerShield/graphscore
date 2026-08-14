@@ -1758,6 +1758,43 @@ class SelectionDragState {
 [[nodiscard]] std::optional<Selection> selection_after_notehead_delete(
     const Project& project, const NoteheadItem& notehead);
 
+// Constructs the reversible command for the keyboard action described in
+// docs/plan/05-notation-editor.md M5-phase-23: "`R` converts the entire
+// selected note/chord event to an equal-duration rest."
+//
+// Takes the complete Selection (graphscore/domain/selection.hpp) rather
+// than a single item type, because deciding whether `selection` is even
+// eligible -- and, when it is a NoteheadSet, whether its entity names a
+// top-level Note, a ChordNote (whose WHOLE containing Chord then converts,
+// unlike make_delete_notehead_command's per-pitch semantics), or a
+// GraceNote (rejected) -- is itself the arm-dispatch this function owns; a
+// caller holding a full Selection would otherwise have to replicate that
+// dispatch before it could pick which single-item overload to call.
+// Accepts a single-item NoteheadSet or a single-item ChordSet;
+// VoiceContent::position_of_event resolves either arm's entity to the
+// exact Rational position ConvertEventToRestCommand addresses.
+//
+// Every other selection is a no-op returning nullptr: an empty or
+// multi-item set on either accepted arm, any other Selection arm (RestSet
+// -- already a rest -- MarkingSet, FullMeasureSet, ArbitraryRangeSet,
+// InsertionCaretSet, NodeSet, ConnectorSet), no selection at all, a stale
+// selection that no longer resolves, and a NoteheadSet entity that names a
+// GraceNote. Building the command never mutates the project; the caller
+// applies it through a CommandHistory.
+[[nodiscard]] std::unique_ptr<Command> make_convert_event_to_rest_command(
+    const Project& project, const Selection& selection);
+
+// Resolves the selection to hold after converting `selection`'s single
+// note/chord event to a rest, using the state immediately before the
+// conversion: a single-item RestSet addressing the converted event's own
+// preserved NotationEntityId. Returns std::nullopt under exactly the same
+// conditions make_convert_event_to_rest_command returns nullptr for, so a
+// caller checks one before invoking the other without needing to check
+// both. The returned selection is intended to be installed after the
+// convert-to-rest command succeeds.
+[[nodiscard]] std::optional<Selection> selection_after_convert_to_rest(
+    const Project& project, const Selection& selection);
+
 // The short audition request for the same keyboard pitch action
 // make_move_notehead_command above builds a command for, mirroring
 // audition_for_note_entry: this milestone produces the request as a value and

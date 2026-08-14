@@ -221,3 +221,26 @@ set_tests_properties(graphscore_writer_notehead_delete_test PROPERTIES
   PASS_REGULAR_EXPRESSION "notehead-delete-test: ok"
   TIMEOUT 30
 )
+
+# M5-phase-23: exercise SelectionToolHandler's unmodified `R` convert-to-rest
+# action through the writer executable's own --test-convert-to-rest path --
+# converting a selected note/chord event to an equal-duration rest, the
+# resulting RestSet selection on the preserved identity, layout refresh for
+# both the NoteheadSet and ChordSet selection arms (including the
+# ChordNote-addressed NoteheadSet arm's own cross-measure invalidation
+# coverage), undo/redo, and every no-op case (no selection, stale identity,
+# multi-item selection, Shift/modifier chords) -- each also asserting the
+# committed selection is untouched. This is a headless code path -- no
+# window, no SDL -- built on WriterShell's dispatch_test_key_event and
+# dispatch_test_pointer_event seams.
+#
+# The headless test uses no rendering backend and works in both writer-ON
+# and writer-OFF configurations.
+add_test(NAME graphscore_writer_convert_to_rest_test
+  COMMAND graphscore_writer_app --test-convert-to-rest
+)
+
+set_tests_properties(graphscore_writer_convert_to_rest_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "convert-to-rest-test: ok"
+  TIMEOUT 30
+)

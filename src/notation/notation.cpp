@@ -5661,6 +5661,185 @@ std::optional<Selection> selection_after_notehead_delete(
   return Selection{*previous_set};
 }
 
+namespace {
+
+[[nodiscard]] const VoiceContent* resolve_voice_content(const Project& project,
+                                                        NodeId         node_id,
+                                                        TrackId        track_id,
+                                                        StaveId        stave_id,
+                                                        Voice          voice) {
+  const Node* node = project.find_node(node_id);
+  if (node == nullptr)
+    return nullptr;
+  const TrackLane* lane = node->lane(track_id);
+  if (lane == nullptr)
+    return nullptr;
+  const StaveVoices* stave = lane->stave(stave_id);
+  if (stave == nullptr)
+    return nullptr;
+  return &stave->voice(voice);
+}
+
+// True when `id` names a GraceNote in `voice` -- the one NoteheadSet member
+// kind make_convert_event_to_rest_command below must reject explicitly,
+// since VoiceContent::position_of_event would otherwise resolve it through
+// GraceGroup indirection to its principal's own position rather than to any
+// position of the grace note's own.
+[[nodiscard]] bool names_grace_note(const VoiceContent& voice,
+                                    NotationEntityId    id) {
+  for (const GraceGroup& group : voice.grace_groups()) {
+    for (const GraceNote& grace : group.notes) {
+      if (grace.id == id)
+        return true;
+    }
+  }
+  return false;
+}
+
+// The persistent id of the top-level event (Note, Chord, or Rest) starting
+// exactly at `position`, or std::nullopt if none does. This is the id
+// ConvertEventToRestCommand's replacement Rest preserves -- for a ChordNote
+// selection that id is the owning Chord's own id, not the clicked
+// ChordNote's, so selection_after_convert_to_rest below reads it here
+// rather than assuming the selected item's own entity id.
+[[nodiscard]] std::optional<NotationEntityId> top_level_event_id_at(
+    const VoiceContent& voice, Rational position) {
+  const std::optional<std::size_t> index = voice.find_event_index_at(position);
+  if (!index.has_value() || *index >= voice.events().size())
+    return std::nullopt;
+  return event_id(voice.events()[*index]);
+}
+
+}  // namespace
+
+// Constructs the reversible command for the keyboard action described in
+// docs/plan/05-notation-editor.md M5-phase-23: "`R` converts the entire
+// selected note/chord event to an equal-duration rest."
+//
+// Accepts a single-item NoteheadSet whose entity resolves to a top-level
+// Note or to a ChordNote -- in the ChordNote case the WHOLE containing
+// Chord converts, not just that one pitch, since the phase targets "the
+// entire selected note/chord event" (this deliberately differs from
+// make_delete_notehead_command's per-pitch semantics) -- or a single-item
+// ChordSet. VoiceContent::position_of_event resolves either arm's entity to
+// the exact Rational position ConvertEventToRestCommand addresses.
+//
+// Every other selection is a no-op returning nullptr: an empty or
+// multi-item set on either accepted arm, any other Selection arm
+// (RestSet -- already a rest -- MarkingSet, FullMeasureSet,
+// ArbitraryRangeSet, InsertionCaretSet, NodeSet, ConnectorSet), no
+// selection at all, a stale selection that no longer resolves, and a
+// NoteheadSet entity that names a GraceNote (a grace note has no
+// independent rhythmic duration, so there is no equal-duration rest for it
+// to become). Building the command never mutates the project; the caller
+// applies it through a CommandHistory.
+[[nodiscard]] std::unique_ptr<Command> make_convert_event_to_rest_command(
+    const Project& project, const Selection& selection) {
+  if (const auto* notehead_set = std::get_if<NoteheadSet>(&selection)) {
+    if (notehead_set->items().size() != 1u)
+      return nullptr;
+    const NoteheadItem& item = notehead_set->items().front();
+    if (!validate_selection(project, selection).empty())
+      return nullptr;
+    const VoiceContent* voice = resolve_voice_content(
+        project, item.node, item.track, item.stave, item.voice);
+    if (voice == nullptr || names_grace_note(*voice, item.entity))
+      return nullptr;
+    const std::optional<Rational> position =
+        voice->position_of_event(item.entity);
+    if (!position.has_value())
+      return nullptr;
+    return std::make_unique<ConvertEventToRestCommand>(
+        item.node, item.track, item.stave, item.voice, *position);
+  }
+
+  if (const auto* chord_set = std::get_if<ChordSet>(&selection)) {
+    if (chord_set->items().size() != 1u)
+      return nullptr;
+    const ChordItem& item = chord_set->items().front();
+    if (!validate_selection(project, selection).empty())
+      return nullptr;
+    const VoiceContent* voice = resolve_voice_content(
+        project, item.node, item.track, item.stave, item.voice);
+    if (voice == nullptr)
+      return nullptr;
+    const std::optional<Rational> position =
+        voice->position_of_event(item.entity);
+    if (!position.has_value())
+      return nullptr;
+    return std::make_unique<ConvertEventToRestCommand>(
+        item.node, item.track, item.stave, item.voice, *position);
+  }
+
+  return nullptr;
+}
+
+// Resolves the selection to hold after converting `selection`'s single
+// note/chord event to a rest, using the state immediately before the
+// conversion: a single-item RestSet addressing the converted event's
+// persistent NotationEntityId, which ConvertEventToRestCommand preserves.
+// For a ChordNote-addressed NoteheadSet item that id is the owning Chord's
+// own id (the whole chord converts), not the clicked ChordNote's id, so it
+// is read from the top-level event at the resolved position rather than
+// assumed to be the selected item's own entity id. Returns std::nullopt
+// under exactly the same conditions make_convert_event_to_rest_command
+// returns nullptr for, so a caller that checks one before invoking the
+// other never needs to check both.
+[[nodiscard]] std::optional<Selection> selection_after_convert_to_rest(
+    const Project& project, const Selection& selection) {
+  if (const auto* notehead_set = std::get_if<NoteheadSet>(&selection)) {
+    if (notehead_set->items().size() != 1u)
+      return std::nullopt;
+    const NoteheadItem& item = notehead_set->items().front();
+    if (!validate_selection(project, selection).empty())
+      return std::nullopt;
+    const VoiceContent* voice = resolve_voice_content(
+        project, item.node, item.track, item.stave, item.voice);
+    if (voice == nullptr || names_grace_note(*voice, item.entity))
+      return std::nullopt;
+    const std::optional<Rational> position =
+        voice->position_of_event(item.entity);
+    if (!position.has_value())
+      return std::nullopt;
+    const std::optional<NotationEntityId> rest_id =
+        top_level_event_id_at(*voice, *position);
+    if (!rest_id.has_value())
+      return std::nullopt;
+    const auto rest_set = RestSet::create(
+        {RestItem{item.node, item.track, item.stave, item.voice, *rest_id}});
+    if (!rest_set.has_value())
+      return std::nullopt;
+    return Selection{*rest_set};
+  }
+
+  if (const auto* chord_set = std::get_if<ChordSet>(&selection)) {
+    if (chord_set->items().size() != 1u)
+      return std::nullopt;
+    const ChordItem& item = chord_set->items().front();
+    if (!validate_selection(project, selection).empty())
+      return std::nullopt;
+    const VoiceContent* voice = resolve_voice_content(
+        project, item.node, item.track, item.stave, item.voice);
+    if (voice == nullptr)
+      return std::nullopt;
+    const std::optional<Rational> position =
+        voice->position_of_event(item.entity);
+    if (!position.has_value())
+      return std::nullopt;
+    const std::optional<NotationEntityId> rest_id =
+        top_level_event_id_at(*voice, *position);
+    if (!rest_id.has_value())
+      return std::nullopt;
+    const auto rest_set = RestSet::create(
+        {RestItem{item.node, item.track, item.stave, item.voice, *rest_id}});
+    if (!rest_set.has_value())
+      return std::nullopt;
+    return Selection{*rest_set};
+  }
+
+  return std::nullopt;
+}
+
 std::optional<NoteAuditionRequest> audition_for_notehead_move(
     const Project& project, const NoteheadItem& notehead,
     NoteheadStepDirection direction) {
