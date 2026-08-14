@@ -1,0 +1,190 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#include "selection_tool_handler.hpp"
+
+#include <graphscore/domain/graphscore_domain.hpp>
+#include <graphscore/notation/graphscore_notation.hpp>
+#include <graphscore/writer_shell/graphscore_writer_shell.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <variant>
+#include <vector>
+
+namespace graphscore::writer_app {
+
+SelectionToolHandler::SelectionToolHandler(graphscore::Project        project,
+                                           graphscore::NotationLayout layout,
+                                           graphscore::WriterShell*   shell)
+    : project_(std::move(project)), layout_(std::move(layout)), shell_(shell) {}
+
+SelectionToolHandler::~SelectionToolHandler() {
+  if (drag_.is_dragging()) {
+    drag_.cancel();
+  }
+  if (shell_ != nullptr) {
+    shell_->set_highlight_rects({});
+  }
+}
+
+void SelectionToolHandler::set_active_tool(graphscore::ActiveTool tool) {
+  if (tool != active_tool_) {
+    if (drag_.is_dragging()) {
+      drag_.cancel();
+    }
+    active_tool_ = tool;
+    // After tool switch, show whatever highlight fits (committed, if any,
+    // or clear entirely if none).
+    update_highlight();
+  }
+}
+
+graphscore::ActiveTool SelectionToolHandler::active_tool() const noexcept {
+  return active_tool_;
+}
+
+// Supplies the glyph metrics used to refresh the retained layout after a
+// notehead move (M5-phase-20). Must be set before any notehead move that
+// expects the layout to refresh; the pointer/range-selection paths never
+// need it. `run()` sets the production font; the notehead-move test sets
+// SelfTestMetrics.
+void SelectionToolHandler::set_metrics(
+    const graphscore::GlyphMetrics* metrics) noexcept {
+  metrics_ = metrics;
+}
+
+void SelectionToolHandler::set_surface_publisher(SurfacePublisher publisher) {
+  publish_surface_ = std::move(publisher);
+}
+
+// Supplies the layout options the incremental layout cache uses. Must match
+// the options the retained layout was produced with. `run()` keeps the
+// default options; the cross-measure-tie test sets narrow one-measure-per-
+// system options so a tie chain spanning two measures also spans two
+// systems, which is what makes the full-chain invalidation observable.
+void SelectionToolHandler::set_layout_options(
+    graphscore::NotationLayoutOptions options) {
+  layout_options_ = options;
+}
+
+void SelectionToolHandler::set_move_command_factory(
+    MoveCommandFactory factory) {
+  move_command_factory_ = std::move(factory);
+}
+
+void SelectionToolHandler::set_accidental_command_factory(
+    AccidentalCommandFactory factory) {
+  accidental_command_factory_ = std::move(factory);
+}
+
+// Builds the retained incremental layout cache from the current project and
+// layout, so a later refresh_layout() reuses unaffected systems instead of
+// full-resetting on its first call (which rebuilds everything and hides a
+// stale invalidation scope). run() calls this at startup -- immediately
+// after set_metrics() -- so the first production edit is already
+// incremental; the notehead-move tests call it to reproduce that startup
+// seeding before asserting rebuild scope.
+void SelectionToolHandler::warm_layout_cache() {
+  if (metrics_ == nullptr) {
+    return;
+  }
+  std::ignore = layout_cache_.update(project_, layout_.node_id, *metrics_,
+                                     layout_options_, {});
+}
+
+// Stores a selection directly, mirroring SelectionDragState's own
+// keyboard/accessible entry point (M5-phase-19b). A pointer click reaches
+// this through resolve_selection_at (resolve_single_click_selection);
+// Shift/keyboard range extension and the accessible controls reach it
+// through the range methods above. Kept public so those paths and the
+// no-op tests below share one entry point.
+void SelectionToolHandler::set_committed_selection(
+    std::optional<graphscore::Selection> selection) {
+  drag_.set_committed_selection(std::move(selection));
+  update_highlight();
+}
+
+const graphscore::SelectionDragState& SelectionToolHandler::drag_state()
+    const noexcept {
+  return drag_;
+}
+
+const graphscore::Project& SelectionToolHandler::project() const noexcept {
+  return project_;
+}
+
+const graphscore::NotationLayout& SelectionToolHandler::layout()
+    const noexcept {
+  return layout_;
+}
+
+// The audition request the most recent successful notehead move issued, or
+// nullopt when no move has succeeded yet (or the last move had nothing to
+// audition). A failed or no-op move leaves this unchanged.
+const std::optional<graphscore::NoteAuditionRequest>&
+SelectionToolHandler::last_audition() const noexcept {
+  return last_audition_;
+}
+
+// The incremental-layout work the most recent refresh_layout() recorded:
+// which measures/systems were rebuilt vs reused. Test-only; lets a test
+// prove a cold-cache first local move rebuilds only the affected system
+// (finding 1) rather than every system.
+const graphscore::NotationLayoutWork&
+SelectionToolHandler::test_last_layout_work() const noexcept {
+  return last_layout_work_;
+}
+
+// The number of commands on the undo/redo stacks. Test-only; lets a
+// failing-publisher test prove a rollback leaves history unchanged.
+std::size_t SelectionToolHandler::test_undo_stack_size() const noexcept {
+  return history_.undo_stack_size();
+}
+
+std::size_t SelectionToolHandler::test_redo_stack_size() const noexcept {
+  return history_.redo_stack_size();
+}
+
+// True while a failed rollback has left the history poisoned and the
+// handler unavailable: further moves (and any undo/redo through the same
+// history) are blocked until the history recovers. Test-only; the
+// rollback-failure tests assert this to prove the explicit unavailable
+// state, rather than a silent half-rolled-back project.
+bool SelectionToolHandler::history_unavailable() const noexcept {
+  return history_.poisoned();
+}
+
+// Retries the rollback of a failed move's provisional command once the
+// history has been poisoned by that failure. On success the authoritative
+// project and history are restored; the visible layout/surface/highlight
+// were never committed (refresh_layout() failed before committing layout_),
+// so they are already coherent with the restored project, and the retained
+// incremental cache is re-seeded from it. On a persistent failure the
+// history stays poisoned and the handler remains unavailable. Either way
+// the move did not complete.
+void SelectionToolHandler::recover_from_failed_rollback() {
+  const graphscore::Result recovered = history_.recover();
+  if (!recovered.ok()) {
+    return;
+  }
+  layout_cache_.reset();
+  warm_layout_cache();
+}
+
+bool SelectionToolHandler::test_undo() {
+  return history_.undo(project_).ok();
+}
+
+bool SelectionToolHandler::test_redo() {
+  return history_.redo(project_).ok();
+}
+
+}  // namespace graphscore::writer_app

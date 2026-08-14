@@ -1,0 +1,429 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#include "selection_tool_handler.hpp"
+
+#include <graphscore/domain/graphscore_domain.hpp>
+#include <graphscore/notation/graphscore_notation.hpp>
+#include <graphscore/writer_shell/graphscore_writer_shell.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <variant>
+#include <vector>
+
+namespace graphscore::writer_app {
+
+// Moves the single selected notehead one diatonic staff step (M5-phase-20).
+// Requires the committed selection to be a NoteheadSet with exactly one
+// item; any other selection -- none, a range, a non-notehead arm, or a
+// multi-notehead set -- is a no-op returning false. The move runs as one
+// reversible command through the handler's CommandHistory. On success the
+// same notehead identity stays selected (MoveNoteheadCommand preserves ids),
+// the retained layout is refreshed incrementally and re-published to the
+// shell, and the short audition request for the post-edit pitch is recorded
+// (M5-phase-15; nothing plays it until Milestone 08).
+//
+// The move is one provisional CommandHistory transaction: the pitch
+// mutation executes without clearing the redo stack, the candidate layout
+// is refreshed and its surface published, and only then does the
+// transaction commit (clearing redo). If the cache refresh or the surface
+// publish fails, the transaction aborts — undoing the pitch mutation and
+// restoring the exact prior history, including any pre-existing redo —
+// and the layout cache is re-seeded from the restored project, so project,
+// layout, surface, selection/highlight, history, and audition all remain
+// exactly as they were before the move. A stale notehead identity or a
+// pitch step that would leave the SpelledPitch/MIDI range fails the same
+// way, leaving everything unchanged.
+//
+// Abort reliability: MoveNoteheadCommand::undo() restores from its pre-edit
+// snapshot, so the rollback of a just-applied pitch mutation cannot fail
+// for any ordinary recoverable publication failure; only a process-level
+// allocation failure inside undo itself can. If it does, the move hands
+// the poisoned history to recover_from_failed_rollback() below: the layout
+// cache is NOT re-seeded from a project that disagrees with the visible
+// layout/surface, and a further move is blocked until recovery succeeds.
+bool SelectionToolHandler::move_selected_notehead(
+    graphscore::NoteheadStepDirection direction) {
+  if (history_.poisoned()) {
+    // A prior rollback failed and has not been recovered: the authoritative
+    // project may disagree with the visible layout/surface. Refuse the
+    // mutation rather than pretend the history is consistent.
+    return false;
+  }
+  const auto* set = current_notehead_set();
+  if (set == nullptr || set->items().size() != 1u) {
+    return false;
+  }
+  const graphscore::NoteheadItem&                      item = set->items()[0];
+  const std::optional<graphscore::NoteAuditionRequest> audition =
+      graphscore::audition_for_notehead_move(project_, item, direction);
+  std::unique_ptr<graphscore::Command> command =
+      move_command_factory_(project_, item, direction);
+  if (command == nullptr) {
+    return false;
+  }
+
+  // Provisional execute: apply the pitch mutation WITHOUT clearing the
+  // redo stack, so a failed publication can restore the exact prior
+  // history (including any pre-existing redo) rather than destroying it.
+  graphscore::CommandHistory::Transaction transaction =
+      history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active()) {
+    return false;
+  }
+
+  if (!refresh_layout()) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      // The rollback failed: the history is now poisoned (the command and
+      // its exact project are retained for recover()). Attempt recovery
+      // once; a one-shot failure recovers here, while a persistent failure
+      // leaves the handler unavailable and further moves blocked.
+      recover_from_failed_rollback();
+      return false;
+    }
+    // Project restored exactly: re-seed the retained cache from it so the
+    // next move stays incremental.
+    layout_cache_.reset();
+    warm_layout_cache();
+    return false;
+  }
+
+  // Publication succeeded: commit the command (clears redo, exactly
+  // execute_new's normal success path). Capacity was reserved before
+  // execute, so this cannot fail here.
+  if (!transaction.commit().ok()) {
+    return false;
+  }
+  last_audition_ = audition;
+  return true;
+}
+
+// Steps the single selected notehead's accidental one rung along the
+// double-flat .. double-sharp ladder (M5-phase-21). Requires the committed
+// selection to be a NoteheadSet with exactly one item; any other selection
+// -- none, a range, a non-notehead arm, or a multi-notehead set -- is a
+// no-op returning false. The step runs as one reversible command through
+// the handler's CommandHistory, exactly as move_selected_notehead above
+// does: same provisional-transaction, same rollback and poisoned-history
+// handling, same incremental layout refresh and surface publication, and
+// the same short audition request for the post-edit pitch (M5-phase-15; an
+// accidental step changes the sounding pitch, so it auditions).
+//
+// Either end of the ladder is a hard reject, never a clamp: `-` on a
+// double-flat and `=` on a double-sharp build no command, execute nothing,
+// push no undo entry, and issue no audition. The same is true when the
+// resulting spelling would leave the sounding MIDI range.
+bool SelectionToolHandler::step_selected_accidental(
+    graphscore::AccidentalStepDirection direction) {
+  if (history_.poisoned()) {
+    // A prior rollback failed and has not been recovered: the authoritative
+    // project may disagree with the visible layout/surface. Refuse the
+    // mutation rather than pretend the history is consistent.
+    return false;
+  }
+  const auto* set = current_notehead_set();
+  if (set == nullptr || set->items().size() != 1u) {
+    return false;
+  }
+  const graphscore::NoteheadItem&                      item = set->items()[0];
+  const std::optional<graphscore::NoteAuditionRequest> audition =
+      graphscore::audition_for_accidental_step(project_, item, direction);
+  std::unique_ptr<graphscore::Command> command =
+      accidental_command_factory_(project_, item, direction);
+  if (command == nullptr) {
+    return false;
+  }
+
+  // Provisional execute: apply the spelling mutation WITHOUT clearing the
+  // redo stack, so a failed publication can restore the exact prior
+  // history (including any pre-existing redo) rather than destroying it.
+  graphscore::CommandHistory::Transaction transaction =
+      history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active()) {
+    return false;
+  }
+
+  if (!refresh_layout()) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      // The rollback failed: the history is now poisoned (the command and
+      // its exact project are retained for recover()). Attempt recovery
+      // once; a one-shot failure recovers here, while a persistent failure
+      // leaves the handler unavailable and further steps blocked.
+      recover_from_failed_rollback();
+      return false;
+    }
+    // Project restored exactly: re-seed the retained cache from it so the
+    // next step stays incremental.
+    layout_cache_.reset();
+    warm_layout_cache();
+    return false;
+  }
+
+  // Publication succeeded: commit the command (clears redo, exactly
+  // execute_new's normal success path). Capacity was reserved before
+  // execute, so this cannot fail here.
+  if (!transaction.commit().ok()) {
+    return false;
+  }
+  last_audition_ = audition;
+  return true;
+}
+
+// Adds one key-spelled diatonic interval notehead above/below the single
+// selected notehead (M5-phase-25): unmodified `2`..`8` add above, Shift+
+// `2`..`8` add below. Requires the committed selection to be a NoteheadSet
+// with exactly one item naming a top-level Note or a ChordNote; any other
+// selection -- none, a range, a non-notehead arm, a multi-notehead set, a
+// GraceNote -- is a no-op returning false. The interval runs as one
+// reversible command through the handler's CommandHistory, exactly as
+// move_selected_notehead/step_selected_accidental do: same provisional
+// transaction, same rollback and poisoned-history handling, same
+// incremental layout refresh and surface publication. On success only the
+// newly inserted notehead identity becomes the committed selection, and
+// the short audition request for the resulting chord is recorded
+// (M5-phase-15; nothing plays it until Milestone 08).
+//
+// Rejections (an impossible octave/MIDI result, a duplicate spelled pitch,
+// a stale identity) build no committed change: they fail inside execute and
+// return false, leaving the project, selection, history, layout, surface,
+// and audition all unchanged.
+bool SelectionToolHandler::add_selected_interval(
+    graphscore::IntervalDirection direction, std::uint8_t interval) {
+  if (history_.poisoned()) {
+    // A prior rollback failed and has not been recovered: the authoritative
+    // project may disagree with the visible layout/surface. Refuse the
+    // mutation rather than pretend the history is consistent.
+    return false;
+  }
+  const auto* set = current_notehead_set();
+  if (set == nullptr || set->items().size() != 1u) {
+    return false;
+  }
+  const graphscore::NoteheadItem&                      item = set->items()[0];
+  const std::optional<graphscore::NoteAuditionRequest> audition =
+      graphscore::audition_for_add_interval(project_, item, interval,
+                                            direction);
+  std::unique_ptr<graphscore::Command> command =
+      graphscore::make_add_interval_command(project_, item, interval,
+                                            direction);
+  if (command == nullptr) {
+    return false;
+  }
+  // make_add_interval_command always returns an AddIntervalCommand (or
+  // nullptr), so the concrete type is known; the fresh inserted notehead id
+  // is read before the command is moved into the transaction.
+  const auto* add_command =
+      static_cast<const graphscore::AddIntervalCommand*>(command.get());
+
+  const std::optional<graphscore::NotationInvalidation> invalidation =
+      interval_invalidation(item);
+  if (!invalidation.has_value()) {
+    return false;
+  }
+
+  // Provisional execute: apply the mutation WITHOUT clearing the redo
+  // stack, so a failed publication can restore the exact prior history
+  // (including any pre-existing redo) rather than destroying it.
+  graphscore::CommandHistory::Transaction transaction =
+      history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active()) {
+    return false;
+  }
+
+  if (!refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      // The rollback failed: the history is now poisoned. Attempt recovery
+      // once; a persistent failure leaves the handler unavailable and
+      // further edits blocked, exactly as the other domain-mutation paths
+      // do.
+      recover_from_failed_rollback();
+      return false;
+    }
+    // Project restored exactly: re-seed the retained cache from it so the
+    // next edit stays incremental.
+    layout_cache_.reset();
+    warm_layout_cache();
+    return false;
+  }
+
+  // Publication succeeded: commit the command (clears redo). Capacity was
+  // reserved before execute, so this cannot fail here.
+  if (!transaction.commit().ok()) {
+    return false;
+  }
+  const std::optional<graphscore::NoteheadSet> next =
+      graphscore::NoteheadSet::create({graphscore::NoteheadItem{
+          item.node, item.track, item.stave, item.voice,
+          add_command->inserted_notehead_id()}});
+  if (!next.has_value()) {
+    return false;
+  }
+  set_committed_selection(graphscore::Selection{*next});
+  last_audition_ = audition;
+  return true;
+}
+
+bool SelectionToolHandler::delete_selected_notehead() {
+  if (history_.poisoned())
+    return false;
+  const auto* set = current_notehead_set();
+  if (set == nullptr || set->items().size() != 1u)
+    return false;
+  const graphscore::NoteheadItem       item = set->items().front();
+  std::optional<graphscore::Selection> next_selection =
+      graphscore::selection_after_notehead_delete(project_, item);
+  std::unique_ptr<graphscore::Command> command =
+      graphscore::make_delete_notehead_command(project_, item);
+  if (command == nullptr || !next_selection.has_value())
+    return false;
+
+  const std::optional<graphscore::NotationInvalidation> invalidation =
+      notehead_invalidation(item);
+  if (!invalidation.has_value())
+    return false;
+  graphscore::CommandHistory::Transaction transaction =
+      history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active())
+    return false;
+  if (!refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      // The rollback failed: the history is now poisoned. Attempt recovery
+      // once; a persistent failure leaves the handler unavailable and
+      // further edits blocked, exactly as the notehead-move/accidental-step
+      // paths do.
+      recover_from_failed_rollback();
+      return false;
+    }
+    // Project restored exactly: re-seed the retained cache from it so the
+    // next edit stays incremental.
+    layout_cache_.reset();
+    warm_layout_cache();
+    return false;
+  }
+  if (!transaction.commit().ok())
+    return false;
+  set_committed_selection(std::move(next_selection));
+  return true;
+}
+
+// "R" (M5-phase-23): converts the entire selected note/chord event to an
+// equal-duration rest and selects the resulting rest. Requires the
+// committed selection to be a single-item NoteheadSet (a top-level Note or
+// a ChordNote -- converting the WHOLE containing chord, unlike delete's
+// per-pitch semantics) or a single-item ChordSet; every other selection is
+// a no-op returning false, exactly the make_convert_event_to_rest_command
+// no-op set. Produces no audition request: "R" produces silence.
+bool SelectionToolHandler::convert_selection_to_rest() {
+  if (history_.poisoned())
+    return false;
+
+  // Read the committed selection once, checked, so it can be reused
+  // directly below instead of rebuilt through NoteheadSet::create/
+  // ChordSet::create -- current_notehead_set()/current_chord_set() (used
+  // elsewhere in this class) each perform this same has_value() check
+  // internally, but a pointer returned from either does not carry that
+  // proof to a later dereference of committed_selection() itself.
+  const std::optional<graphscore::Selection>& committed =
+      drag_.committed_selection();
+  if (!committed.has_value())
+    return false;
+
+  std::optional<graphscore::NoteheadItem> notehead_item;
+  std::optional<graphscore::ChordItem>    chord_item;
+  if (const auto* set = std::get_if<graphscore::NoteheadSet>(&*committed);
+      set != nullptr && set->items().size() == 1u) {
+    notehead_item = set->items().front();
+  } else if (const auto* chords =
+                 std::get_if<graphscore::ChordSet>(&*committed);
+             chords != nullptr && chords->items().size() == 1u) {
+    chord_item = chords->items().front();
+  } else {
+    return false;
+  }
+
+  const graphscore::Selection& selection = *committed;
+
+  std::optional<graphscore::Selection> next_selection =
+      graphscore::selection_after_convert_to_rest(project_, selection);
+  std::unique_ptr<graphscore::Command> command =
+      graphscore::make_convert_event_to_rest_command(project_, selection);
+  if (command == nullptr || !next_selection.has_value())
+    return false;
+
+  const std::optional<graphscore::NotationInvalidation> invalidation =
+      convert_to_rest_invalidation(notehead_item, chord_item);
+  if (!invalidation.has_value())
+    return false;
+  graphscore::CommandHistory::Transaction transaction =
+      history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active())
+    return false;
+  if (!refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      // The rollback failed: the history is now poisoned. Attempt recovery
+      // once; a persistent failure leaves the handler unavailable and
+      // further edits blocked, exactly as the other domain-mutation paths
+      // do.
+      recover_from_failed_rollback();
+      return false;
+    }
+    // Project restored exactly: re-seed the retained cache from it so the
+    // next edit stays incremental.
+    layout_cache_.reset();
+    warm_layout_cache();
+    return false;
+  }
+  if (!transaction.commit().ok())
+    return false;
+  set_committed_selection(std::move(next_selection));
+  return true;
+}
+
+// Primary+Up/Down (M5-phase-24): moves the committed selection to the
+// prior/next staff of the node, wrapping within it, and selects the
+// same-voice note nearest the musical position -- then the visually
+// nearest note on a tie, or an insertion caret. Every rule lives in
+// graphscore::selection_after_staff_step; this method owns only the
+// read/commit wiring.
+//
+// Unlike every other keyboard action on this handler, this is a PURE
+// SELECTION change: it builds no Command, opens no CommandHistory
+// transaction, mutates no project state, and neither invalidates nor
+// refreshes the retained layout -- so it needs none of their rollback
+// machinery and is not blocked by a poisoned history. A rejected step
+// (no committed selection, an ineligible or multi-item selection arm, a
+// single-staff node) returns false and leaves the selection untouched.
+bool SelectionToolHandler::step_selected_staff(
+    graphscore::StaffStepDirection direction) {
+  // Bound once and guarded once: a pointer handed back from one of the
+  // current_*_set() accessors would not carry its own has_value() proof
+  // to a later dereference of committed_selection() itself.
+  const std::optional<graphscore::Selection>& committed =
+      drag_.committed_selection();
+  if (!committed.has_value()) {
+    return false;
+  }
+  std::optional<graphscore::Selection> stepped =
+      graphscore::selection_after_staff_step(project_, layout_, *committed,
+                                             direction);
+  if (!stepped.has_value()) {
+    return false;
+  }
+  set_committed_selection(std::move(stepped));
+  return true;
+}
+
+}  // namespace graphscore::writer_app

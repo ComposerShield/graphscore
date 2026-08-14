@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#pragma once
+
+#include <string_view>
+
+namespace graphscore {
+class GlyphMetrics;
+}  // namespace graphscore
+
+namespace graphscore::writer_app {
+
+constexpr std::string_view kSmokeTestFlag         = "--smoke-test";
+constexpr std::string_view kSelectionToolTestFlag = "--test-selection-tool";
+constexpr std::string_view kSelectionToolShellTestFlag =
+    "--test-selection-tool-shell";
+constexpr std::string_view kKeyEventsTestFlag      = "--test-key-events";
+constexpr std::string_view kKeyEventsShellTestFlag = "--test-key-events-shell";
+constexpr std::string_view kKeySelectionTestFlag   = "--test-key-selection";
+constexpr std::string_view kNoteheadMoveTestFlag   = "--test-notehead-move";
+constexpr std::string_view kAccidentalStepTestFlag = "--test-accidental-step";
+constexpr std::string_view kNoteheadDeleteTestFlag = "--test-notehead-delete";
+constexpr std::string_view kConvertToRestTestFlag  = "--test-convert-to-rest";
+constexpr std::string_view kStaffStepTestFlag      = "--test-staff-step";
+constexpr std::string_view kIntervalEntryTestFlag  = "--test-interval-entry";
+constexpr std::string_view kIntervalEntryShellTestFlag =
+    "--test-interval-entry-shell";
+
+[[nodiscard]] int selection_tool_test();
+[[nodiscard]] int selection_tool_shell_test();
+[[nodiscard]] int key_events_test();
+[[nodiscard]] int key_events_shell_test();
+[[nodiscard]] int key_selection_test();
+[[nodiscard]] int notehead_move_test();
+[[nodiscard]] int accidental_step_test();
+[[nodiscard]] int notehead_delete_test();
+[[nodiscard]] int convert_to_rest_test();
+[[nodiscard]] int staff_step_test();
+[[nodiscard]] int interval_entry_test();
+[[nodiscard]] int interval_entry_shell_test();
+
+// notehead_move_test is split across two translation units (its local-move
+// checks and its rollback-failure checks), so the four rollback checks below
+// gain external linkage rather than living in one TU's anonymous namespace.
+[[nodiscard]] int check_notehead_move_7(
+    const graphscore::GlyphMetrics& metrics);
+[[nodiscard]] int check_notehead_move_7b(
+    const graphscore::GlyphMetrics& metrics);
+[[nodiscard]] int check_notehead_move_8(
+    const graphscore::GlyphMetrics& metrics);
+[[nodiscard]] int check_notehead_move_9(
+    const graphscore::GlyphMetrics& metrics);
+
+}  // namespace graphscore::writer_app

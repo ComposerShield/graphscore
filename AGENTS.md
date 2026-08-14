@@ -30,7 +30,7 @@ satisfy).
 | `src/<target>/` | Implementation source for each `graphscore_<target>` library/executable, plus that target's `CMakeLists.txt`. |
 | `include/graphscore/<target>/` | Public headers for targets that expose one (writer-only leaf targets and executables do not). |
 | `tests/<target>/` | GTest sources for `graphscore_<target>_test`, plus `tests/c_abi/` (pure-C ABI consumer), `tests/cmake/` (out-of-tree consumer projects driven against a real install tree), and `tests/repository/` (checkout and build-system properties). |
-| `apps/` | Application entry points (`graphscore_writer_app`, `graphscore_plugin_scanner`). |
+| `apps/` | Application entry points (`graphscore_writer_app`, `graphscore_plugin_scanner`). The writer's assembly is split across `apps/writer_app/` (private headers and translation units) and `apps/writer_app/selftests/` (the 13 `--test-*` self-tests); neither is a target of its own — they all compile into `graphscore_writer_app`. |
 | `tools/` | Developer-facing helper executables that are not part of the shipped product. |
 | `cmake/` | CMake modules: compiler/warning setup, dependency adapters (one file per third-party dependency, e.g. `SDL3.cmake`), the runtime install/export package (`RuntimePackage.cmake`), and the architecture audit (`architecture_contract.cmake` — the machine-readable ADR 0003 contract — plus `audit_permitted_edges.cmake`, `audit_link_closure.cmake`, `audit_transitive_closure.cmake`). |
 | `scripts/` | Non-CMake tooling: Python audit scripts (`audit_includes.py`, `audit_runtime_symbols.py`, `audit_cycles.py`, `audit_third_party_types.py`, sharing `graphscore_audit.py`) and `bootstrap.sh`. |

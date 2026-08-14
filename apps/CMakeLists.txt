@@ -9,6 +9,29 @@ include(GNUInstallDirs)
 
 add_executable(graphscore_writer_app
   graphscore_writer_app.cpp
+  writer_app/app_project.cpp
+  writer_app/app_run.cpp
+  writer_app/app_shell_report.cpp
+  writer_app/selection_tool_handler.cpp
+  writer_app/selection_tool_handler_edits.cpp
+  writer_app/selection_tool_handler_keys.cpp
+  writer_app/selection_tool_handler_layout.cpp
+  writer_app/selection_tool_handler_pointer.cpp
+  writer_app/selection_tool_handler_range.cpp
+  writer_app/selftests/selftest_accidental_step.cpp
+  writer_app/selftests/selftest_convert_to_rest.cpp
+  writer_app/selftests/selftest_fixtures.cpp
+  writer_app/selftests/selftest_interval_entry.cpp
+  writer_app/selftests/selftest_interval_entry_shell.cpp
+  writer_app/selftests/selftest_key_events.cpp
+  writer_app/selftests/selftest_key_selection.cpp
+  writer_app/selftests/selftest_notehead_delete.cpp
+  writer_app/selftests/selftest_notehead_move.cpp
+  writer_app/selftests/selftest_notehead_move_rollback.cpp
+  writer_app/selftests/selftest_selection_tool.cpp
+  writer_app/selftests/selftest_selection_tool_shell.cpp
+  writer_app/selftests/selftest_staff_step.cpp
+  writer_app/selftests/selftest_support.cpp
 )
 
 target_compile_features(graphscore_writer_app PRIVATE cxx_std_23)
