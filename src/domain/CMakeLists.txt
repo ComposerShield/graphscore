@@ -97,6 +97,7 @@ add_library(graphscore_domain STATIC
   staff_layout.cpp
   step_accidental_command.cpp
   tempo_lane.cpp
+  tie_chain.cpp
   track.cpp
   vertical_transition.cpp
   validation_service.cpp

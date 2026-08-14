@@ -128,6 +128,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [x] &nbsp;&nbsp;Accidental-ladder stepping increment completed
 - [x] &nbsp;&nbsp;Notehead-deletion and selection-recovery increment completed
 - [x] &nbsp;&nbsp;Note/chord-to-rest conversion increment completed
+- [x] &nbsp;&nbsp;Primary+Up/Down staff navigation increment completed
 - [ ] Whole-measure selection and copy/paste completed
 - [ ] Pointer-drag arbitrary-range selection and copy/paste completed
 - [ ] Clipboard boundary/span and paste-preview behavior validated

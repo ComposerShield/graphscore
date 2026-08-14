@@ -64,6 +64,7 @@ constexpr std::string_view kNoteheadMoveTestFlag   = "--test-notehead-move";
 constexpr std::string_view kAccidentalStepTestFlag = "--test-accidental-step";
 constexpr std::string_view kNoteheadDeleteTestFlag = "--test-notehead-delete";
 constexpr std::string_view kConvertToRestTestFlag  = "--test-convert-to-rest";
+constexpr std::string_view kStaffStepTestFlag      = "--test-staff-step";
 
 const char* describe(graphscore::ShellError error) {
   switch (error) {
@@ -233,6 +234,39 @@ class SelfTestMetrics final : public graphscore::GlyphMetrics {
 constexpr graphscore::Rational kProvisionalRangeExtensionStep =
     *graphscore::Rational::create(1, 4);
 
+// Which platform modifier the action table's "Primary" chord means
+// (docs/plan/05-notation-editor.md M5-phase-24: "Primary is Command on
+// macOS and Control on Windows/Linux"). KeyModifiers deliberately does NOT
+// collapse `meta` and `control` into a Primary bit -- its own comment names
+// that a product decision for the action table rather than something the
+// shell should bake in -- so the decision is made here, at the application
+// assembly layer that owns the bindings.
+enum class PrimaryModifier : std::uint8_t { kMeta, kControl };
+
+// The one conditionally-compiled value in this file. It selects the DEFAULT
+// mapping only: every rule below is written against the parameter, never
+// against the macro, so a single headless test asserts both platforms'
+// mappings on any host.
+#if defined(__APPLE__)
+constexpr PrimaryModifier kPlatformPrimaryModifier = PrimaryModifier::kMeta;
+#else
+constexpr PrimaryModifier kPlatformPrimaryModifier = PrimaryModifier::kControl;
+#endif
+
+// True for an EXACT Primary chord: `primary`'s own modifier is held while
+// shift, alt, and the other of control/meta are all clear. The exactness
+// matches the unmodified and Shift branches of on_key_press, which likewise
+// refuse to fire on a superset chord (M5-phase-20/21/23's discipline).
+[[nodiscard]] constexpr bool is_primary_chord(
+    graphscore::KeyModifiers modifiers, PrimaryModifier primary) {
+  if (modifiers.shift || modifiers.alt) {
+    return false;
+  }
+  return primary == PrimaryModifier::kMeta
+             ? modifiers.meta && !modifiers.control
+             : modifiers.control && !modifiers.meta;
+}
+
 // Owns the drag state machine and active tool at the application assembly
 // layer. Registered with WriterShell before open_window(), so the shell's
 // event loop dispatches real pointer events to it.
@@ -384,11 +418,20 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // equal-duration rest (convert_selection_to_rest). Shift+`R` is not a
   // binding this phase owns, so it falls into the Shift branch above and is
   // a no-op there.
+  //
+  // M5-phase-24 adds Primary+Up/Down (Command on macOS, Control elsewhere;
+  // see is_primary_chord): the selection moves to the prior/next staff of
+  // the node (step_selected_staff). It also TIGHTENS the Shift branch above
+  // to an exact Shift chord. Shift used to be tested first and returned
+  // unconditionally, so Shift+Primary+Up silently performed range
+  // staff-scope extension; that chord is now a no-op, matching the
+  // exact-chord discipline every other binding here already follows.
   void on_key_press(graphscore::KeyEvent event) override {
     if (active_tool_ != graphscore::ActiveTool::kSelection) {
       return;
     }
-    if (event.modifiers.shift) {
+    if (event.modifiers.shift && !event.modifiers.control &&
+        !event.modifiers.alt && !event.modifiers.meta) {
       const auto* existing = current_range_set();
       if (existing == nullptr || existing->items().empty()) {
         return;
@@ -422,6 +465,28 @@ class SelectionToolHandler final : public graphscore::InputHandler {
           break;
         case graphscore::KeyCode::kEnd:
           std::ignore = select_to_node_end();
+          break;
+        case graphscore::KeyCode::kUnknown:
+        default:
+          break;
+      }
+      return;
+    }
+
+    // M5-phase-24: Primary+Up/Down steps the selection to the prior/next
+    // staff. Tested before the unmodified branch's modifier guard below
+    // because that guard rejects every control/meta chord, and after the
+    // Shift branch above because is_primary_chord requires Shift clear
+    // anyway (so Shift+Primary+Up reaches neither and is a no-op).
+    if (is_primary_chord(event.modifiers, kPlatformPrimaryModifier)) {
+      switch (event.code) {
+        case graphscore::KeyCode::kUp:
+          std::ignore =
+              step_selected_staff(graphscore::StaffStepDirection::kPrevious);
+          break;
+        case graphscore::KeyCode::kDown:
+          std::ignore =
+              step_selected_staff(graphscore::StaffStepDirection::kNext);
           break;
         case graphscore::KeyCode::kUnknown:
         default:
@@ -584,6 +649,39 @@ class SelectionToolHandler final : public graphscore::InputHandler {
     if (!transaction.commit().ok())
       return false;
     set_committed_selection(std::move(next_selection));
+    return true;
+  }
+
+  // Primary+Up/Down (M5-phase-24): moves the committed selection to the
+  // prior/next staff of the node, wrapping within it, and selects the
+  // same-voice note nearest the musical position -- then the visually
+  // nearest note on a tie, or an insertion caret. Every rule lives in
+  // graphscore::selection_after_staff_step; this method owns only the
+  // read/commit wiring.
+  //
+  // Unlike every other keyboard action on this handler, this is a PURE
+  // SELECTION change: it builds no Command, opens no CommandHistory
+  // transaction, mutates no project state, and neither invalidates nor
+  // refreshes the retained layout -- so it needs none of their rollback
+  // machinery and is not blocked by a poisoned history. A rejected step
+  // (no committed selection, an ineligible or multi-item selection arm, a
+  // single-staff node) returns false and leaves the selection untouched.
+  bool step_selected_staff(graphscore::StaffStepDirection direction) {
+    // Bound once and guarded once: a pointer handed back from one of the
+    // current_*_set() accessors would not carry its own has_value() proof
+    // to a later dereference of committed_selection() itself.
+    const std::optional<graphscore::Selection>& committed =
+        drag_.committed_selection();
+    if (!committed.has_value()) {
+      return false;
+    }
+    std::optional<graphscore::Selection> stepped =
+        graphscore::selection_after_staff_step(project_, layout_, *committed,
+                                               direction);
+    if (!stepped.has_value()) {
+      return false;
+    }
+    set_committed_selection(std::move(stepped));
     return true;
   }
 
@@ -8407,6 +8505,379 @@ int convert_to_rest_test() {
   return 0;
 }
 
+// ---- M5-phase-24: Primary+Up/Down staff step -------------------------------
+//
+// Exercises the Primary chord mapping -- Command on macOS, Control on
+// Windows/Linux -- as a pure function over BOTH platform values from one
+// host, and the SelectionToolHandler wiring that turns Primary+Up/Down into
+// a staff step: stepping down and up through the node's staves, wrapping at
+// both ends, the wrong-platform modifier not firing, Shift+Primary+Up
+// staying a no-op (rather than performing range staff-scope extension, as
+// it did before this phase tightened the Shift branch) while plain Shift+Up
+// still extends, no selection at all being a no-op, and Primary+Up never
+// falling through to M5-phase-20's unmodified diatonic notehead move.
+
+[[nodiscard]] graphscore::KeyEvent primary_key(graphscore::KeyCode code,
+                                               PrimaryModifier     primary) {
+  graphscore::KeyEvent event;
+  event.code = code;
+  if (primary == PrimaryModifier::kMeta) {
+    event.modifiers.meta = true;
+  } else {
+    event.modifiers.control = true;
+  }
+  return event;
+}
+
+// The modifier this host does NOT map Primary to.
+[[nodiscard]] constexpr PrimaryModifier other_primary(PrimaryModifier primary) {
+  return primary == PrimaryModifier::kMeta ? PrimaryModifier::kControl
+                                           : PrimaryModifier::kMeta;
+}
+
+int staff_step_test() {
+  const SelfTestMetrics   metrics;
+  const graphscore::Voice voice1 = voice_one();
+
+  // --- test 1: the Primary chord rule, asserted for both platform mappings
+  //     from this one host. The macro selects only the default; every rule
+  //     below is a property of the parameter. -----------------------------
+  {
+    const auto mods = [](bool shift, bool control, bool alt, bool meta) {
+      graphscore::KeyModifiers modifiers;
+      modifiers.shift   = shift;
+      modifiers.control = control;
+      modifiers.alt     = alt;
+      modifiers.meta    = meta;
+      return modifiers;
+    };
+
+    struct ChordCase {
+      const char*              label;
+      graphscore::KeyModifiers modifiers;
+      PrimaryModifier          primary;
+      bool                     expected;
+    };
+
+    const std::array<ChordCase, 11> kChordCases{{
+        {"Command is Primary on macOS", mods(false, false, false, true),
+         PrimaryModifier::kMeta, true},
+        {"Control is NOT Primary on macOS", mods(false, true, false, false),
+         PrimaryModifier::kMeta, false},
+        {"Control is Primary on Windows/Linux", mods(false, true, false, false),
+         PrimaryModifier::kControl, true},
+        {"Command is NOT Primary on Windows/Linux",
+         mods(false, false, false, true), PrimaryModifier::kControl, false},
+        {"no modifier is not Primary (macOS)", mods(false, false, false, false),
+         PrimaryModifier::kMeta, false},
+        {"no modifier is not Primary (Windows/Linux)",
+         mods(false, false, false, false), PrimaryModifier::kControl, false},
+        {"Shift+Command is not an exact Primary chord",
+         mods(true, false, false, true), PrimaryModifier::kMeta, false},
+        {"Alt+Command is not an exact Primary chord",
+         mods(false, false, true, true), PrimaryModifier::kMeta, false},
+        {"Control+Command is not an exact Primary chord",
+         mods(false, true, false, true), PrimaryModifier::kMeta, false},
+        {"Shift+Control is not an exact Primary chord",
+         mods(true, true, false, false), PrimaryModifier::kControl, false},
+        {"Command+Control is not an exact Primary chord",
+         mods(false, true, false, true), PrimaryModifier::kControl, false},
+    }};
+
+    for (const ChordCase& test_case : kChordCases) {
+      if (is_primary_chord(test_case.modifiers, test_case.primary) !=
+          test_case.expected) {
+        std::fprintf(stderr, "staff-step-test: %s\n", test_case.label);
+        return 1;
+      }
+    }
+
+    // The host's own default really is one of the two, and the other one is
+    // really not Primary here.
+    if (!is_primary_chord(
+            primary_key(graphscore::KeyCode::kUp, kPlatformPrimaryModifier)
+                .modifiers,
+            kPlatformPrimaryModifier)) {
+      std::fprintf(stderr,
+                   "staff-step-test: the host's own Primary modifier does "
+                   "not satisfy is_primary_chord\n");
+      return 1;
+    }
+    if (is_primary_chord(primary_key(graphscore::KeyCode::kUp,
+                                     other_primary(kPlatformPrimaryModifier))
+                             .modifiers,
+                         kPlatformPrimaryModifier)) {
+      std::fprintf(stderr,
+                   "staff-step-test: the other platform's modifier satisfies "
+                   "is_primary_chord on this host\n");
+      return 1;
+    }
+  }
+
+  // --- test 2: Primary+Down/Up steps through the node's three staves and
+  //     wraps at both ends; the wrong-platform modifier never fires. ------
+  {
+    auto dp = build_key_selection_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr, "staff-step-test: fixture build failed (2)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(dp->project), std::move(dp->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    std::array<graphscore::NotationEntityId, 3> first_ids{};
+    for (std::size_t i = 0; i < first_ids.size(); ++i) {
+      const graphscore::Node* node = handler.project().find_node(dp->node_id);
+      if (node == nullptr) {
+        std::fprintf(stderr, "staff-step-test: node missing (2)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+      const graphscore::TrackLane* lane = node->lane(dp->track_ids[i]);
+      if (lane == nullptr || lane->stave(dp->stave_ids[i]) == nullptr) {
+        std::fprintf(stderr, "staff-step-test: lane/stave missing (2)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+      const auto& events =
+          lane->stave(dp->stave_ids[i])->voice(voice1).events();
+      if (events.empty()) {
+        std::fprintf(stderr, "staff-step-test: empty source voice (2)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+      first_ids[i] = graphscore::event_id(events[0]);
+    }
+
+    if (!select_noteheads(
+            handler, {graphscore::NoteheadItem{dp->node_id, dp->track_ids[0],
+                                               dp->stave_ids[0], voice1,
+                                               first_ids[0]}})) {
+      std::fprintf(stderr, "staff-step-test: selection setup rejected (2)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const auto landed = [&](std::size_t index, const char* label) {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != first_ids[index] ||
+          set->items()[0].track != dp->track_ids[index] ||
+          set->items()[0].stave != dp->stave_ids[index] ||
+          set->items()[0].voice != voice1) {
+        std::fprintf(stderr, "staff-step-test: %s\n", label);
+        return false;
+      }
+      return true;
+    };
+
+    const auto press_primary = [&](graphscore::KeyCode code) {
+      shell.dispatch_test_key_event(
+          primary_key(code, kPlatformPrimaryModifier));
+    };
+
+    press_primary(graphscore::KeyCode::kDown);
+    if (!landed(1, "Primary+Down did not step to the second staff")) {
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    press_primary(graphscore::KeyCode::kDown);
+    if (!landed(2, "Primary+Down did not step to the third staff")) {
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    press_primary(graphscore::KeyCode::kDown);
+    if (!landed(0, "Primary+Down did not wrap to the first staff")) {
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    press_primary(graphscore::KeyCode::kUp);
+    if (!landed(2, "Primary+Up did not wrap to the last staff")) {
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    press_primary(graphscore::KeyCode::kUp);
+    if (!landed(1, "Primary+Up did not step to the second staff")) {
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // The other platform's modifier is not Primary here: the selection must
+    // not move.
+    const std::optional<graphscore::Selection> before =
+        handler.drag_state().committed_selection();
+    shell.dispatch_test_key_event(primary_key(
+        graphscore::KeyCode::kDown, other_primary(kPlatformPrimaryModifier)));
+    if (handler.drag_state().committed_selection() != before) {
+      std::fprintf(stderr,
+                   "staff-step-test: the wrong-platform modifier stepped the "
+                   "staff (2)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 3: Shift+Primary+Up is a no-op on a committed range selection,
+  //     while plain Shift+Up still extends its staff scope. ---------------
+  {
+    auto dp = build_key_selection_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr, "staff-step-test: fixture build failed (3)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(dp->project), std::move(dp->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    // Drag across the MIDDLE staff, so a subsequent Shift+Up has a staff
+    // above it to widen onto.
+    {
+      const auto&  layout = handler.layout();
+      const double x1     = layout.systems[0].measures[0].bounds.x;
+      const double x2     = layout.systems[0].measures[0].bounds.x +
+                        layout.systems[0].measures[0].bounds.width;
+      const double y = layout.systems[0].staves[1].bounds.y +
+                       layout.systems[0].staves[1].bounds.height * 0.5;
+      drag_through_shell(shell, x1, y, x2, y);
+    }
+    const auto* dragged = committed_range_set(handler);
+    if (dragged == nullptr || dragged->items().size() != 1u) {
+      std::fprintf(stderr,
+                   "staff-step-test: drag did not commit a one-staff range "
+                   "selection (3)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const std::optional<graphscore::Selection> before =
+        handler.drag_state().committed_selection();
+    graphscore::KeyEvent chord =
+        primary_key(graphscore::KeyCode::kUp, kPlatformPrimaryModifier);
+    chord.modifiers.shift = true;
+    shell.dispatch_test_key_event(chord);
+    if (handler.drag_state().committed_selection() != before) {
+      std::fprintf(stderr,
+                   "staff-step-test: Shift+Primary+Up changed the committed "
+                   "range selection (3)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // Plain Shift+Up still performs M5-phase-19b-iii's staff-scope
+    // extension, so tightening the Shift branch removed only the superset
+    // chord.
+    shell.dispatch_test_key_event(shift_key(graphscore::KeyCode::kUp));
+    const auto* widened = committed_range_set(handler);
+    if (widened == nullptr || widened->items().size() != 2u) {
+      std::fprintf(stderr,
+                   "staff-step-test: plain Shift+Up no longer extends the "
+                   "staff scope (3)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 4: no committed selection is a no-op. ----------------------
+  {
+    auto dp = build_key_selection_project(metrics);
+    if (!dp.has_value()) {
+      std::fprintf(stderr, "staff-step-test: fixture build failed (4)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(dp->project), std::move(dp->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    shell.dispatch_test_key_event(
+        primary_key(graphscore::KeyCode::kDown, kPlatformPrimaryModifier));
+    if (handler.drag_state().committed_selection().has_value()) {
+      std::fprintf(stderr,
+                   "staff-step-test: Primary+Down created a selection from "
+                   "nothing (4)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 5: a single-staff node is a no-op, and Primary+Up never falls
+  //     through to M5-phase-20's unmodified diatonic notehead move. -------
+  {
+    auto fx = build_notehead_move_fixture(metrics);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "staff-step-test: fixture build failed (5)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice1, fx->first_note_id}})) {
+      std::fprintf(stderr, "staff-step-test: selection setup rejected (5)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const auto pitch_of_first = [&]() {
+      const graphscore::Node* node = handler.project().find_node(fx->node_id);
+      if (node == nullptr) {
+        return graphscore::SpelledPitch{};
+      }
+      const graphscore::TrackLane* lane = node->lane(fx->track_id);
+      if (lane == nullptr || lane->stave(fx->stave_id) == nullptr) {
+        return graphscore::SpelledPitch{};
+      }
+      const auto& events = lane->stave(fx->stave_id)->voice(voice1).events();
+      if (events.empty()) {
+        return graphscore::SpelledPitch{};
+      }
+      const auto* note = std::get_if<graphscore::Note>(&events[0]);
+      return note == nullptr ? graphscore::SpelledPitch{} : note->pitch;
+    };
+
+    const graphscore::SpelledPitch             before_pitch = pitch_of_first();
+    const std::optional<graphscore::Selection> before =
+        handler.drag_state().committed_selection();
+    shell.dispatch_test_key_event(
+        primary_key(graphscore::KeyCode::kUp, kPlatformPrimaryModifier));
+    if (handler.drag_state().committed_selection() != before) {
+      std::fprintf(stderr,
+                   "staff-step-test: a single-staff node stepped its "
+                   "selection (5)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (pitch_of_first() != before_pitch) {
+      std::fprintf(stderr,
+                   "staff-step-test: Primary+Up fell through to the diatonic "
+                   "notehead move (5)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  std::printf("staff-step-test: ok\n");
+  return 0;
+}
+
 }  // namespace
 
 // The shell allocates (window titles, backend names), so this call path can
@@ -8425,6 +8896,7 @@ int main(int argc, char** argv) {
   bool run_accidental_step_test  = false;
   bool run_notehead_delete_test  = false;
   bool run_convert_to_rest_test  = false;
+  bool run_staff_step_test       = false;
   for (int i = 1; i < argc; ++i) {
     if (kSmokeTestFlag == argv[i]) {
       smoke_test = true;
@@ -8456,6 +8928,9 @@ int main(int argc, char** argv) {
     if (kConvertToRestTestFlag == argv[i]) {
       run_convert_to_rest_test = true;
     }
+    if (kStaffStepTestFlag == argv[i]) {
+      run_staff_step_test = true;
+    }
   }
 
   try {
@@ -8485,6 +8960,9 @@ int main(int argc, char** argv) {
     }
     if (run_convert_to_rest_test) {
       return convert_to_rest_test();
+    }
+    if (run_staff_step_test) {
+      return staff_step_test();
     }
     return run(smoke_test);
   } catch (const std::exception& error) {

@@ -244,3 +244,28 @@ set_tests_properties(graphscore_writer_convert_to_rest_test PROPERTIES
   PASS_REGULAR_EXPRESSION "convert-to-rest-test: ok"
   TIMEOUT 30
 )
+
+# M5-phase-24: exercise the Primary chord mapping and SelectionToolHandler's
+# Primary+Up/Down staff step through the writer executable's own
+# --test-staff-step path -- is_primary_chord asserted for BOTH platform
+# mappings (Command on macOS, Control on Windows/Linux) from one host,
+# including the wrong-platform modifier not firing and every superset chord
+# being rejected; Primary+Down/Up stepping through the node's staves and
+# wrapping at both ends; Shift+Primary+Up staying a no-op on a committed
+# range selection while plain Shift+Up still extends its staff scope; no
+# committed selection being a no-op; and a single-staff node being a no-op
+# that never falls through to M5-phase-20's unmodified diatonic notehead
+# move. This is a headless code path -- no window, no SDL -- built on
+# WriterShell's dispatch_test_key_event and dispatch_test_pointer_event
+# seams.
+#
+# The headless test uses no rendering backend and works in both writer-ON
+# and writer-OFF configurations.
+add_test(NAME graphscore_writer_staff_step_test
+  COMMAND graphscore_writer_app --test-staff-step
+)
+
+set_tests_properties(graphscore_writer_staff_step_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "staff-step-test: ok"
+  TIMEOUT 30
+)

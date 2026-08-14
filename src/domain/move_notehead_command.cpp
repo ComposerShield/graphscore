@@ -85,10 +85,7 @@ VoiceContent* resolve_voice(Project& project, const NodeId node_id,
   return &stave->voice(voice);
 }
 
-using internal::build_tie_chain;
-using internal::ChainNotehead;
 using internal::find_notehead;
-using internal::notehead_id_at;
 using internal::NoteheadKind;
 using internal::NoteheadLocation;
 
@@ -121,7 +118,8 @@ std::optional<NoteheadMoveScope> notehead_move_scope(
   if (location->kind == NoteheadKind::kGraceNote) {
     member_ids.push_back(notehead.entity);
   } else {
-    const std::vector<ChainNotehead> chain = build_tie_chain(voice, *location);
+    const std::vector<ChainNotehead> chain =
+        build_tie_chain(voice, location->event_index, location->note_index);
     member_ids.reserve(chain.size());
     for (const ChainNotehead& member : chain) {
       const std::optional<NotationEntityId> id =
@@ -188,8 +186,8 @@ Result MoveNoteheadCommand::execute(Project& project) noexcept {
       // share one pitch, so one step_notehead_pitch result governs them; it
       // is still computed per member so a future per-member accidental
       // divergence fails loudly.
-      const std::vector<ChainNotehead> chain =
-          build_tie_chain(candidate, *location);
+      const std::vector<ChainNotehead> chain = build_tie_chain(
+          candidate, location->event_index, location->note_index);
 
       std::vector<std::pair<NotationEntityId, SpelledPitch>> steps;
       steps.reserve(chain.size());

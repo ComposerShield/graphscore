@@ -49,10 +49,7 @@ std::optional<SpelledPitch> step_notehead_accidental(
 
 namespace {
 
-using internal::build_tie_chain;
-using internal::ChainNotehead;
 using internal::find_notehead;
-using internal::notehead_id_at;
 using internal::NoteheadKind;
 using internal::NoteheadLocation;
 using internal::resolve_voice;
@@ -94,8 +91,8 @@ Result StepAccidentalCommand::execute(Project& project) noexcept {
       // share one pitch, so one step_notehead_accidental result governs them;
       // it is still computed per member so a future per-member spelling
       // divergence fails loudly.
-      const std::vector<ChainNotehead> chain =
-          build_tie_chain(candidate, *location);
+      const std::vector<ChainNotehead> chain = build_tie_chain(
+          candidate, location->event_index, location->note_index);
 
       std::vector<std::pair<NotationEntityId, SpelledPitch>> steps;
       steps.reserve(chain.size());

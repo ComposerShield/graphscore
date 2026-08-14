@@ -106,6 +106,7 @@
 #include <graphscore/domain/staff_layout.hpp>
 #include <graphscore/domain/step_accidental_command.hpp>
 #include <graphscore/domain/tempo_lane.hpp>
+#include <graphscore/domain/tie_chain.hpp>
 #include <graphscore/domain/track.hpp>
 #include <graphscore/domain/validation_service.hpp>
 #include <graphscore/domain/vertical_transition.hpp>

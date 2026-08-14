@@ -66,7 +66,7 @@ Provide a polished, directly editable focused notation system inside a node, wit
 - [x] M5-phase-21 `-` and `=` step through double-flat, flat, natural, sharp, and double-sharp.
 - [x] M5-phase-22 Delete removes the selected notehead and selects the prior onset in the same voice/staff; when none exists it leaves an insertion caret at the deleted onset. Removing the last chord pitch leaves a normalized rest.
 - [x] M5-phase-23 `R` converts the entire selected note/chord event to an equal-duration rest.
-- [ ] M5-phase-24 Primary is Command on macOS and Control on Windows/Linux. Primary+Up/Down moves to the prior/next staff, wraps within the node, and selects the same-voice note nearest the musical position, then the visually nearest note on a tie, or places a caret.
+- [x] M5-phase-24 Primary is Command on macOS and Control on Windows/Linux. Primary+Up/Down moves to the prior/next staff, wraps within the node, and selects the same-voice note nearest the musical position, then the visually nearest note on a tie, or places a caret.
 - [ ] M5-phase-25 `2` through `8` add a key-spelled diatonic interval above; Shift variants add below; the inserted notehead becomes selected and `1` remains a no-op.
 - [ ] M5-phase-26 Add keyboard step entry, explicit voice shortcuts, duration actions, range extension, cut/copy/paste, and command-palette discoverability without conflicting with interval keys.
 - [ ] M5-phase-27 Record a platform-normalized action table before UI binding, including physical/logical key behavior on non-US layouts, focus contexts, tie-breaking, and every no-selection fallback.

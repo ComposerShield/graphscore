@@ -1795,6 +1795,102 @@ class SelectionDragState {
 [[nodiscard]] std::optional<Selection> selection_after_convert_to_rest(
     const Project& project, const Selection& selection);
 
+// Which neighbouring staff a keyboard staff step moves to, in the score
+// order score_ordered_staves defines: kPrevious is one position earlier
+// (visually higher), kNext one position later (visually lower).
+enum class StaffStepDirection : std::uint8_t { kPrevious, kNext };
+
+// Resolves the selection to hold after the keyboard action described in
+// docs/plan/05-notation-editor.md M5-phase-24: "Primary+Up/Down moves to
+// the prior/next staff, wraps within the node, and selects the same-voice
+// note nearest the musical position, then the visually nearest note on a
+// tie, or places a caret."
+//
+// This is a PURE SELECTION change. It builds no Command, mutates nothing,
+// and invalidates no layout; the caller simply installs the returned
+// Selection. `layout` must be the layout of `selection`'s own node
+// (produced by a prior layout_notation()/NotationLayoutCache::update()
+// call for the same project/node); it is read only for the tie tie-break
+// below.
+//
+// Eligible source selections are a single-item NoteheadSet, ChordSet,
+// RestSet, or InsertionCaretSet. Every other arm (FullMeasureSet,
+// ArbitraryRangeSet, NodeSet, ConnectorSet, MarkingSet), a multi-item set,
+// and a selection that no longer validates against `project` are no-ops
+// returning std::nullopt.
+//
+// Resolution, in order:
+//
+//   Staff walk  -- the candidate staves are score_ordered_staves(project)
+//     FILTERED to the staves the source's own node actually carries (its
+//     Node::lane(TrackId) exists and that TrackLane::stave(StaveId)
+//     exists), so a project-wide staff the node does not engrave is never
+//     stepped onto. The step wraps at both ends of that filtered list. A
+//     node carrying exactly ONE such staff is a no-op returning
+//     std::nullopt rather than a wrap onto itself: re-resolving the source
+//     staff would silently move the composer's selection sideways with no
+//     staff change to explain it.
+//
+//   Voice       -- carries over verbatim from the source item's own Voice.
+//     When that voice slot on the target staff holds no events at all, the
+//     result is immediately an insertion caret at position 0 (the only
+//     legal caret in an empty voice); no other voice is consulted.
+//
+//   Nearest     -- the source's musical position (a note/chord/rest
+//     selection's own event onset, or an insertion caret's own position)
+//     is compared against each candidate event's ONSET; the smallest
+//     absolute distance wins, ties resolving to the EARLIER onset. Only
+//     top-level Note and Chord events are candidates: rests are not (the
+//     caret fallback below is what a rest-only target produces, which is
+//     the behavior "or places a caret" describes), and neither are grace
+//     notes.
+//
+//   Tie         -- when the winning candidate belongs to a tie chain (see
+//     graphscore/domain/tie_chain.hpp), the chain member whose notehead is
+//     VISUALLY nearest the source notehead horizontally is taken instead,
+//     ties resolving to the earlier musical onset. This is a literal
+//     visual rule, not a restatement of the musical one: a tie crossing a
+//     system break puts the musically-nearest chain member far to the
+//     right on the previous system, and the visually-nearest member is
+//     then a different note. The chain of a chord candidate is the union
+//     of its noteheads' own chains, so a partially-tied chord still
+//     resolves.
+//
+//     DEGRADATION: the source's own notehead x comes from the
+//     GlyphCommand whose id is "<entity>/notehead" in `layout` (a chord
+//     source uses the first of its ChordNotes that has one -- first in
+//     storage order, which is not necessarily the leftmost of a
+//     second-displaced chord column). When there is no such x -- a RestSet
+//     or InsertionCaretSet source, which has no notehead at all, or a
+//     notehead absent from the supplied layout because it was never laid
+//     out -- this step falls back to choosing the chain member nearest by
+//     musical ONSET, which is exactly the candidate the nearest rule
+//     already picked. The same fallback applies when no chain member has a
+//     notehead glyph in `layout`.
+//
+//   Result      -- a single-item ChordSet when the resolved event is a
+//     Chord and a single-item NoteheadSet when it is a Note. The SOURCE
+//     arm never carries over (stepping from a rest can land on a note),
+//     and no attempt is made to match the source's pitch to a particular
+//     notehead of a target chord.
+//
+//   Caret       -- when the target staff/voice yields no Note or Chord
+//     candidate at all, the result is a single-item InsertionCaretSet at
+//     the carried position SNAPPED to the nearest legal caret position in
+//     that voice, ties resolving to the earlier position. The legal
+//     positions are exactly the ones validate_selection accepts: position
+//     0, an exact event boundary in that voice, and
+//     TrackLane::total_length() (which is what a carried position past the
+//     end of the target lane snaps to).
+//
+// The returned Selection always satisfies
+// validate_selection(project, selection).empty(); a result that would not
+// is rejected with std::nullopt instead. A pure query: never mutates
+// `project` or `layout`.
+[[nodiscard]] std::optional<Selection> selection_after_staff_step(
+    const Project& project, const NotationLayout& layout,
+    const Selection& selection, StaffStepDirection direction);
+
 // The short audition request for the same keyboard pitch action
 // make_move_notehead_command above builds a command for, mirroring
 // audition_for_note_entry: this milestone produces the request as a value and
