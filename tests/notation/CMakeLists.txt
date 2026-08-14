@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 add_executable(graphscore_notation_test
+  headers/notation_editing_smoke_test.cpp
+  headers/notation_layout_smoke_test.cpp
+  headers/notation_palette_smoke_test.cpp
+  headers/notation_selection_smoke_test.cpp
+  headers/notation_types_smoke_test.cpp
   notation_test.cpp
   note_audition_test.cpp
   note_entry_test.cpp

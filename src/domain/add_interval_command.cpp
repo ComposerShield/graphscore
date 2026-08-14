@@ -35,8 +35,8 @@ using internal::resolve_voice;
 // every letter the key's sharp count covers (F C G D A E B order), flat for
 // every letter its flat count covers (B E A D G C F order), natural
 // otherwise. This is the same table the engraver's key_accidental
-// (src/notation/notation.cpp) uses to decide whether a notehead needs a
-// written accidental; it is duplicated here because graphscore_domain cannot
+// (src/notation/notation_engraving.cpp) uses to decide whether a notehead needs
+// a written accidental; it is duplicated here because graphscore_domain cannot
 // depend on graphscore_notation, and it must not drift from that table.
 [[nodiscard]] Accidental key_accidental(const KeySignature& key,
                                         Letter              letter) noexcept {
@@ -75,7 +75,7 @@ std::optional<SpelledPitch> interval_target_pitch(const SpelledPitch& source,
 
   // Letter -> staff-step index in the C-anchored cycle (C=0 ... B=6), the
   // same mapping step_notehead_pitch (move_notehead_command.cpp) and
-  // notation.cpp's diatonic_index use, so a letter always sits at one
+  // notation_engraving.cpp's diatonic_index use, so a letter always sits at one
   // unambiguous diatonic position.
   constexpr std::array<int, 7>    kStepFromLetter = {5, 6, 0, 1, 2, 3, 4};
   constexpr std::array<Letter, 7> kLetterFromStep = {

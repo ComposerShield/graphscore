@@ -32,8 +32,8 @@ enum class IntervalDirection : std::uint8_t { kAbove = 0, kBelow };
 // letter, and its accidental never carries into the result. The target's
 // accidental is instead the standard accidental `key` implies for the target
 // letter (the sharp/flat/natural a key signature assigns it), exactly what
-// key_accidental (src/notation/notation.cpp) computes when the engraver
-// decides whether a notehead needs a written accidental.
+// key_accidental (src/notation/notation_engraving.cpp) computes when the
+// engraver decides whether a notehead needs a written accidental.
 //
 // Octave wrapping follows scientific pitch notation across multiple steps:
 // stepping above B wraps into the next octave, stepping below C wraps into

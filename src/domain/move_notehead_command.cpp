@@ -32,8 +32,8 @@ std::optional<SpelledPitch> step_notehead_pitch(
   const int step = direction == NoteheadStepDirection::kUp ? 1 : -1;
 
   // Letter -> staff-step index in the C-anchored cycle (C=0 ... B=6). The same
-  // mapping notation.cpp's diatonic_index uses, so pitch_y() and this step
-  // agree on where a letter sits on the staff.
+  // mapping notation_engraving.cpp's diatonic_index uses, so pitch_y() and this
+  // step agree on where a letter sits on the staff.
   constexpr std::array<int, 7>    kStepFromLetter = {5, 6, 0, 1, 2, 3, 4};
   constexpr std::array<Letter, 7> kLetterFromStep = {
       Letter::kC, Letter::kD, Letter::kE, Letter::kF,

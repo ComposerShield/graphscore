@@ -133,8 +133,8 @@ struct Fixture {
 
 // Finds the notehead glyph command for `note` and returns its origin: the
 // exact position layout_notation itself placed that pitch at, used as
-// ground truth without reaching into notation.cpp's internal pitch<->y
-// formula.
+// ground truth without reaching into notation_engraving.cpp's internal
+// pitch<->y formula.
 [[nodiscard]] NotationPoint notehead_origin(const NotationLayout& layout,
                                             const Note&           note) {
   const std::string target = note.id.to_string() + "/notehead";
@@ -150,8 +150,8 @@ struct Fixture {
 // Finds the rest glyph command for `rest` (in the given voice) and returns
 // its origin: the exact position layout_notation itself placed that onset
 // at, used the same way notehead_origin() is -- ground truth read out of the
-// real layout, never notation.cpp's internal x<->time formula reproduced
-// here.
+// real layout, never notation_measure_math.cpp's internal x<->time formula
+// reproduced here.
 [[nodiscard]] NotationPoint rest_origin(const NotationLayout& layout,
                                         const Rest&           rest,
                                         std::uint8_t          voice_index = 1) {
@@ -688,9 +688,9 @@ TEST(NotePreviewTest, PointNearOneOfTwoStavesResolvesToThatStaffNotTheOther) {
   const double x      = layout.systems[0].measures[0].bounds.x + 10.0;
 
   // grand_staff()'s two staves each own the full per-stave marking budget
-  // (system_top_padding/staff_slot_height in notation.cpp), which keeps them
-  // geometrically far apart; a genuinely equidistant midpoint is unreachable
-  // in this layout. This exercises "resolves to the staff whose own
+  // (system_top_padding/staff_slot_height in notation_layout.cpp), which keeps
+  // them geometrically far apart; a genuinely equidistant midpoint is
+  // unreachable in this layout. This exercises "resolves to the staff whose own
   // ledger/marking lane the point falls in, not the other stave" across a
   // real multi-staff system.
   const NotationPoint near_top{x, top.bounds.y + top.bounds.height * 0.5};

@@ -209,8 +209,8 @@ struct Fixture {
 
 // Finds a GlyphCommand by exact id suffix (e.g. "<id>/notehead",
 // "<id>/articulation/0") and returns its origin -- ground truth read out of
-// the real layout, never a reproduction of notation.cpp's own placement
-// formulas.
+// the real layout, never a reproduction of notation_engraving.cpp's own
+// placement formulas.
 [[nodiscard]] NotationPoint glyph_origin(const NotationLayout& layout,
                                          const std::string&    target) {
   const auto found =
@@ -1393,8 +1393,8 @@ TEST(SelectionResolverTest,
 
 // A point in the vertical gap between two noteheads: inside neither
 // notehead's own hit region, but inside the column region that spans both.
-// Read out of the real layout, never a reproduction of notation.cpp's own
-// placement formulas.
+// Read out of the real layout, never a reproduction of notation_engraving.cpp's
+// own placement formulas.
 [[nodiscard]] NotationPoint notehead_gap_point(const NotationLayout&   layout,
                                                const NotationEntityId& lower,
                                                const NotationEntityId& upper) {
@@ -1830,7 +1830,7 @@ TEST(SelectionResolverTest, AClusteredDottedChordsDotInsideTheColumnStillWins) {
 // The tie hit region is now subdivided into 8 segments, each bound to
 // the local curve extent rather than a single rectangle spanning the
 // whole envelope (add_span_segment, kHitRoleTie branch in
-// src/notation/notation.cpp).  With both notes tied in a close-voiced
+// src/notation/notation_engraving.cpp).  With both notes tied in a close-voiced
 // stemless chord (E4 + G4, a third apart on adjacent staff lines), each
 // tie's sub-segment rects near the endpoints stay close to the lane --
 // below the notehead y + space where the tie is drawn -- so the gap
@@ -4730,7 +4730,7 @@ struct RangeExtent {
 // ArbitraryRangeSet the way a real caller would: read the result of a
 // pointer drag back out, then feed it into resolve_range_selection_spec.
 // This is the equivalence property's own test machinery, not production
-// code -- it deliberately does not call any private notation.cpp helper.
+// code -- it deliberately does not call any private notation helper.
 [[nodiscard]] RangeExtent range_extent(const Project&           project,
                                        const ArbitraryRangeSet& set) {
   const auto                 order = test_score_order(project);
@@ -5053,13 +5053,13 @@ TEST(RangeSpecTest, SingleVoiceScoreNeverProducesTheOtherThreeVoicesItems) {
 // The mirror case -- a voice whose content *starts* exactly at the query
 // span's own end -- is not independently constructible as a distinct test
 // here: VoiceContent packs events contiguously from onset 0 (see
-// voice_overlaps_span, notation.cpp), so an event with onset > 0 always
-// implies some earlier event in the *same* voice already occupies
-// [0, onset), and that earlier event necessarily overlaps any span
-// touching that region too. The two symmetric halves of the half-open
-// rule therefore collapse into this one observable test for any span
-// that (like every span this or resolve_range_selection can produce)
-// begins within already-filled voice content.
+// voice_overlaps_span, notation_range_selection.cpp), so an event with onset >
+// 0 always implies some earlier event in the *same* voice already occupies [0,
+// onset), and that earlier event necessarily overlaps any span touching that
+// region too. The two symmetric halves of the half-open rule therefore collapse
+// into this one observable test for any span that (like every span this or
+// resolve_range_selection can produce) begins within already-filled voice
+// content.
 TEST(RangeSpecTest, EventEndingExactlyAtSpanStartIsExcluded) {
   Fixture        fixture(2);
   const Duration whole = *Duration::create(NoteValue::kWhole, 0);
@@ -5301,8 +5301,8 @@ TEST(RangeExtensionTest, MovingTheEndBeforeTheCurrentStartSwaps) {
 }
 
 // Because VoiceContent packs events contiguously from onset 0 with no
-// gaps (see voice_overlaps_span, notation.cpp), a fully-packed voice
-// overlaps a query span [S, E) exactly when S is less than that voice's
+// gaps (see voice_overlaps_span, notation_range_selection.cpp), a fully-packed
+// voice overlaps a query span [S, E) exactly when S is less than that voice's
 // own total content length -- E plays no part once S already reaches
 // it. Consequently a newly *end*-widened span can never newly capture a
 // voice a narrower span already missed (only a start-narrowed span can

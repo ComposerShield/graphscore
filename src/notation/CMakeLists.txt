@@ -1,7 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 
 add_library(graphscore_notation STATIC
-  notation.cpp
+  notation_cache.cpp
+  notation_edit_audition.cpp
+  notation_engraving.cpp
+  notation_engraving_rhythm.cpp
+  notation_hit_resolution.cpp
+  notation_index.cpp
+  notation_layout.cpp
+  notation_measure_math.cpp
+  notation_measure_selection.cpp
+  notation_note_entry.cpp
+  notation_preview.cpp
+  notation_range_selection.cpp
+  notation_selection.cpp
+  notation_staff_step.cpp
+  notation_types.cpp
 )
 
 target_compile_features(graphscore_notation PRIVATE cxx_std_23)

@@ -765,8 +765,8 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // resolve_range_selection_spec's. Because this bypasses
   // extend_range_selection, the move-and-swap-and-reject-zero-length rule
   // implemented below duplicates extend_range_selection's own copy
-  // (src/notation/notation.cpp) instead of reusing it -- if that
-  // function's crossing semantics ever change, this copy must change with
+  // (src/notation/notation_range_selection.cpp) instead of reusing it -- if
+  // that function's crossing semantics ever change, this copy must change with
   // it too.
   bool extend_range_edge(graphscore::RangeEdge edge,
                          graphscore::Rational  time) {
@@ -1579,8 +1579,8 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // NoteheadSet arm recovers which case applies via
   // VoiceContent::position_of_event/find_event_index_at, the same
   // top-level-event lookup selection_after_convert_to_rest itself uses
-  // (src/notation/notation.cpp's top_level_event_id_at) to recover the
-  // owning Chord's id from a ChordNote selection. Exactly one of
+  // (src/notation/notation_note_entry.cpp's top_level_event_id_at) to recover
+  // the owning Chord's id from a ChordNote selection. Exactly one of
   // `notehead_item`/`chord_item` is expected to be set, matching
   // convert_selection_to_rest's own resolution above; returns std::nullopt
   // when neither resolves to anything invalidatable.
@@ -5155,8 +5155,8 @@ void click_at(graphscore::WriterShell& shell, double x, double y) {
 }
 
 // The origin of the "<id>/notehead" GlyphCommand in `layout` — ground truth
-// read out of the real layout, never a reproduction of notation.cpp's own
-// placement formulas. Clicking this point selects that notehead.
+// read out of the real layout, never a reproduction of notation_engraving.cpp's
+// own placement formulas. Clicking this point selects that notehead.
 [[nodiscard]] graphscore::NotationPoint notehead_origin(
     const graphscore::NotationLayout&   layout,
     const graphscore::NotationEntityId& id) {
@@ -5187,10 +5187,11 @@ void click_at(graphscore::WriterShell& shell, double x, double y) {
 
 // True if `layout` still draws `id`'s own tie curve -- a PathCommand whose
 // id begins with "<id>/tie/segment/", the id shape add_span_segment
-// (src/notation/notation.cpp) builds for a tied note/chord-pitch. Used to
-// prove a retained-layout refresh actually re-laid out the measure holding
-// a cleared tie, rather than leaving that measure's stale pre-edit commands
-// (including a tie that no longer exists in the domain) in place.
+// (src/notation/notation_engraving.cpp) builds for a tied
+// note/chord-pitch. Used to prove a retained-layout refresh actually re-laid
+// out the measure holding a cleared tie, rather than leaving that measure's
+// stale pre-edit commands (including a tie that no longer exists in the domain)
+// in place.
 [[nodiscard]] bool has_tie_curve_command(
     const graphscore::NotationLayout&   layout,
     const graphscore::NotationEntityId& id) {
