@@ -111,6 +111,17 @@ it, configure with
 (or the matching installed path). This formatting policy is separate from the
 clang-tidy 18 const-correctness guidance above.
 
+Every command above picks up **ccache** when it is installed:
+`cmake/Ccache.cmake` finds it at configure time (Homebrew prefixes included,
+since a Git hook does not always inherit them) and sets the compiler launcher
+for GraphScore's targets and its `FetchContent` dependencies. Install with
+`brew install ccache` or `sudo apt install ccache`; opt out with
+`-DGRAPHSCORE_USE_CCACHE=OFF`. It matters most for the pre-commit hook:
+clang-tidy parses each translation unit separately from the compiler, so
+caching the compile removes about a fifth of the hook's wall time — the
+analysis itself is never cached. ThorVG is outside this, building through
+Meson (`cmake/ThorVG.cmake`), which detects ccache itself.
+
 `FETCHCONTENT_SOURCE_DIR_<NAME>` (e.g. `FETCHCONTENT_SOURCE_DIR_SDL3`) points
 a dependency at a local checkout instead of fetching over the network, for
 offline/air-gapped builds. See `cmake/` for the exact `<NAME>` per dependency.

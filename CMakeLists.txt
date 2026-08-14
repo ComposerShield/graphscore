@@ -23,6 +23,9 @@ project(GraphScore
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 include(CompilerGate)
+# Before any target is created, and before the FetchContent dependencies are
+# configured below, so both inherit the compiler launcher.
+include(Ccache)
 include(Warnings)
 include(Sanitizers)
 include(ConstCorrectness)

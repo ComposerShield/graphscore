@@ -70,6 +70,24 @@ if [ "$tidy_version" != "18" ] && [ ! -x /opt/homebrew/opt/llvm@18/bin/clang-tid
   missing="$missing\n  clang-tidy 18  brew install llvm@18 | apt install clang-tidy-18 | pip install clang-tidy==18.1.8 (pre-push hook)"
 fi
 
+# ccache is optional and needs no configuration: cmake/Ccache.cmake detects it
+# at configure time and routes compiles through it. It matters most for the
+# pre-commit hook, whose clang-tidy tree recompiles every analyzed translation
+# unit alongside the analysis.
+ccache=""
+for candidate in ccache /opt/homebrew/bin/ccache /usr/local/bin/ccache; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    ccache=$(command -v "$candidate")
+    break
+  fi
+done
+
+if [ -n "$ccache" ]; then
+  echo "bootstrap: ccache -> $ccache"
+else
+  missing="$missing\n  ccache         brew install ccache | sudo apt install ccache (optional; speeds up the pre-commit hook)"
+fi
+
 if [ -n "$missing" ]; then
   # shellcheck disable=SC2059
   printf "bootstrap: lint tools not found:$missing\n"

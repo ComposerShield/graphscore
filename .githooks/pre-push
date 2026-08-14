@@ -21,6 +21,12 @@
 # same analysis independently of this hook, so a contributor who bypasses
 # it with `git push --no-verify` still cannot merge code that fails it.
 #
+# Each analyzed translation unit is also compiled, because clang-tidy runs as
+# a separate frontend alongside the compiler rather than sharing its parse.
+# cmake/Ccache.cmake serves that compile from ccache when it is installed,
+# which is why no launcher argument appears in the configure below; the
+# analysis itself is not cached and runs on every changed unit.
+#
 # POSIX sh, no bashisms: Git invokes hooks with /bin/sh.
 
 set -eu
