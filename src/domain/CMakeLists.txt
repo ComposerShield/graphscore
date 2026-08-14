@@ -7,6 +7,7 @@ add_library(graphscore_domain STATIC
   add_grace_group_command.cpp
   add_hairpin_command.cpp
   add_input_connector_command.cpp
+  add_interval_command.cpp
   add_node_command.cpp
   add_output_connector_command.cpp
   add_pedal_span_command.cpp

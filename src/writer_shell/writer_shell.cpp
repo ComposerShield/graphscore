@@ -443,6 +443,22 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
       return KeyCode::kDelete;
     case SDL_SCANCODE_R:
       return KeyCode::kR;
+    case SDL_SCANCODE_1:
+      return KeyCode::kDigit1;
+    case SDL_SCANCODE_2:
+      return KeyCode::kDigit2;
+    case SDL_SCANCODE_3:
+      return KeyCode::kDigit3;
+    case SDL_SCANCODE_4:
+      return KeyCode::kDigit4;
+    case SDL_SCANCODE_5:
+      return KeyCode::kDigit5;
+    case SDL_SCANCODE_6:
+      return KeyCode::kDigit6;
+    case SDL_SCANCODE_7:
+      return KeyCode::kDigit7;
+    case SDL_SCANCODE_8:
+      return KeyCode::kDigit8;
     default:
       return KeyCode::kUnknown;
   }

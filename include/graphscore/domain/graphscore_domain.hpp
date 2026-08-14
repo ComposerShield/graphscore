@@ -9,6 +9,7 @@
 #include <graphscore/domain/add_grace_group_command.hpp>
 #include <graphscore/domain/add_hairpin_command.hpp>
 #include <graphscore/domain/add_input_connector_command.hpp>
+#include <graphscore/domain/add_interval_command.hpp>
 #include <graphscore/domain/add_node_command.hpp>
 #include <graphscore/domain/add_output_connector_command.hpp>
 #include <graphscore/domain/add_pedal_span_command.hpp>

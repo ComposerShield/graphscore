@@ -269,3 +269,48 @@ set_tests_properties(graphscore_writer_staff_step_test PROPERTIES
   PASS_REGULAR_EXPRESSION "staff-step-test: ok"
   TIMEOUT 30
 )
+
+# M5-phase-25: exercise SelectionToolHandler's digit-key diatonic interval
+# entry through the writer executable's own --test-interval-entry path --
+# unmodified `2`..`8` adding above, Shift+`2`..`8` adding below, the fresh
+# notehead becoming the selection, key-signature spelling reaching the app,
+# note-to-chord and chord growth with existing-notehead preservation,
+# duplicate and bounds rejection, undo/redo, layout refresh/rollback, `1`
+# no-op, and every ineligible/forbidden-modifier no-op. This is a headless
+# code path -- no window, no SDL -- built on WriterShell's
+# dispatch_test_key_event and dispatch_test_pointer_event seams.
+#
+# The headless test uses no rendering backend and works in both writer-ON
+# and writer-OFF configurations.
+add_test(NAME graphscore_writer_interval_entry_test
+  COMMAND graphscore_writer_app --test-interval-entry
+)
+
+set_tests_properties(graphscore_writer_interval_entry_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "interval-entry-test: ok"
+  TIMEOUT 30
+)
+
+# M5-phase-25: exercise the production SDL physical-scancode digit path into
+# the actual SelectionToolHandler through the writer executable's own
+# --test-interval-entry-shell path -- unmodified SDL digit 2 adding above,
+# SDL Shift+3 adding below, and the SDL forbidden chord plus SDL digit 1
+# no-ops. This is the shell twin of the headless interval_entry_test above.
+# It requires GRAPHSCORE_BUILD_WRITER=ON because dispatch_sdl_test_key_event
+# is a no-op in a writer-OFF build, exactly like the key_events_shell_test;
+# like that test it never calls open_window(), so there is no headless-host
+# skip outcome to accept.
+if (GRAPHSCORE_BUILD_WRITER)
+  add_test(NAME graphscore_writer_interval_entry_shell_test
+    COMMAND graphscore_writer_app --test-interval-entry-shell
+  )
+
+  set_tests_properties(graphscore_writer_interval_entry_shell_test PROPERTIES
+    PASS_REGULAR_EXPRESSION "interval-entry-shell-test: ok"
+    TIMEOUT 30
+  )
+else()
+  # Writer-OFF: the SDL shell test is not registered.  A writer-OFF ctest run
+  # exercises only the headless interval_entry_test (above), which passes
+  # without a rendering backend and never calls dispatch_sdl_test_key_event.
+endif()

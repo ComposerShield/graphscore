@@ -65,6 +65,9 @@ constexpr std::string_view kAccidentalStepTestFlag = "--test-accidental-step";
 constexpr std::string_view kNoteheadDeleteTestFlag = "--test-notehead-delete";
 constexpr std::string_view kConvertToRestTestFlag  = "--test-convert-to-rest";
 constexpr std::string_view kStaffStepTestFlag      = "--test-staff-step";
+constexpr std::string_view kIntervalEntryTestFlag  = "--test-interval-entry";
+constexpr std::string_view kIntervalEntryShellTestFlag =
+    "--test-interval-entry-shell";
 
 const char* describe(graphscore::ShellError error) {
   switch (error) {
@@ -267,6 +270,34 @@ constexpr PrimaryModifier kPlatformPrimaryModifier = PrimaryModifier::kControl;
              : modifiers.control && !modifiers.meta;
 }
 
+// The diatonic interval number a digit KeyCode names, or nullopt when the
+// code is not a bound digit. `2` through `8` are one letter step through
+// seven letter steps (an octave); `1` is deliberately NOT a binding
+// (M5-phase-25's no-op), so it maps to nullopt exactly like every non-digit
+// code, leaving the handler's default no-op behavior.
+[[nodiscard]] constexpr std::optional<std::uint8_t> digit_interval(
+    graphscore::KeyCode code) noexcept {
+  switch (code) {
+    case graphscore::KeyCode::kDigit2:
+      return 2;
+    case graphscore::KeyCode::kDigit3:
+      return 3;
+    case graphscore::KeyCode::kDigit4:
+      return 4;
+    case graphscore::KeyCode::kDigit5:
+      return 5;
+    case graphscore::KeyCode::kDigit6:
+      return 6;
+    case graphscore::KeyCode::kDigit7:
+      return 7;
+    case graphscore::KeyCode::kDigit8:
+      return 8;
+    case graphscore::KeyCode::kUnknown:
+    default:
+      return std::nullopt;
+  }
+}
+
 // Owns the drag state machine and active tool at the application assembly
 // layer. Registered with WriterShell before open_window(), so the shell's
 // event loop dispatches real pointer events to it.
@@ -432,6 +463,16 @@ class SelectionToolHandler final : public graphscore::InputHandler {
     }
     if (event.modifiers.shift && !event.modifiers.control &&
         !event.modifiers.alt && !event.modifiers.meta) {
+      // M5-phase-25: Shift+`2`..`8` add a key-spelled diatonic interval BELOW
+      // the single selected notehead. Tested before the range-extension
+      // branch so Shift+digits are never swallowed by range extension, while
+      // the exact Shift+arrow/Home/End behavior below is preserved unchanged.
+      if (const auto interval = digit_interval(event.code);
+          interval.has_value()) {
+        std::ignore = add_selected_interval(
+            graphscore::IntervalDirection::kBelow, *interval);
+        return;
+      }
       const auto* existing = current_range_set();
       if (existing == nullptr || existing->items().empty()) {
         return;
@@ -531,6 +572,14 @@ class SelectionToolHandler final : public graphscore::InputHandler {
       case graphscore::KeyCode::kUnknown:
       default:
         break;
+    }
+    // M5-phase-25: unmodified `2`..`8` add a key-spelled diatonic interval
+    // ABOVE the single selected notehead. `1` is not a binding this phase
+    // owns, so it -- and any other unmapped code -- remains a no-op.
+    if (const auto interval = digit_interval(event.code);
+        interval.has_value()) {
+      std::ignore = add_selected_interval(graphscore::IntervalDirection::kAbove,
+                                          *interval);
     }
   }
 
@@ -1081,6 +1130,101 @@ class SelectionToolHandler final : public graphscore::InputHandler {
     return true;
   }
 
+  // Adds one key-spelled diatonic interval notehead above/below the single
+  // selected notehead (M5-phase-25): unmodified `2`..`8` add above, Shift+
+  // `2`..`8` add below. Requires the committed selection to be a NoteheadSet
+  // with exactly one item naming a top-level Note or a ChordNote; any other
+  // selection -- none, a range, a non-notehead arm, a multi-notehead set, a
+  // GraceNote -- is a no-op returning false. The interval runs as one
+  // reversible command through the handler's CommandHistory, exactly as
+  // move_selected_notehead/step_selected_accidental do: same provisional
+  // transaction, same rollback and poisoned-history handling, same
+  // incremental layout refresh and surface publication. On success only the
+  // newly inserted notehead identity becomes the committed selection, and
+  // the short audition request for the resulting chord is recorded
+  // (M5-phase-15; nothing plays it until Milestone 08).
+  //
+  // Rejections (an impossible octave/MIDI result, a duplicate spelled pitch,
+  // a stale identity) build no committed change: they fail inside execute and
+  // return false, leaving the project, selection, history, layout, surface,
+  // and audition all unchanged.
+  bool add_selected_interval(graphscore::IntervalDirection direction,
+                             std::uint8_t                  interval) {
+    if (history_.poisoned()) {
+      // A prior rollback failed and has not been recovered: the authoritative
+      // project may disagree with the visible layout/surface. Refuse the
+      // mutation rather than pretend the history is consistent.
+      return false;
+    }
+    const auto* set = current_notehead_set();
+    if (set == nullptr || set->items().size() != 1u) {
+      return false;
+    }
+    const graphscore::NoteheadItem&                      item = set->items()[0];
+    const std::optional<graphscore::NoteAuditionRequest> audition =
+        graphscore::audition_for_add_interval(project_, item, interval,
+                                              direction);
+    std::unique_ptr<graphscore::Command> command =
+        graphscore::make_add_interval_command(project_, item, interval,
+                                              direction);
+    if (command == nullptr) {
+      return false;
+    }
+    // make_add_interval_command always returns an AddIntervalCommand (or
+    // nullptr), so the concrete type is known; the fresh inserted notehead id
+    // is read before the command is moved into the transaction.
+    const auto* add_command =
+        static_cast<const graphscore::AddIntervalCommand*>(command.get());
+
+    const std::optional<graphscore::NotationInvalidation> invalidation =
+        interval_invalidation(item);
+    if (!invalidation.has_value()) {
+      return false;
+    }
+
+    // Provisional execute: apply the mutation WITHOUT clearing the redo
+    // stack, so a failed publication can restore the exact prior history
+    // (including any pre-existing redo) rather than destroying it.
+    graphscore::CommandHistory::Transaction transaction =
+        history_.begin_transaction(std::move(command), project_);
+    if (!transaction.active()) {
+      return false;
+    }
+
+    if (!refresh_layout(invalidation)) {
+      const graphscore::Result rollback = transaction.abort();
+      if (!rollback.ok()) {
+        // The rollback failed: the history is now poisoned. Attempt recovery
+        // once; a persistent failure leaves the handler unavailable and
+        // further edits blocked, exactly as the other domain-mutation paths
+        // do.
+        recover_from_failed_rollback();
+        return false;
+      }
+      // Project restored exactly: re-seed the retained cache from it so the
+      // next edit stays incremental.
+      layout_cache_.reset();
+      warm_layout_cache();
+      return false;
+    }
+
+    // Publication succeeded: commit the command (clears redo). Capacity was
+    // reserved before execute, so this cannot fail here.
+    if (!transaction.commit().ok()) {
+      return false;
+    }
+    const std::optional<graphscore::NoteheadSet> next =
+        graphscore::NoteheadSet::create({graphscore::NoteheadItem{
+            item.node, item.track, item.stave, item.voice,
+            add_command->inserted_notehead_id()}});
+    if (!next.has_value()) {
+      return false;
+    }
+    set_committed_selection(graphscore::Selection{*next});
+    last_audition_ = audition;
+    return true;
+  }
+
   // ---- test access ---------------------------------------------------------
 
   [[nodiscard]] const graphscore::SelectionDragState& drag_state()
@@ -1338,6 +1482,26 @@ class SelectionToolHandler final : public graphscore::InputHandler {
             : graphscore::NotationInvalidationKind::kCrossMeasureSpan;
     return graphscore::NotationInvalidation{kind, scope->first_measure,
                                             scope->last_measure};
+  }
+
+  // The exact invalidation scope the incremental layout cache needs after an
+  // interval entry: the selected notehead's own measure as kLocalContent.
+  // Adding a notehead to an event never moves or re-ties any existing
+  // notehead, so no cross-measure span is touched and the tie-chain range
+  // notehead_invalidation walks is deliberately not consulted. The measure
+  // comes from graphscore::notehead_measure_index, the same resolution the
+  // interval command and audition use for the key signature, so the
+  // invalidation can never drift from the mutation's actual extent.
+  [[nodiscard]] std::optional<graphscore::NotationInvalidation>
+  interval_invalidation(const graphscore::NoteheadItem& item) const {
+    const std::optional<std::size_t> measure =
+        graphscore::notehead_measure_index(project_, item);
+    if (!measure.has_value()) {
+      return std::nullopt;
+    }
+    return graphscore::NotationInvalidation{
+        graphscore::NotationInvalidationKind::kLocalContent, *measure,
+        *measure};
   }
 
   // Resolves node/track/stave/voice to the addressed VoiceContent, or
@@ -3605,13 +3769,17 @@ int key_events_test() {
   shell.set_input_handler(&handler);
 
   // --- test: every KeyCode value round-trips unchanged -------------------
-  constexpr std::array<graphscore::KeyCode, 12> kAllCodes{
+  constexpr std::array<graphscore::KeyCode, 20> kAllCodes{
       graphscore::KeyCode::kUnknown, graphscore::KeyCode::kLeft,
       graphscore::KeyCode::kRight,   graphscore::KeyCode::kUp,
       graphscore::KeyCode::kDown,    graphscore::KeyCode::kHome,
       graphscore::KeyCode::kEnd,     graphscore::KeyCode::kMinus,
       graphscore::KeyCode::kEquals,  graphscore::KeyCode::kBackspace,
       graphscore::KeyCode::kDelete,  graphscore::KeyCode::kR,
+      graphscore::KeyCode::kDigit1,  graphscore::KeyCode::kDigit2,
+      graphscore::KeyCode::kDigit3,  graphscore::KeyCode::kDigit4,
+      graphscore::KeyCode::kDigit5,  graphscore::KeyCode::kDigit6,
+      graphscore::KeyCode::kDigit7,  graphscore::KeyCode::kDigit8,
   };
   for (const graphscore::KeyCode code : kAllCodes) {
     const std::size_t    before = handler.events.size();
@@ -3701,9 +3869,11 @@ int key_events_shell_test() {
   // Raw SDL_Scancode values, verified against the fetched SDL3 headers
   // (SDL3/SDL_scancode.h at the pinned commit): LEFT=80, RIGHT=79, UP=82,
   // DOWN=81, HOME=74, END=77, MINUS=45, EQUALS=46, BACKSPACE=42, DELETE=76,
-  // R=21 (the USB HID keyboard usage table's row for the letter R).
-  // SDL_SCANCODE_A=4 is a mapped character-key scancode outside this minimal
-  // set and must translate to kUnknown.
+  // R=21 (the USB HID keyboard usage table's row for the letter R), and the
+  // top-row digits 1..8 = 30..37. SDL_SCANCODE_A=4 is a mapped character-key
+  // scancode outside this minimal set and must translate to kUnknown, as must
+  // the unbound digits 9=38 and 0=39 (M5-phase-25 binds only 1..8, and only
+  // 2..8 act).
   constexpr std::uint32_t kScancodeLeft      = 80;
   constexpr std::uint32_t kScancodeRight     = 79;
   constexpr std::uint32_t kScancodeUp        = 82;
@@ -3715,6 +3885,16 @@ int key_events_shell_test() {
   constexpr std::uint32_t kScancodeBackspace = 42;
   constexpr std::uint32_t kScancodeDelete    = 76;
   constexpr std::uint32_t kScancodeR         = 21;
+  constexpr std::uint32_t kScancodeDigit1    = 30;
+  constexpr std::uint32_t kScancodeDigit2    = 31;
+  constexpr std::uint32_t kScancodeDigit3    = 32;
+  constexpr std::uint32_t kScancodeDigit4    = 33;
+  constexpr std::uint32_t kScancodeDigit5    = 34;
+  constexpr std::uint32_t kScancodeDigit6    = 35;
+  constexpr std::uint32_t kScancodeDigit7    = 36;
+  constexpr std::uint32_t kScancodeDigit8    = 37;
+  constexpr std::uint32_t kScancodeDigit9    = 38;
+  constexpr std::uint32_t kScancodeDigit0    = 39;
   constexpr std::uint32_t kScancodeA         = 4;
 
   struct ScancodeCase {
@@ -3722,7 +3902,7 @@ int key_events_shell_test() {
     graphscore::KeyCode expected;
   };
 
-  constexpr std::array<ScancodeCase, 11> kMappedScancodes{{
+  constexpr std::array<ScancodeCase, 19> kMappedScancodes{{
       {kScancodeLeft, graphscore::KeyCode::kLeft},
       {kScancodeRight, graphscore::KeyCode::kRight},
       {kScancodeUp, graphscore::KeyCode::kUp},
@@ -3734,6 +3914,14 @@ int key_events_shell_test() {
       {kScancodeBackspace, graphscore::KeyCode::kBackspace},
       {kScancodeDelete, graphscore::KeyCode::kDelete},
       {kScancodeR, graphscore::KeyCode::kR},
+      {kScancodeDigit1, graphscore::KeyCode::kDigit1},
+      {kScancodeDigit2, graphscore::KeyCode::kDigit2},
+      {kScancodeDigit3, graphscore::KeyCode::kDigit3},
+      {kScancodeDigit4, graphscore::KeyCode::kDigit4},
+      {kScancodeDigit5, graphscore::KeyCode::kDigit5},
+      {kScancodeDigit6, graphscore::KeyCode::kDigit6},
+      {kScancodeDigit7, graphscore::KeyCode::kDigit7},
+      {kScancodeDigit8, graphscore::KeyCode::kDigit8},
   }};
 
   for (const ScancodeCase& test_case : kMappedScancodes) {
@@ -3750,15 +3938,18 @@ int key_events_shell_test() {
     }
   }
 
-  // Unmapped scancode -> kUnknown.
-  {
+  // Unmapped scancode -> kUnknown (the out-of-scope character key `A`, and
+  // the unbound top-row digits 9 and 0, which M5-phase-25 does not bind).
+  for (const std::uint32_t unmapped :
+       {kScancodeA, kScancodeDigit9, kScancodeDigit0}) {
     const std::size_t before = handler.events.size();
-    shell.dispatch_sdl_test_key_event(kScancodeA, 0);
+    shell.dispatch_sdl_test_key_event(unmapped, 0);
     if (handler.events.size() != before + 1 ||
         handler.events.back().code != graphscore::KeyCode::kUnknown) {
       std::fprintf(stderr,
-                   "key-events-shell-test: unmapped scancode did not "
-                   "translate to kUnknown\n");
+                   "key-events-shell-test: unmapped scancode %u did not "
+                   "translate to kUnknown\n",
+                   unmapped);
       shell.set_input_handler(nullptr);
       return 1;
     }
@@ -8878,6 +9069,1239 @@ int staff_step_test() {
   return 0;
 }
 
+// ---- M5-phase-25: key-spelled diatonic interval entry ----------------------
+
+struct IntervalEntryFixture {
+  graphscore::Project          project;
+  graphscore::NodeId           node_id;
+  graphscore::TrackId          track_id;
+  graphscore::StaveId          stave_id;
+  graphscore::NotationEntityId source_id;  // the Note id or first ChordNote id
+  graphscore::NotationLayout   layout;
+};
+
+// Single-staff, one-measure fixture with the given key signature and one
+// C4 quarter note (plus normalized rests). `source_id` names that note.
+[[nodiscard]] std::optional<IntervalEntryFixture> build_interval_note_fixture(
+    const graphscore::GlyphMetrics& metrics, std::int8_t fifths) {
+  graphscore::Project project{graphscore::ProjectId::generate(), "Interval"};
+  const auto          midi_channel = graphscore::MidiChannel::create(0);
+  if (!midi_channel.has_value()) {
+    return std::nullopt;
+  }
+  const auto track_added = project.add_track(
+      "Track", graphscore::StaffLayout::single_staff(graphscore::Clef::kTreble),
+      *midi_channel);
+  if (!track_added.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::TrackId track_id = *track_added;
+  const graphscore::NodeId  node_id  = project.add_node("Node");
+  auto*                     lane = project.find_node(node_id)->lane(track_id);
+  const graphscore::StaveId stave_id =
+      project.active_tracks()[0].layout().staves()[0].id;
+  lane->ensure_stave(stave_id);
+
+  std::vector<graphscore::StaveDefinition> stave_defs;
+  stave_defs.push_back(project.active_tracks()[0].layout().staves()[0]);
+  const auto time_sig = graphscore::TimeSignature::create(4, 4);
+  const auto key_sig  = graphscore::KeySignature::create(fifths);
+  if (!time_sig.has_value() || !key_sig.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<graphscore::Measure> measures(
+      1, graphscore::Measure{*time_sig, *key_sig});
+  auto timeline =
+      graphscore::NodeTimeline::create(std::move(measures), stave_defs);
+  if (!timeline.has_value()) {
+    return std::nullopt;
+  }
+  project.find_node(node_id)->set_timeline(std::move(*timeline));
+
+  const auto quarter =
+      graphscore::Duration::create(graphscore::NoteValue::kQuarter, 0);
+  if (!quarter.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::Voice   voice1 = voice_one();
+  graphscore::VoiceContent& vc     = lane->stave(stave_id)->voice(voice1);
+  const auto c4 = graphscore::SpelledPitch::create(graphscore::Letter::kC, 4);
+  if (!c4.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::Note note = graphscore::make_note(*c4, *quarter);
+  if (!vc.append(note).ok()) {
+    return std::nullopt;
+  }
+  const graphscore::Rational node_end =
+      project.find_node(node_id)->timeline()->node_end();
+  if (!vc.normalize(node_end).ok()) {
+    return std::nullopt;
+  }
+
+  graphscore::NotationLayoutResult layout_result =
+      graphscore::layout_notation(project, node_id, metrics);
+  if (!layout_result || !layout_result.layout.has_value()) {
+    return std::nullopt;
+  }
+  return IntervalEntryFixture{
+      std::move(project), node_id, track_id,
+      stave_id,           note.id, std::move(*layout_result.layout)};
+}
+
+// Single-staff, one-measure fixture with the given key signature and one
+// two-note C4/E4 quarter chord. `source_id` names the C4 ChordNote.
+[[nodiscard]] std::optional<IntervalEntryFixture> build_interval_chord_fixture(
+    const graphscore::GlyphMetrics& metrics, std::int8_t fifths) {
+  graphscore::Project project{graphscore::ProjectId::generate(), "Interval"};
+
+  auto note_fixture = [&]() -> std::optional<IntervalEntryFixture> {
+    const auto midi_channel = graphscore::MidiChannel::create(0);
+    if (!midi_channel.has_value()) {
+      return std::nullopt;
+    }
+    const auto track_added = project.add_track(
+        "Track",
+        graphscore::StaffLayout::single_staff(graphscore::Clef::kTreble),
+        *midi_channel);
+    if (!track_added.has_value()) {
+      return std::nullopt;
+    }
+    const graphscore::TrackId track_id = *track_added;
+    const graphscore::NodeId  node_id  = project.add_node("Node");
+    auto*                     lane = project.find_node(node_id)->lane(track_id);
+    const graphscore::StaveId stave_id =
+        project.active_tracks()[0].layout().staves()[0].id;
+    lane->ensure_stave(stave_id);
+
+    std::vector<graphscore::StaveDefinition> stave_defs;
+    stave_defs.push_back(project.active_tracks()[0].layout().staves()[0]);
+    const auto time_sig = graphscore::TimeSignature::create(4, 4);
+    const auto key_sig  = graphscore::KeySignature::create(fifths);
+    if (!time_sig.has_value() || !key_sig.has_value()) {
+      return std::nullopt;
+    }
+    std::vector<graphscore::Measure> measures(
+        1, graphscore::Measure{*time_sig, *key_sig});
+    auto timeline =
+        graphscore::NodeTimeline::create(std::move(measures), stave_defs);
+    if (!timeline.has_value()) {
+      return std::nullopt;
+    }
+    project.find_node(node_id)->set_timeline(std::move(*timeline));
+
+    const auto quarter =
+        graphscore::Duration::create(graphscore::NoteValue::kQuarter, 0);
+    if (!quarter.has_value()) {
+      return std::nullopt;
+    }
+    const graphscore::Voice   voice1 = voice_one();
+    graphscore::VoiceContent& vc     = lane->stave(stave_id)->voice(voice1);
+    const auto c4 = graphscore::SpelledPitch::create(graphscore::Letter::kC, 4);
+    const auto e4 = graphscore::SpelledPitch::create(graphscore::Letter::kE, 4);
+    if (!c4.has_value() || !e4.has_value()) {
+      return std::nullopt;
+    }
+    const graphscore::ChordNote c_note{graphscore::NotationEntityId::generate(),
+                                       *c4, false};
+    const graphscore::ChordNote e_note{graphscore::NotationEntityId::generate(),
+                                       *e4, false};
+    const graphscore::NotationEntityId c_id = c_note.id;
+    if (!vc.append(graphscore::make_chord(*quarter, {c_note, e_note})).ok()) {
+      return std::nullopt;
+    }
+    const graphscore::Rational node_end =
+        project.find_node(node_id)->timeline()->node_end();
+    if (!vc.normalize(node_end).ok()) {
+      return std::nullopt;
+    }
+
+    graphscore::NotationLayoutResult layout_result =
+        graphscore::layout_notation(project, node_id, metrics);
+    if (!layout_result || !layout_result.layout.has_value()) {
+      return std::nullopt;
+    }
+    return IntervalEntryFixture{
+        std::move(project), node_id, track_id,
+        stave_id,           c_id,    std::move(*layout_result.layout)};
+  }();
+
+  return note_fixture;
+}
+
+// The first voice event as a Chord, or nullopt when it is not a Chord.
+[[nodiscard]] std::optional<graphscore::Chord> first_chord(
+    const graphscore::Project& project, graphscore::NodeId node_id,
+    graphscore::TrackId track_id, graphscore::StaveId stave_id) {
+  const auto* lane = project.find_node(node_id)->lane(track_id);
+  const auto& vc   = lane->stave(stave_id)->voice(voice_one());
+  if (vc.events().empty()) {
+    return std::nullopt;
+  }
+  const auto* chord = std::get_if<graphscore::Chord>(&vc.events().front());
+  return chord == nullptr ? std::nullopt
+                          : std::optional<graphscore::Chord>(*chord);
+}
+
+// Captures the full observable state a no-op must leave byte-for-byte
+// unchanged -- voice content, committed selection, layout, surface, highlight,
+// undo/redo depth, and the audition hook -- runs `act`, then re-checks every
+// one of them. Returns an empty string when nothing moved, or a diagnostic
+// naming the first thing that did. Shared by the `1`, forbidden-modifier, and
+// stale/empty-selection no-op checks so each asserts the same complete
+// before/after state rather than a partial proxy.
+[[nodiscard]] std::string no_op_violation(SelectionToolHandler&        handler,
+                                          graphscore::WriterShell&     shell,
+                                          graphscore::NodeId           node_id,
+                                          graphscore::TrackId          track_id,
+                                          graphscore::StaveId          stave_id,
+                                          const char*                  what,
+                                          const std::function<void()>& act) {
+  const auto voice = [&]() -> graphscore::VoiceContent {
+    const auto* lane = handler.project().find_node(node_id)->lane(track_id);
+    return lane->stave(stave_id)->voice(voice_one());
+  };
+  const graphscore::VoiceContent voice_before = voice();
+  const auto selection_before   = handler.drag_state().committed_selection();
+  const auto layout_before      = handler.layout();
+  const auto surface_before     = shell.test_snapshot_notation_surface();
+  const auto highlight_before   = shell.test_snapshot_highlight_rects();
+  const std::size_t undo_before = handler.test_undo_stack_size();
+  const std::size_t redo_before = handler.test_redo_stack_size();
+  const std::optional<graphscore::NoteAuditionRequest> audition_before =
+      handler.last_audition();
+
+  act();
+
+  if (!(voice() == voice_before)) {
+    return std::string(what) + ": voice content changed";
+  }
+  if (handler.drag_state().committed_selection() != selection_before) {
+    return std::string(what) + ": committed selection changed";
+  }
+  if (!(handler.layout() == layout_before)) {
+    return std::string(what) + ": layout changed";
+  }
+  if (shell.test_snapshot_notation_surface() != surface_before) {
+    return std::string(what) + ": surface changed";
+  }
+  if (shell.test_snapshot_highlight_rects() != highlight_before) {
+    return std::string(what) + ": highlight changed";
+  }
+  if (handler.test_undo_stack_size() != undo_before ||
+      handler.test_redo_stack_size() != redo_before) {
+    return std::string(what) + ": history depth changed";
+  }
+  if (!(handler.last_audition() == audition_before)) {
+    return std::string(what) + ": audition hook changed";
+  }
+  return std::string{};
+}
+
+int interval_entry_test() {
+  const SelfTestMetrics metrics;
+
+  // Every unmodified digit 2..8 adds a diatonic interval ABOVE C4 in C major;
+  // the same digit with an exact Shift adds it BELOW. Table-driven so each
+  // digit is dispatched and each below-direction interval (4..7 included) is
+  // asserted, rather than spot-checking a few.
+  struct DigitCase {
+    graphscore::KeyCode code;
+    graphscore::Letter  above_letter;
+    std::int8_t         above_octave;
+    graphscore::Letter  below_letter;
+    std::int8_t         below_octave;
+  };
+
+  constexpr std::array<DigitCase, 7> kDigits{{
+      {graphscore::KeyCode::kDigit2, graphscore::Letter::kD, 4,
+       graphscore::Letter::kB, 3},
+      {graphscore::KeyCode::kDigit3, graphscore::Letter::kE, 4,
+       graphscore::Letter::kA, 3},
+      {graphscore::KeyCode::kDigit4, graphscore::Letter::kF, 4,
+       graphscore::Letter::kG, 3},
+      {graphscore::KeyCode::kDigit5, graphscore::Letter::kG, 4,
+       graphscore::Letter::kF, 3},
+      {graphscore::KeyCode::kDigit6, graphscore::Letter::kA, 4,
+       graphscore::Letter::kE, 3},
+      {graphscore::KeyCode::kDigit7, graphscore::Letter::kB, 4,
+       graphscore::Letter::kD, 3},
+      {graphscore::KeyCode::kDigit8, graphscore::Letter::kC, 5,
+       graphscore::Letter::kC, 3},
+  }};
+
+  // Every forbidden modifier mask a digit must ignore: anything that is not an
+  // exact unmodified chord (above) or an exact Shift-only chord (below). This
+  // enumerates the Shift+Alt, Shift+Meta, Ctrl+Alt, Ctrl+Meta, Alt+Meta, and
+  // larger superset combinations the review called out.
+  constexpr std::array<graphscore::KeyModifiers, 14> kForbiddenModifiers{{
+      {false, true, false, false},  // control
+      {false, false, true, false},  // alt
+      {false, false, false, true},  // meta
+      {true, true, false, false},   // shift+control
+      {true, false, true, false},   // shift+alt
+      {true, false, false, true},   // shift+meta
+      {false, true, true, false},   // control+alt
+      {false, true, false, true},   // control+meta
+      {false, false, true, true},   // alt+meta
+      {true, true, true, false},    // shift+control+alt
+      {true, true, false, true},    // shift+control+meta
+      {true, false, true, true},    // shift+alt+meta
+      {false, true, true, true},    // control+alt+meta
+      {true, true, true, true},     // shift+control+alt+meta
+  }};
+
+  const auto key_with = [](graphscore::KeyCode      code,
+                           graphscore::KeyModifiers modifiers) {
+    graphscore::KeyEvent event;
+    event.code      = code;
+    event.modifiers = modifiers;
+    return event;
+  };
+
+  // --- test 1: every unmodified `2`..`8` adds the correct diatonic interval
+  //     ABOVE C4 (digit `8` is the octave); the inserted notehead becomes
+  //     selected; the surface is re-published; the resulting chord auditions.
+  for (const DigitCase& digit : kDigits) {
+    auto fx = build_interval_note_fixture(metrics, 0);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "interval-entry-test: fixture build failed (1)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr, "interval-entry-test: initial publish failed (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->source_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->source_id) {
+        std::fprintf(
+            stderr, "interval-entry-test: click did not select the note (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    const auto before_surface = shell.test_snapshot_notation_surface();
+    shell.dispatch_test_key_event(plain_key(digit.code));
+
+    const std::optional<graphscore::Chord> chord =
+        first_chord(handler.project(), fx->node_id, fx->track_id, fx->stave_id);
+    if (!chord.has_value() || chord->notes.size() != 2u ||
+        chord->notes[0].id != fx->source_id ||
+        chord->notes[0].pitch != spelled(graphscore::Letter::kC, 4) ||
+        chord->notes[1].pitch !=
+            spelled(digit.above_letter, digit.above_octave)) {
+      std::fprintf(stderr,
+                   "interval-entry-test: digit above target wrong (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != chord->notes[1].id) {
+        std::fprintf(
+            stderr,
+            "interval-entry-test: inserted notehead not selected (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    if (handler.test_undo_stack_size() != 1u) {
+      std::fprintf(stderr, "interval-entry-test: no history entry (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // Visible surface re-published: different raster bytes than before.
+    const auto after_surface = shell.test_snapshot_notation_surface();
+    if (!after_surface.has_value() || after_surface == before_surface) {
+      std::fprintf(stderr,
+                   "interval-entry-test: surface not re-published (1)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // Audition: the source C4 (MIDI 60) plus the new pitch, ascending.
+    {
+      const auto& audition = handler.last_audition();
+      const std::optional<graphscore::MidiPitch> target_midi =
+          spelled(digit.above_letter, digit.above_octave).to_midi_pitch();
+      if (!audition.has_value() || !target_midi.has_value() ||
+          audition->pitches.size() != 2u ||
+          audition->pitches[0].value() != 60 ||
+          audition->pitches[1].value() != target_midi->value()) {
+        std::fprintf(stderr, "interval-entry-test: wrong audition (1)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- `1` is a complete no-op: project/voice content, committed selection,
+  //     layout, surface, highlight, history depth, and the audition hook are
+  //     all byte-for-byte unchanged. ---------------------------------------
+  {
+    auto fx = build_interval_note_fixture(metrics, 0);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "interval-entry-test: fixture build failed (`1`)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr,
+                   "interval-entry-test: initial publish failed (`1`)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}})) {
+      std::fprintf(stderr, "interval-entry-test: selection rejected (`1`)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const std::string violation = no_op_violation(
+        handler, shell, fx->node_id, fx->track_id, fx->stave_id, "`1`", [&] {
+          shell.dispatch_test_key_event(
+              plain_key(graphscore::KeyCode::kDigit1));
+        });
+    if (!violation.empty()) {
+      std::fprintf(stderr, "interval-entry-test: %s (`1`)\n",
+                   violation.c_str());
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- A repeated interval that would duplicate an existing spelled pitch is
+  //     an atomic no-op: full state preserved and the chord stays two notes.
+  {
+    auto fx = build_interval_note_fixture(metrics, 0);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "interval-entry-test: fixture build failed (dup)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr,
+                   "interval-entry-test: initial publish failed (dup)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}})) {
+      std::fprintf(stderr, "interval-entry-test: selection rejected (dup)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kDigit2));
+    // Re-select the original source C4: `2` above it duplicates D4.
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}})) {
+      std::fprintf(stderr,
+                   "interval-entry-test: re-select C4 rejected (dup)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const std::string violation =
+        no_op_violation(handler, shell, fx->node_id, fx->track_id, fx->stave_id,
+                        "duplicate interval", [&] {
+                          shell.dispatch_test_key_event(
+                              plain_key(graphscore::KeyCode::kDigit2));
+                        });
+    if (!violation.empty()) {
+      std::fprintf(stderr, "interval-entry-test: %s (dup)\n",
+                   violation.c_str());
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const std::optional<graphscore::Chord> chord =
+        first_chord(handler.project(), fx->node_id, fx->track_id, fx->stave_id);
+    if (!chord.has_value() || chord->notes.size() != 2u) {
+      std::fprintf(stderr,
+                   "interval-entry-test: duplicate changed the chord\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- Undo/redo round-trips a successful interval through the handler's
+  //     history. -----------------------------------------------------------
+  {
+    auto fx = build_interval_note_fixture(metrics, 0);
+    if (!fx.has_value()) {
+      std::fprintf(stderr,
+                   "interval-entry-test: fixture build failed (undo)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}})) {
+      std::fprintf(stderr, "interval-entry-test: selection rejected (undo)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kDigit2));
+    if (!first_chord(handler.project(), fx->node_id, fx->track_id, fx->stave_id)
+             .has_value()) {
+      std::fprintf(stderr, "interval-entry-test: no chord to undo (undo)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!handler.test_undo() || handler.test_undo_stack_size() != 0u ||
+        handler.test_redo_stack_size() != 1u) {
+      std::fprintf(stderr, "interval-entry-test: undo failed (undo)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (first_chord(handler.project(), fx->node_id, fx->track_id, fx->stave_id)
+            .has_value()) {
+      std::fprintf(stderr, "interval-entry-test: undo kept the chord (undo)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!handler.test_redo() || handler.test_undo_stack_size() != 1u) {
+      std::fprintf(stderr, "interval-entry-test: redo failed (undo)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!first_chord(handler.project(), fx->node_id, fx->track_id, fx->stave_id)
+             .has_value()) {
+      std::fprintf(stderr, "interval-entry-test: redo lost the chord (undo)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 2: every exact Shift-only `2`..`8` adds the correct diatonic
+  //     interval BELOW C4, and the inserted notehead becomes selected. -----
+  for (const DigitCase& digit : kDigits) {
+    auto fx = build_interval_note_fixture(metrics, 0);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "interval-entry-test: fixture build failed (2)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}})) {
+      std::fprintf(stderr, "interval-entry-test: selection rejected (2)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    shell.dispatch_test_key_event(shift_key(digit.code));
+    const std::optional<graphscore::Chord> chord =
+        first_chord(handler.project(), fx->node_id, fx->track_id, fx->stave_id);
+    if (!chord.has_value() || chord->notes.size() != 2u ||
+        chord->notes[0].id != fx->source_id ||
+        chord->notes[0].pitch != spelled(graphscore::Letter::kC, 4) ||
+        chord->notes[1].pitch !=
+            spelled(digit.below_letter, digit.below_octave)) {
+      std::fprintf(stderr,
+                   "interval-entry-test: digit below target wrong (2)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != chord->notes[1].id) {
+        std::fprintf(stderr,
+                     "interval-entry-test: below insert not selected (2)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 3a: `8` actually dispatches the octave through the app (the
+  //     prior block claimed `8` but pressed `2`): `8` above C4 is C5. ------
+  {
+    auto fx = build_interval_note_fixture(metrics, 0);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "interval-entry-test: fixture build failed (3a)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}})) {
+      std::fprintf(stderr, "interval-entry-test: selection rejected (3a)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kDigit8));
+    const std::optional<graphscore::Chord> octave =
+        first_chord(handler.project(), fx->node_id, fx->track_id, fx->stave_id);
+    if (!octave.has_value() || octave->notes.size() != 2u ||
+        octave->notes[1].pitch != spelled(graphscore::Letter::kC, 5)) {
+      std::fprintf(stderr,
+                   "interval-entry-test: `8` did not add the octave (3a)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 3b: key-signature spelling reaches the app: in E major
+  //     (4 sharps), `2` above C4 is D#4. ----------------------------------
+  {
+    auto fx = build_interval_note_fixture(metrics, 4);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "interval-entry-test: fixture build failed (3b)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}})) {
+      std::fprintf(stderr, "interval-entry-test: selection rejected (3b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kDigit2));
+    const std::optional<graphscore::Chord> chord =
+        first_chord(handler.project(), fx->node_id, fx->track_id, fx->stave_id);
+    if (!chord.has_value() || chord->notes.size() != 2u ||
+        chord->notes[1].pitch != spelled(graphscore::Letter::kD, 4,
+                                         graphscore::Accidental::kSharp)) {
+      std::fprintf(stderr,
+                   "interval-entry-test: key signature not spelled (3b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 4: a selected ChordNote grows its chord; every existing
+  //     notehead is preserved. --------------------------------------------
+  {
+    auto fx = build_interval_chord_fixture(metrics, 0);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "interval-entry-test: fixture build failed (4)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    const graphscore::NotationPoint point =
+        notehead_origin(handler.layout(), fx->source_id);
+    click_at(shell, point.x, point.y);
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != fx->source_id) {
+        std::fprintf(stderr,
+                     "interval-entry-test: chord notehead click failed (4)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kDigit4));
+    const auto chord = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice_one());
+      return std::get<graphscore::Chord>(vc.events().front());
+    }();
+    if (chord.notes.size() != 3u || chord.notes[0].id != fx->source_id ||
+        chord.notes[0].pitch != spelled(graphscore::Letter::kC, 4) ||
+        chord.notes[1].pitch != spelled(graphscore::Letter::kE, 4) ||
+        chord.notes[2].pitch != spelled(graphscore::Letter::kF, 4)) {
+      std::fprintf(stderr, "interval-entry-test: chord growth wrong (4)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const auto* set = committed_notehead_set(handler);
+      if (set == nullptr || set->items().size() != 1u ||
+          set->items()[0].entity != chord.notes[2].id) {
+        std::fprintf(stderr,
+                     "interval-entry-test: grown notehead not selected (4)\n");
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 5: every rejection/no-op family leaves the complete observable
+  //     state unchanged: no selection, a stale identity, a range selection,
+  //     and every forbidden modifier mask on a valid notehead selection. ----
+  {
+    auto fx = build_interval_note_fixture(metrics, 0);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "interval-entry-test: fixture build failed (5)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    const auto& layout = handler.layout();
+
+    // No selection.
+    {
+      const std::string violation =
+          no_op_violation(handler, shell, fx->node_id, fx->track_id,
+                          fx->stave_id, "no selection", [&] {
+                            shell.dispatch_test_key_event(
+                                plain_key(graphscore::KeyCode::kDigit2));
+                          });
+      if (!violation.empty()) {
+        std::fprintf(stderr, "interval-entry-test: %s (5)\n",
+                     violation.c_str());
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    // Stale identity.
+    if (!select_noteheads(
+            handler, {graphscore::NoteheadItem{
+                         fx->node_id, fx->track_id, fx->stave_id, voice_one(),
+                         graphscore::NotationEntityId::generate()}})) {
+      std::fprintf(stderr,
+                   "interval-entry-test: stale selection rejected (5)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const std::string violation =
+          no_op_violation(handler, shell, fx->node_id, fx->track_id,
+                          fx->stave_id, "stale identity", [&] {
+                            shell.dispatch_test_key_event(
+                                plain_key(graphscore::KeyCode::kDigit2));
+                          });
+      if (!violation.empty()) {
+        std::fprintf(stderr, "interval-entry-test: %s (5)\n",
+                     violation.c_str());
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    // Range selection: unmodified and Shift digits stay no-ops.
+    {
+      const double x1 = layout.systems[0].measures[0].bounds.x;
+      const double x2 = layout.systems[0].measures[0].bounds.x +
+                        layout.systems[0].measures[0].bounds.width;
+      const double y = layout.systems[0].staves[0].bounds.y +
+                       layout.systems[0].staves[0].bounds.height * 0.5;
+      drag_through_shell(shell, x1, y, x2, y);
+    }
+    if (!handler.drag_state().committed_selection().has_value()) {
+      std::fprintf(stderr, "interval-entry-test: range setup failed (5)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    {
+      const std::string violation =
+          no_op_violation(handler, shell, fx->node_id, fx->track_id,
+                          fx->stave_id, "range unmodified", [&] {
+                            shell.dispatch_test_key_event(
+                                plain_key(graphscore::KeyCode::kDigit2));
+                          });
+      if (!violation.empty()) {
+        std::fprintf(stderr, "interval-entry-test: %s (5)\n",
+                     violation.c_str());
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    {
+      const std::string violation =
+          no_op_violation(handler, shell, fx->node_id, fx->track_id,
+                          fx->stave_id, "range shift", [&] {
+                            shell.dispatch_test_key_event(
+                                shift_key(graphscore::KeyCode::kDigit2));
+                          });
+      if (!violation.empty()) {
+        std::fprintf(stderr, "interval-entry-test: %s (5)\n",
+                     violation.c_str());
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    // Forbidden modifier masks on a valid single notehead selection: every
+    // combination that is not exact unmodified (above) or exact Shift-only
+    // (below) must be a no-op.
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}})) {
+      std::fprintf(stderr, "interval-entry-test: selection rejected (5)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    for (const graphscore::KeyModifiers mods : kForbiddenModifiers) {
+      const std::string violation =
+          no_op_violation(handler, shell, fx->node_id, fx->track_id,
+                          fx->stave_id, "forbidden modifier mask", [&] {
+                            shell.dispatch_test_key_event(
+                                key_with(graphscore::KeyCode::kDigit2, mods));
+                          });
+      if (!violation.empty()) {
+        std::fprintf(stderr, "interval-entry-test: %s (5)\n",
+                     violation.c_str());
+        shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 6: a failing surface publisher rolls the interval back
+  //     completely (project, layout, surface, selection, history, audition),
+  //     and the next interval succeeds. ------------------------------------
+  {
+    auto fx = build_interval_note_fixture(metrics, 0);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "interval-entry-test: fixture build failed (6)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    bool fail_next_publish = true;
+    handler.set_surface_publisher(
+        [&shell, &fail_next_publish](const graphscore::NotationLayout& layout) {
+          if (fail_next_publish) {
+            fail_next_publish = false;
+            return graphscore::ShellResult{
+                graphscore::ShellError::kRenderingSetupFailed,
+                "injected publish failure"};
+          }
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr, "interval-entry-test: initial publish failed (6)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}})) {
+      std::fprintf(stderr, "interval-entry-test: selection rejected (6)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const auto before_surface   = shell.test_snapshot_notation_surface();
+    const auto before_highlight = shell.test_snapshot_highlight_rects();
+    const auto before_layout    = handler.layout();
+    const auto before_selection = handler.drag_state().committed_selection();
+
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kDigit2));
+    const auto first_event_is_note = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      const auto& vc = lane->stave(fx->stave_id)->voice(voice_one());
+      return std::holds_alternative<graphscore::Note>(vc.events().front());
+    };
+    if (!first_event_is_note() || handler.layout() != before_layout ||
+        shell.test_snapshot_notation_surface() != before_surface ||
+        shell.test_snapshot_highlight_rects() != before_highlight ||
+        handler.drag_state().committed_selection() != before_selection ||
+        handler.test_undo_stack_size() != 0u ||
+        handler.test_redo_stack_size() != 0u) {
+      std::fprintf(stderr,
+                   "interval-entry-test: rollback left state changed (6)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler.history_unavailable()) {
+      std::fprintf(stderr,
+                   "interval-entry-test: rollback poisoned history (6)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // The next interval (publisher now healthy) succeeds.
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kDigit2));
+    if (first_event_is_note() || handler.test_undo_stack_size() != 1u) {
+      std::fprintf(stderr,
+                   "interval-entry-test: retry after rollback failed (6)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 7: a failed surface refresh preserves an existing redo stack and
+  //     leaves the history unpoisoned; the preserved redo stays executable. -
+  {
+    auto fx = build_interval_note_fixture(metrics, 0);
+    if (!fx.has_value()) {
+      std::fprintf(stderr, "interval-entry-test: fixture build failed (7)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    bool fail_next_publish = false;
+    handler.set_surface_publisher(
+        [&shell, &fail_next_publish](const graphscore::NotationLayout& layout) {
+          if (fail_next_publish) {
+            fail_next_publish = false;
+            return graphscore::ShellResult{
+                graphscore::ShellError::kRenderingSetupFailed,
+                "injected publish failure"};
+          }
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr, "interval-entry-test: initial publish failed (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}})) {
+      std::fprintf(stderr, "interval-entry-test: selection rejected (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // Build a redo stack: the interval succeeds, then is undone.
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kDigit2));
+    if (!first_chord(handler.project(), fx->node_id, fx->track_id, fx->stave_id)
+             .has_value() ||
+        handler.test_undo_stack_size() != 1u) {
+      std::fprintf(stderr, "interval-entry-test: redo setup failed (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!handler.test_undo() || handler.test_undo_stack_size() != 0u ||
+        handler.test_redo_stack_size() != 1u) {
+      std::fprintf(stderr, "interval-entry-test: undo for redo failed (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // Re-select the source notehead (undo left the selection pointing at the
+    // now-removed inserted notehead), then attempt an interval whose surface
+    // publication fails.
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}})) {
+      std::fprintf(stderr, "interval-entry-test: re-select rejected (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    fail_next_publish                           = true;
+    const graphscore::VoiceContent before_voice = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      return lane->stave(fx->stave_id)->voice(voice_one());
+    }();
+    const auto before_layout    = handler.layout();
+    const auto before_selection = handler.drag_state().committed_selection();
+    shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kDigit2));
+
+    // The injected publication failure must actually have been exercised, or
+    // the "rollback" below would prove nothing: the one-shot flag is consumed
+    // by the failing publisher, and the abort restores the complete
+    // pre-dispatch voice content (not merely "still a Note"), while the
+    // layout/selection and the existing redo stack survive intact.
+    const graphscore::VoiceContent after_voice = [&]() {
+      const auto* lane =
+          handler.project().find_node(fx->node_id)->lane(fx->track_id);
+      return lane->stave(fx->stave_id)->voice(voice_one());
+    }();
+    if (fail_next_publish || !(after_voice == before_voice) ||
+        first_chord(handler.project(), fx->node_id, fx->track_id, fx->stave_id)
+            .has_value() ||
+        handler.layout() != before_layout ||
+        handler.drag_state().committed_selection() != before_selection ||
+        handler.test_undo_stack_size() != 0u ||
+        handler.test_redo_stack_size() != 1u || handler.history_unavailable()) {
+      std::fprintf(stderr,
+                   "interval-entry-test: redo not preserved through failed "
+                   "refresh (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // The preserved redo is still executable: it re-applies the first chord.
+    if (!handler.test_redo() || handler.test_undo_stack_size() != 1u ||
+        handler.test_redo_stack_size() != 0u ||
+        !first_chord(handler.project(), fx->node_id, fx->track_id, fx->stave_id)
+             .has_value()) {
+      std::fprintf(stderr,
+                   "interval-entry-test: preserved redo not executable (7)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  std::printf("interval-entry-test: ok\n");
+  return 0;
+}
+
+// Exercises WriterShell::dispatch_sdl_test_key_event feeding the production
+// SDL physical-scancode and modifier-mask translation into the actual
+// SelectionToolHandler (M5-phase-25): unmodified SDL digit 2 adds above, SDL
+// Shift+3 adds below, and the SDL forbidden chord plus SDL digit 1 are
+// no-ops -- the production SDL translation path, not merely the headless
+// neutral-KeyEvent seam interval_entry_test() exercises. This is the shell
+// twin of that test's digit coverage; like key_events_shell_test() it never
+// calls open_window(), so no window, renderer, or SDL_Init is needed and it
+// runs unconditionally on a headless host. It requires
+// GRAPHSCORE_BUILD_WRITER: dispatch_sdl_test_key_event is a no-op in a
+// writer-OFF build, so the CTest registration gates this test behind
+// GRAPHSCORE_BUILD_WRITER rather than executing no-op assertions there.
+int interval_entry_shell_test() {
+  const SelfTestMetrics metrics;
+
+  // SDL physical scancodes for the top-row digits (SDL3/SDL_scancode.h at the
+  // pinned commit): 1=30 through 8=37. M5-phase-25 binds only 2..8.
+  constexpr std::uint32_t kScancodeDigit1 = 30;
+  constexpr std::uint32_t kScancodeDigit2 = 31;
+  constexpr std::uint32_t kScancodeDigit3 = 32;
+
+  // SDL_Keymod bitmasks (SDL3/SDL_keycode.h at the pinned commit):
+  // SHIFT=0x0003, CTRL=0x00C0, ALT=0x0300, GUI=0x0C00.
+  constexpr std::uint16_t kModShift = 0x0003;
+  constexpr std::uint16_t kModCtrl  = 0x00C0;
+
+  // --- test 8: SDL physical-scancode digit events drive the actual
+  //     SelectionToolHandler to mutation and no-op -- the production SDL
+  //     translation path, not merely the recording handler's translation. --
+  {
+    // Unmodified SDL digit 2 -> above: C4 -> {C4, D4}.
+    auto fx = build_interval_note_fixture(metrics, 0);
+    if (!fx.has_value()) {
+      std::fprintf(stderr,
+                   "interval-entry-shell-test: fixture build failed (8a)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr,
+                   "interval-entry-shell-test: initial publish failed (8a)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}})) {
+      std::fprintf(stderr,
+                   "interval-entry-shell-test: selection rejected (8a)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_sdl_test_key_event(kScancodeDigit2, 0);
+    const std::optional<graphscore::Chord> chord =
+        first_chord(handler.project(), fx->node_id, fx->track_id, fx->stave_id);
+    if (!chord.has_value() || chord->notes.size() != 2u ||
+        chord->notes[0].id != fx->source_id ||
+        chord->notes[1].pitch != spelled(graphscore::Letter::kD, 4)) {
+      std::fprintf(
+          stderr,
+          "interval-entry-shell-test: SDL digit 2 did not add D4 (8a)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (handler.test_undo_stack_size() != 1u) {
+      std::fprintf(stderr,
+                   "interval-entry-shell-test: SDL digit 2 no history (8a)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+  {
+    // SDL Shift+3 -> below: C4 -> {C4, A3}.
+    auto fx = build_interval_note_fixture(metrics, 0);
+    if (!fx.has_value()) {
+      std::fprintf(stderr,
+                   "interval-entry-shell-test: fixture build failed (8b)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr,
+                   "interval-entry-shell-test: initial publish failed (8b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}})) {
+      std::fprintf(stderr,
+                   "interval-entry-shell-test: selection rejected (8b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_sdl_test_key_event(kScancodeDigit3, kModShift);
+    const std::optional<graphscore::Chord> chord =
+        first_chord(handler.project(), fx->node_id, fx->track_id, fx->stave_id);
+    if (!chord.has_value() || chord->notes.size() != 2u ||
+        chord->notes[1].pitch != spelled(graphscore::Letter::kA, 3)) {
+      std::fprintf(
+          stderr,
+          "interval-entry-shell-test: SDL Shift+3 did not add A3 (8b)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+  {
+    // SDL forbidden chord (Shift+Ctrl+digit 2) -> no-op.
+    auto fx = build_interval_note_fixture(metrics, 0);
+    if (!fx.has_value()) {
+      std::fprintf(stderr,
+                   "interval-entry-shell-test: fixture build failed (8c)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler handler(std::move(fx->project), std::move(fx->layout),
+                                 &shell);
+    handler.set_metrics(&metrics);
+    handler.set_surface_publisher(
+        [&shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &shell);
+        });
+    shell.set_input_handler(&handler);
+    handler.set_active_tool(graphscore::ActiveTool::kSelection);
+    if (!publish_headless_test_surface(handler.layout(), &shell).ok()) {
+      std::fprintf(stderr,
+                   "interval-entry-shell-test: initial publish failed (8c)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!select_noteheads(handler, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}})) {
+      std::fprintf(stderr,
+                   "interval-entry-shell-test: selection rejected (8c)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const std::string violation =
+        no_op_violation(handler, shell, fx->node_id, fx->track_id, fx->stave_id,
+                        "sdl forbidden chord", [&] {
+                          shell.dispatch_sdl_test_key_event(
+                              kScancodeDigit2,
+                              static_cast<std::uint16_t>(kModShift | kModCtrl));
+                        });
+    if (!violation.empty()) {
+      std::fprintf(stderr, "interval-entry-shell-test: %s (8c)\n",
+                   violation.c_str());
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    // SDL digit 1 is an unbound no-op, exactly like its neutral-KeyEvent twin.
+    const std::string digit1_violation = no_op_violation(
+        handler, shell, fx->node_id, fx->track_id, fx->stave_id, "sdl `1`",
+        [&] { shell.dispatch_sdl_test_key_event(kScancodeDigit1, 0); });
+    if (!digit1_violation.empty()) {
+      std::fprintf(stderr, "interval-entry-shell-test: %s (8c)\n",
+                   digit1_violation.c_str());
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  std::printf("interval-entry-shell-test: ok\n");
+  return 0;
+}
+
 }  // namespace
 
 // The shell allocates (window titles, backend names), so this call path can
@@ -8886,17 +10310,19 @@ int staff_step_test() {
 // and a non-zero exit. Note that the realtime prohibition on exceptions
 // applies to the runtime's process path, not to the writer application.
 int main(int argc, char** argv) {
-  bool smoke_test                = false;
-  bool run_selection_test        = false;
-  bool run_selection_shell_test  = false;
-  bool run_key_events_test       = false;
-  bool run_key_events_shell_test = false;
-  bool run_key_selection_test    = false;
-  bool run_notehead_move_test    = false;
-  bool run_accidental_step_test  = false;
-  bool run_notehead_delete_test  = false;
-  bool run_convert_to_rest_test  = false;
-  bool run_staff_step_test       = false;
+  bool smoke_test                    = false;
+  bool run_selection_test            = false;
+  bool run_selection_shell_test      = false;
+  bool run_key_events_test           = false;
+  bool run_key_events_shell_test     = false;
+  bool run_key_selection_test        = false;
+  bool run_notehead_move_test        = false;
+  bool run_accidental_step_test      = false;
+  bool run_notehead_delete_test      = false;
+  bool run_convert_to_rest_test      = false;
+  bool run_staff_step_test           = false;
+  bool run_interval_entry_test       = false;
+  bool run_interval_entry_shell_test = false;
   for (int i = 1; i < argc; ++i) {
     if (kSmokeTestFlag == argv[i]) {
       smoke_test = true;
@@ -8931,6 +10357,12 @@ int main(int argc, char** argv) {
     if (kStaffStepTestFlag == argv[i]) {
       run_staff_step_test = true;
     }
+    if (kIntervalEntryTestFlag == argv[i]) {
+      run_interval_entry_test = true;
+    }
+    if (kIntervalEntryShellTestFlag == argv[i]) {
+      run_interval_entry_shell_test = true;
+    }
   }
 
   try {
@@ -8963,6 +10395,12 @@ int main(int argc, char** argv) {
     }
     if (run_staff_step_test) {
       return staff_step_test();
+    }
+    if (run_interval_entry_test) {
+      return interval_entry_test();
+    }
+    if (run_interval_entry_shell_test) {
+      return interval_entry_shell_test();
     }
     return run(smoke_test);
   } catch (const std::exception& error) {

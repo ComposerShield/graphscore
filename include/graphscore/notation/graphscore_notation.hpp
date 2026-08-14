@@ -1962,6 +1962,55 @@ enum class StaffStepDirection : std::uint8_t { kPrevious, kNext };
     const Project& project, const NoteheadItem& notehead,
     AccidentalStepDirection direction);
 
+// Constructs a reversible domain command for the keyboard interval action
+// described in docs/plan/05-notation-editor.md M5-phase-25: "`2` through `8`
+// add a key-spelled diatonic interval above; Shift variants add below."
+//
+// `notehead` is the single selected NoteheadItem
+// (graphscore/domain/selection.hpp); `interval` is the diatonic interval
+// number (2..8), and `direction` is above (unmodified) or below (Shift). The
+// returned AddIntervalCommand re-resolves `notehead.entity` against the
+// project at execute time, so a stale identity fails atomically rather than
+// mutating a different notehead. Spelling arithmetic (interval_target_pitch,
+// graphscore/domain/add_interval_command.hpp) and identity generation live
+// entirely in AddIntervalCommand; this helper owns only the
+// selection-to-command translation, mirroring make_move_notehead_command.
+//
+// Returns nullptr when `notehead` does not name a single valid interval
+// source -- an unknown node/track/stave/lane, an archived track, an entity
+// that is not a Note/ChordNote in the addressed voice (a GraceNote has no
+// rhythmic event to grow and is rejected), a node with no timeline, or a
+// notehead whose onset falls outside the timeline's main region. Building
+// the command never mutates the project; the caller applies it through a
+// CommandHistory.
+[[nodiscard]] std::unique_ptr<Command> make_add_interval_command(
+    const Project& project, const NoteheadItem& notehead, std::uint8_t interval,
+    IntervalDirection direction);
+
+// The short audition request for the same keyboard interval action
+// make_add_interval_command above builds a command for. Adding a pitch to an
+// event changes what sounds, so it auditions exactly like note entry
+// (M5-phase-15's "Newly inserted or pitch-edited notes issue a short preview
+// request"): promoting a Note to a two-note Chord auditions both pitches,
+// and extending a Chord auditions every pitch of the resulting chord,
+// pre-existing ones included. This milestone produces the request as a value
+// and nothing plays it (graphscore_writer_audio consumes it in Milestone 08).
+//
+// A pure query over the PRE-execution project: it never mutates `project` and
+// builds no command. It returns std::nullopt -- auditions nothing -- whenever
+// the interval would fail or change nothing audible: an invalid/stale
+// notehead, a GraceNote, a node with no timeline or an onset outside the main
+// region (the same source check make_add_interval_command uses), an interval
+// outside [2, 8], a target spelling that leaves the SpelledPitch/MIDI range,
+// or a target that would duplicate a pitch already in the event. A caller
+// invokes it before executing the command and discards the request when
+// execution fails. The target pitch is resolved through the shared
+// notehead_key_signature/interval_target_pitch helpers, so the audited pitch
+// can never disagree with the pitch the command writes.
+[[nodiscard]] std::optional<NoteAuditionRequest> audition_for_add_interval(
+    const Project& project, const NoteheadItem& notehead, std::uint8_t interval,
+    IntervalDirection direction);
+
 // The short audition request for the same note-entry pointer action
 // make_note_entry_command above builds a command for
 // (docs/plan/05-notation-editor.md: "Newly inserted or pitch-edited notes

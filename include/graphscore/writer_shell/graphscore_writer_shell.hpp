@@ -47,10 +47,13 @@ struct PointerEvent {
 // Platform-neutral key identity. This is deliberately a minimum set, not a
 // general keyboard model: the arrows and Home/End M5-phase-19b's
 // Shift/keyboard range extension needs, the two character keys
-// M5-phase-21's accidental step binds (`-` and `=`), and the two delete keys
-// M5-phase-22's notehead deletion binds (Backspace and Delete). Every other
-// character/text key, key release, and the full platform-normalized action
-// table belong to M5-phase-26/M5-phase-27.
+// M5-phase-21's accidental step binds (`-` and `=`), the two delete keys
+// M5-phase-22's notehead deletion binds (Backspace and Delete), `R`
+// M5-phase-23's convert-to-rest binds, and the top-row digit keys `1`
+// through `8` M5-phase-25's diatonic-interval entry binds (`1` is a
+// recognized key that remains a no-op). Every other character/text key, key
+// release, the `9`/`0` digits, and the full platform-normalized action table
+// belong to M5-phase-26/M5-phase-27.
 //
 // Every member is translated from SDL's physical scancode in
 // writer_shell.cpp, never from the layout-dependent logical keycode. For
@@ -75,6 +78,14 @@ enum class KeyCode : std::uint8_t {
   kBackspace,
   kDelete,
   kR,
+  kDigit1,
+  kDigit2,
+  kDigit3,
+  kDigit4,
+  kDigit5,
+  kDigit6,
+  kDigit7,
+  kDigit8,
 };
 
 // Platform-neutral key modifiers, translated from SDL3's combined
