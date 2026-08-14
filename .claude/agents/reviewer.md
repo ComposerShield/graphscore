@@ -23,34 +23,28 @@ canonical commands and engineering guidance):**
   verified the tree against the reported run instead of re-executing it. If the report is
   missing, stale, ambiguous, or the tree doesn't match, run Tier 2 yourself — do not skip on
   a hunch.
-- **Tier 3** (architecture audits, clang-tidy 18 in `build/tidy`, sanitizer suites) is the
-  final gate run **once on the final candidate tree** after all findings are resolved —
-  not re-run after every small fix.
+- **Tier 3** (architecture audits, sanitizer suites) is the final gate run **once on the
+  final candidate tree** after all findings are resolved — not re-run after every small fix.
 - In fix rounds, re-reviewers inspect the delta and equivalent defect family, run relevant
   focused tests (Tier 1), and defer the full independent final gate until no findings remain.
-- If a configured environment genuinely blocks a required gate (missing clang-tidy 18,
-  no ASan toolchain), report it once as an environment block — do not repeatedly classify
-  a permission misconfiguration as a product defect.
+- If a configured environment genuinely blocks a required gate (no ASan toolchain), report
+  it once as an environment block — do not repeatedly classify a permission
+  misconfiguration as a product defect.
 - Use the worker's traceability matrix as an audit index, but independently inspect
   implementation and tests; do not trust the table as proof.
 - Check that every phase requirement has an accurate row and applicable test/evidence.
   Missing or inaccurate rows are a NEEDS WORK finding.
-- Confirm that focused canonical clang-tidy 18 was reported for affected GraphScore-owned
-  C/C++ production targets before review; a docs/config-only N/A is valid. Do not rerun
-  that focused worker check mechanically during ordinary review, and do not treat it as
-  replacing the final Tier 3 gate.
 - On fix rounds, audit the updated matrix rows and the equivalent defect family.
 
 **Verification gate:**
 - Debug build, full lint, and full test below are the Tier 2 items — run them unless skipped
-  per the Tier 2 rule above. Architecture, clang-tidy 18, and Sanitizer are Tier 3 — always
-  run independently; do not trust the worker's report for these.
+  per the Tier 2 rule above. Architecture and Sanitizer are Tier 3 — always run
+  independently; do not trust the worker's report for these.
 - Debug build: `cmake --build --preset debug` (zero warnings; warnings are errors).
 - Full lint: `cmake --build --preset debug --target lint` (cpplint + clang-format 18,
   never Apple 17; see `AGENTS.md`).
 - Full test: `ctest --preset debug --output-on-failure`.
 - Architecture: `cmake --build --preset debug --target audit_architecture`.
-- clang-tidy 18: `cmake --preset debug -B build/tidy -DGRAPHSCORE_BUILD_WRITER=OFF -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON -DGRAPHSCORE_CLANG_TIDY_EXECUTABLE=/opt/homebrew/opt/llvm@18/bin/clang-tidy` (+ isysroot on macOS), then `cmake --build build/tidy -- -k 0`.
 - Sanitizer: `cmake --preset asan-ubsan && cmake --build --preset asan-ubsan && ctest --preset asan-ubsan --output-on-failure`.
 - Focused tests: `ctest --preset debug --output-on-failure -R <pattern> -j <N>`, or direct test binaries with `--gtest_filter=<pattern>`.
 - Git inspection: `git diff`, `git diff --check`, `git log`, `git show`, `git status`.

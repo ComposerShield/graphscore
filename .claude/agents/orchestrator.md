@@ -54,20 +54,17 @@ canonical commands and engineering guidance):**
 Dispatch with the current tier explicit in the prompt. Workers use **Tier 1** (focused
 builds/tests/lint) during implementation; they run **Tier 2** (full debug build, ctest,
 lint) once before handing off for review. Reviewers run **Tier 2** independently on the
-candidate and **Tier 3** (architecture, clang-tidy 18 in `build/tidy`, sanitizers) once on
-the final approved tree. Fix workers run only Tier 1 targeted regressions. Do not
-  mechanically demand every expensive command from every round.
-- Worker prompts must require the traceability matrix and focused pre-review clang-tidy 18
-  when applicable to GraphScore-owned C/C++ production code.
+candidate and **Tier 3** (architecture, sanitizers) once on the final approved tree. Fix
+workers run only Tier 1 targeted regressions. Do not mechanically demand every expensive
+command from every round.
+- Worker prompts must require the traceability matrix.
 - Before dispatching a reviewer, inspect the worker report: do not accept the handoff if
-  any requirement row, implementation reference, applicable test/evidence, or focused
-  clang-tidy result is missing. Send that worker a targeted completion request with
-  `SendMessage` instead of spending a reviewer cycle — this is reporting cleanup on work it
-  just finished, not a new task, so it does not violate the retire-the-worker rule below.
+  any requirement row, implementation reference, or applicable test/evidence is missing.
+  Send that worker a targeted completion request with `SendMessage` instead of spending a
+  reviewer cycle — this is reporting cleanup on work it just finished, not a new task, so it
+  does not violate the retire-the-worker rule below.
 - Include the worker's traceability matrix in the reviewer brief. Fix prompts must require
   affected rows and the equivalent defect family to be updated.
-- Make clear that this focused pre-review clang-tidy check does not replace the reviewer's
-  Tier 3 clang-tidy gate and should not cause a full clang-tidy run in every fix round.
 
 **Guidelines:**
 - Use the `explore` agent for research/reconnaissance (codebase questions, architecture
@@ -88,20 +85,14 @@ the final approved tree. Fix workers run only Tier 1 targeted regressions. Do no
 - Never delegate a commit-only task to a worker. After worker implementation and reviewer
    approval, personally inspect the final diff/status, stage only the approved paths, and
    run `git commit` yourself.
-- **`git commit` needs an explicit long timeout — the default 2 minutes is not enough.**
-   `.githooks/pre-commit` runs cpplint and clang-format 18 on staged files, then delegates to
-   `.githooks/pre-push` for the full const-correctness clang-tidy 18 analysis, which
-   configures and builds `build/tidy`. That routinely runs several minutes on a cold or
-   stale tidy tree. Always pass an explicit generous `timeout` on the commit call (600000,
-   the maximum, is the safe default). If the call times out anyway, **the commit did not
-   land and nothing is half-applied** — the hook is killed before `git` writes the commit
-   and your staged paths remain staged. Confirm with `git log --oneline -1` and
-   `git status --short`, then simply re-run the same commit with the longer timeout.
-- **Do not reach for `git commit --no-verify` to dodge the wait.** The CI clang-tidy job is
-   currently disabled (see the Platform caveats in `AGENTS.md`), so this hook is the only
-   thing enforcing const-correctness. Bypass it only when Adam explicitly asks, or for a
-   commit that provably touches no C/C++ (agent definitions, plan files, docs) — and say so
-   when you do.
+- **`git commit` runs the pre-commit hook** (cpplint + clang-format 18 on staged files), so
+   pass an explicit generous `timeout` on the commit call. If the call times out, **the
+   commit did not land and nothing is half-applied** — the hook is killed before `git` writes
+   the commit and your staged paths remain staged. Confirm with `git log --oneline -1` and
+   `git status --short`, then simply re-run the same commit.
+- **Do not reach for `git commit --no-verify` to dodge the lint hook.** Bypass it only when
+   Adam explicitly asks, or for a commit that provably touches no C/C++ (agent definitions,
+   plan files, docs) — and say so when you do.
 - You may run appropriate tiered verification yourself when coordinating or finalizing,
    but do not redundantly rerun full suites the reviewer has already completed.
 - Surface genuine scope questions to Adam rather than inventing requirements; the plan files

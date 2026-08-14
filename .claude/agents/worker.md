@@ -30,8 +30,7 @@ canonical commands and engineering guidance):**
   zero warnings, full `ctest --preset debug --output-on-failure`, full lint target.
 - Fix-round workers run narrow regressions matching the specific finding and affected
   target — not the full test suite. Report exactly which focused tests ran.
-- The reviewer runs **Tier 3** (architecture audits, clang-tidy 18 in `build/tidy`,
-  sanitizers) on the final approved tree.
+- The reviewer runs **Tier 3** (architecture audits, sanitizers) on the final approved tree.
 - Before Tier 2 / review handoff, perform a requirement-by-requirement self-audit against
   the phase spec and include a compact traceability matrix in the report with columns
   equivalent to `Requirement | Implementation (files/symbols) | Tests/evidence`. Every
@@ -39,12 +38,6 @@ canonical commands and engineering guidance):**
   missing applicable test/evidence blocks handoff; genuinely non-testable or N/A rows
   require a short justification. Fix workers update or re-audit affected rows and the
   equivalent defect family.
-- Before Tier 2, when GraphScore-owned C/C++ production code changed, run focused
-  canonical clang-tidy 18 for only the affected target(s) in `build/tidy` (normally
-  `cmake --build build/tidy --target <affected-target>`, configuring the canonical tree
-  per AGENTS.md if needed). Report exact target(s) and result. This is an early defect
-  check and does not replace the reviewer's Tier 3 run. For docs/config-only changes,
-  state not applicable rather than running C++ analysis.
 
 **Guidelines:**
 - Read and understand the existing codebase conventions before making changes. Follow

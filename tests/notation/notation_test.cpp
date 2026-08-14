@@ -701,7 +701,6 @@ TEST(NotationLayoutTest, CentralizesExactSmuflBravuraVocabularyAndFallback) {
   }
   // Test-only malformed-input boundary: intentionally construct an unknown
   // enum value to verify the public fallback behavior.
-  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
   EXPECT_EQ(graphscore::smufl_codepoint(static_cast<SmuflGlyph>(255)),
             U'\uFFFD');
 }

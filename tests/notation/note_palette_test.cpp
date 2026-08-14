@@ -257,10 +257,8 @@ TEST(NotePaletteStateTest,
      OutOfRangeArticulationIsRejectedAndNeverCorruptsTheMask) {
   // Test-only malformed-input boundary: intentionally construct unknown
   // enum values to verify articulation_bit()'s out-of-range policy.
-  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
   const auto adjacent = static_cast<Articulation>(kArticulationCount);
-  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
-  const auto far = static_cast<Articulation>(200);
+  const auto far      = static_cast<Articulation>(200);
 
   for (const Articulation out_of_range : {adjacent, far}) {
     EXPECT_FALSE(default_state().has_articulation(out_of_range));

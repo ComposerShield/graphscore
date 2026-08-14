@@ -25,7 +25,6 @@ permission:
     "cmake --build *preset debug*": allow
     "cmake --build *preset asan-ubsan*": allow
     "cmake --build *preset release*": allow
-    "cmake --build *build/tidy*": allow
     "ctest *preset debug*": allow
     "ctest *preset asan-ubsan*": allow
     "ctest *preset release*": allow
@@ -51,8 +50,8 @@ If it does not declare exactly one mode, stop and request a corrected prompt.
   the tree against the reported run instead of re-executing it. If the report is missing,
   stale, ambiguous, or the tree doesn't match, run Tier 2 yourself — do not skip on a hunch.
   If there are no findings (Tier 2 run or verified-skipped), continue yourself to the one
-  final exact-tree **Tier 3** gate: Tier 2 plus all seven architecture audits, canonical
-  clang-tidy 18 in `build/tidy`, applicable sanitizer suites, and milestone-specific gates.
+  final exact-tree **Tier 3** gate: Tier 2 plus all seven architecture audits and applicable
+  sanitizer suites.
 - In `TARGETED_REREVIEW`, inspect only the prior findings, fix worker changed paths/delta,
   affected traceability rows, and equivalent defect family. Run only focused **Tier 1** tests
   while findings remain. Do not restart the full phase audit, re-review unaffected
@@ -66,21 +65,17 @@ If it does not declare exactly one mode, stop and request a corrected prompt.
 - Documentation-only changes that do not alter build, hooks, or configuration behavior use
   diff/frontmatter/script validation rather than repeating C++ sanitizer cycles; apply final
   gates as appropriate to the final candidate.
-- If a configured environment genuinely blocks a required gate (missing clang-tidy 18,
-  no ASan toolchain), report it once as an environment block — do not repeatedly classify
-  a permission misconfiguration as a product defect.
+- If a configured environment genuinely blocks a required gate (no ASan toolchain), report
+  it once as an environment block — do not repeatedly classify a permission
+  misconfiguration as a product defect.
 - Use the supplied traceability rows as an audit index, but independently inspect
   implementation and tests within the declared scope; do not trust the table as proof.
-- In initial review, confirm that focused canonical clang-tidy 18 was reported for affected
-  GraphScore-owned C/C++ production targets; a docs/config-only N/A is valid. In targeted
-  re-review, do not rerun that worker check mechanically unless the finding calls for it or
-  the fix changed target scope. Focused worker tidy never replaces the final Tier 3 gate.
 - In initial review, check that every phase requirement has an accurate row and applicable
   evidence. In targeted re-review, audit only supplied affected rows and equivalent family.
 
 Independently inspect implementation and tests within the declared mode; never trust the
 worker's report or traceability table as proof. Use the canonical commands in `AGENTS.md` when
-the declared tier requires builds, lint, tests, architecture audits, or clang-tidy.
+the declared tier requires builds, lint, tests, or architecture audits.
 
 **Review checklist (apply only within the declared review mode's scope):**
 1. **Correctness** — Does the code do what it claims? Edge cases, off-by-one errors, null

@@ -64,11 +64,11 @@ milestone bookkeeping under `docs/plan/`. You may also run shell commands for re
   `cmake --build --preset debug --target lint`.
 - **Tier 3 — final exact-tree gate:** once on the final candidate tree, require Tier 2
   evidence from that same exact tree plus all seven architecture audits through
-  `audit_architecture`, canonical clang-tidy 18 in `build/tidy`, applicable sanitizer suites,
-  and milestone-specific gates. If the same reviewer just completed Tier 2 and the tree has
-  not changed, continue with these additional gates without rerunning Tier 2. If fixes changed
-  the tree since Tier 2, the final targeted re-reviewer runs Tier 2 on that final tree as part
-  of Tier 3. Tier 3 is one final exact-tree verification, not another full code review.
+  `audit_architecture`, applicable sanitizer suites, and milestone-specific gates. If the
+  same reviewer just completed Tier 2 and the tree has not changed, continue with these
+  additional gates without rerunning Tier 2. If fixes changed the tree since Tier 2, the
+  final targeted re-reviewer runs Tier 2 on that final tree as part of Tier 3. Tier 3 is one
+  final exact-tree verification, not another full code review.
 - Documentation-only work that does not alter build, hooks, or configuration behavior uses
   diff/frontmatter/script validation instead of repeating C++ sanitizer cycles. Apply final
   required gates to the final candidate as appropriate.
@@ -79,13 +79,9 @@ milestone bookkeeping under `docs/plan/`. You may also run shell commands for re
   report a compact matrix equivalent to
   `Requirement | Implementation (files/symbols) | Tests/evidence`. Every row needs accurate
   implementation and applicable evidence; justify genuinely non-testable or N/A entries.
-- Before Tier 2, if GraphScore-owned C/C++ production code changed, require focused canonical
-  clang-tidy 18 for only affected targets in `build/tidy`, configured using the canonical
-  commands in `AGENTS.md`. The worker reports exact targets and results. Docs/config-only
-  work reports N/A. This early check does not replace Tier 3 clang-tidy.
 - Screen the worker report before review. If any requirement row, implementation reference,
-  applicable evidence, Tier 2 result, or applicable focused-tidy result is missing, request
-  targeted completion rather than spending a reviewer cycle.
+  applicable evidence, or Tier 2 result is missing, request targeted completion rather than
+  spending a reviewer cycle.
 
 **Review and fix workflow (non-negotiable):**
 
@@ -99,8 +95,6 @@ milestone bookkeeping under `docs/plan/`. You may also run shell commands for re
    A small immediate fix may resume the same worker; substantial work or a long session gets
    a fresh worker and self-contained prompt. Require only targeted Tier 1 regressions and
    updated affected traceability rows plus the equivalent defect family.
-   Do not mechanically repeat focused worker clang-tidy on every fix; require it when the
-   finding calls for it or the fix changes the affected production target scope.
 3. Dispatch a **fresh reviewer for unbiased targeted validation** in
    `TARGETED_REREVIEW` mode. Provide prior findings, the fix worker's changed paths/delta,
    affected traceability rows, equivalent defect family, and focused-test evidence. The
@@ -122,20 +116,14 @@ milestone bookkeeping under `docs/plan/`. You may also run shell commands for re
   edits are limited to required milestone bookkeeping under `docs/plan/`. You may run shell
   commands for repository inspection, worktree/stash hygiene, verification, staging,
   and committing.
-- **`git commit` needs an explicit long timeout — a default ~2 minute bash timeout is not
-   enough.** `.githooks/pre-commit` runs cpplint and clang-format 18 on staged files, then
-   delegates to `.githooks/pre-push` for the full const-correctness clang-tidy 18 analysis,
-   which configures and builds `build/tidy`. That routinely runs several minutes on a cold
-   or stale tidy tree. Always pass an explicit generous timeout on the commit call (10
-   minutes is the safe default). If the call times out anyway, **the commit did not land and
-   nothing is half-applied** — the hook is killed before `git` writes the commit and your
-   staged paths remain staged. Confirm with `git log --oneline -1` and `git status --short`,
-   then simply re-run the same commit with the longer timeout.
-- **Do not reach for `git commit --no-verify` to dodge the wait.** The CI clang-tidy job is
-   currently disabled (see the Platform caveats in `AGENTS.md`), so this hook is the only
-   thing enforcing const-correctness. Bypass it only when Adam explicitly asks, or for a
-   commit that provably touches no C/C++ (agent definitions, plan files, docs) — and say so
-   when you do.
+- **`git commit` runs the pre-commit hook** (cpplint + clang-format 18 on staged files), so
+  pass an explicit generous timeout on the commit call. If the call times out, **the commit
+  did not land and nothing is half-applied** — the hook is killed before `git` writes the
+  commit and your staged paths remain staged. Confirm with `git log --oneline -1` and
+  `git status --short`, then simply re-run the same commit.
+- **Do not reach for `git commit --no-verify` to dodge the lint hook.** Bypass it only when
+  Adam explicitly asks, or for a commit that provably touches no C/C++ (agent definitions,
+  plan files, docs) — and say so when you do.
 - Keep subagent sessions short — long resumed contexts degrade quality and waste tokens.
   Prefer fresh dispatches with self-contained prompts; resume a prior session only for tight,
   small follow-ups.

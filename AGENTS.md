@@ -34,7 +34,7 @@ satisfy).
 | `tools/` | Developer-facing helper executables that are not part of the shipped product. |
 | `cmake/` | CMake modules: compiler/warning setup, dependency adapters (one file per third-party dependency, e.g. `SDL3.cmake`), the runtime install/export package (`RuntimePackage.cmake`), and the architecture audit (`architecture_contract.cmake` — the machine-readable ADR 0003 contract — plus `audit_permitted_edges.cmake`, `audit_link_closure.cmake`, `audit_transitive_closure.cmake`). |
 | `scripts/` | Non-CMake tooling: Python audit scripts (`audit_includes.py`, `audit_runtime_symbols.py`, `audit_cycles.py`, `audit_third_party_types.py`, sharing `graphscore_audit.py`) and `bootstrap.sh`. |
-| `.githooks/` | Tracked Git hooks (`pre-commit`: cpplint + clang-format 18 on staged files; `pre-push`: the const-correctness clang-tidy analysis). Installed by `scripts/bootstrap.sh`; never installed automatically. |
+| `.githooks/` | Tracked Git hooks (`pre-commit`: cpplint + clang-format 18 on staged files). Installed by `scripts/bootstrap.sh`; never installed automatically. |
 | `docs/plan/` | The milestone plan and the source-controlled execution checklist. |
 | `docs/decisions/` | Accepted ADRs. |
 | `docs/licenses/`, `NOTICES.md` | Third-party license inventory. |
@@ -45,8 +45,7 @@ satisfy).
 All commands run from the repository root unless noted.
 
 ```sh
-# One-time: install the tracked Git hooks (pre-commit lint, pre-push
-# clang-tidy).
+# One-time: install the tracked Git hooks (pre-commit lint).
 ./scripts/bootstrap.sh
 
 # Configure + build (presets defined in CMakePresets.json).
@@ -70,31 +69,6 @@ cmake --preset asan-ubsan && cmake --build --preset asan-ubsan && ctest --preset
 # hook on staged files, and by CI over the whole tree).
 cmake --build --preset debug --target lint
 
-# Const-correctness analysis. Canonical build tree is `build/tidy` (matching
-# `.githooks/pre-push`, which runs the same clang-tidy 18 analysis and blocks
-# the commit on findings — it is now a pre-commit gate, not only pre-push).
-# Configure this once per session; subsequent builds are incremental.
-#
-# Use clang-tidy 18 to match CI. Check selections and their defaults change
-# between releases, so another version will report a different set — newer
-# ones both add and drop findings. Note that `brew install llvm` gives the
-# latest major version, not 18. Matching installs:
-#   brew install llvm@18            (macOS; keg-only, the hook finds it)
-#   sudo apt install clang-tidy-18  (Debian/Ubuntu)
-#   pip install clang-tidy==18.1.8  (any platform)
-cmake --preset debug -B build/tidy \
-  -DGRAPHSCORE_BUILD_WRITER=OFF \
-  -DGRAPHSCORE_ENABLE_CLANG_TIDY=ON \
-  -DGRAPHSCORE_CLANG_TIDY_EXECUTABLE=/opt/homebrew/opt/llvm@18/bin/clang-tidy
-#
-# On macOS, a non-Apple clang-tidy (Homebrew or the official LLVM builds
-# pip installs) does not inherit AppleClang's implicit SDK include path and
-# fails to find libc++ headers without it; the pre-push hook adds it itself.
-# For a manual run, append:
-#   -DCMAKE_CXX_FLAGS="-isysroot $(xcrun --show-sdk-path)" \
-#   -DCMAKE_C_FLAGS="-isysroot $(xcrun --show-sdk-path)"
-cmake --build build/tidy -- -k 0   # -k 0: report every file, not the first
-
 # Architecture boundary audit (ADR 0003 §7).
 cmake --build --preset debug --target audit_architecture
 ```
@@ -108,18 +82,14 @@ Command Line Tools clang-format 17. Matching installs are
 unversioned executable only when it reports major 18. If CMake cannot discover
 it, configure with
 `-DGRAPHSCORE_CLANG_FORMAT_EXECUTABLE=/opt/homebrew/opt/llvm@18/bin/clang-format`
-(or the matching installed path). This formatting policy is separate from the
-clang-tidy 18 const-correctness guidance above.
+(or the matching installed path).
 
 Every command above picks up **ccache** when it is installed:
 `cmake/Ccache.cmake` finds it at configure time (Homebrew prefixes included,
 since a Git hook does not always inherit them) and sets the compiler launcher
 for GraphScore's targets and its `FetchContent` dependencies. Install with
 `brew install ccache` or `sudo apt install ccache`; opt out with
-`-DGRAPHSCORE_USE_CCACHE=OFF`. It matters most for the pre-commit hook:
-clang-tidy parses each translation unit separately from the compiler, so
-caching the compile removes about a fifth of the hook's wall time — the
-analysis itself is never cached. ThorVG is outside this, building through
+`-DGRAPHSCORE_USE_CCACHE=OFF`. ThorVG is outside this, building through
 Meson (`cmake/ThorVG.cmake`), which detects ccache itself.
 
 `FETCHCONTENT_SOURCE_DIR_<NAME>` (e.g. `FETCHCONTENT_SOURCE_DIR_SDL3`) points
@@ -169,8 +139,8 @@ Local development must also meet the floor: run `clang++ --version` and
 compare against the table. `macos-14` is **not** a supported build host — its
 newest Xcode is 16.2, still Apple Clang 16.
 
-This is separate from the pinned **clang-format 18** and **clang-tidy 18**
-above, which are analysis tools rather than compilers.
+This is separate from the pinned **clang-format 18** above, which is an
+analysis tool rather than a compiler.
 
 ## C++23 and const-correctness
 
@@ -179,10 +149,7 @@ above, which are analysis tools rather than compilers.
   message.
 - Prefer `constexpr`; otherwise `const`; mutable state requires a
   demonstrated need. The five accepted exception categories — realtime state,
-  atomics, caches, platform handles, move-from sources and out-parameters —
-  are enumerated in `cmake/ConstCorrectness.cmake`; the check selection is in
-  the root `.clang-tidy`. A `NOLINT` must name both the check it suppresses
-  and the category that justifies it; a bare `NOLINT` is a review defect.
+  atomics, caches, platform handles, move-from sources and out-parameters.
 - Do not add `const` to interfaces or return values where it does not
   increase safety and only adds friction.
 
@@ -329,37 +296,9 @@ rationale.
 - Windows arm64 and Linux arm64 are build-only in CI; native test execution
   is not required there. macOS arm64/x86-64 and Windows/Linux x86-64 build
   and run tests natively.
-- The sanitizer and clang-tidy CI jobs configure with
-  `-DGRAPHSCORE_BUILD_WRITER=OFF`. Instrumenting or analysing SDL3 costs most
-  of those jobs' time on third-party code GraphScore does not own.
-- The clang-tidy CI job is currently commented out in
-  `.github/workflows/ci.yml`. It was the workflow's critical path, and the
-  fix — a 16-core larger runner — needs a Team or Enterprise Cloud plan that
-  a personal-account repository cannot provision. Until this repository moves
-  to an organization account, const-correctness is enforced only by
-  `.githooks/pre-commit`, so running `./scripts/bootstrap.sh` is no longer
-  optional: without the hooks installed, nothing checks it.
-- Because `.githooks/pre-push`'s const-correctness analysis configures with
-  `-DGRAPHSCORE_BUILD_WRITER=OFF` (matching the disabled CI job's own scope,
-  for the same third-party-code-cost reason above), any code inside a
-  `#if defined(GRAPHSCORE_HAVE_RENDERING_BACKEND)` block (or any other
-  writer-only, `GRAPHSCORE_BUILD_WRITER`-gated branch) is never reached by
-  either the hook or CI's clang-tidy analysis — `src/rendering/rendering.cpp`
-  is the current example. A second, writer-ON local pass was considered and
-  rejected for the hook specifically: configuring with
-  `-DGRAPHSCORE_BUILD_WRITER=ON` unconditionally fetches and configures SDL3
-  and drives ThorVG's separate Meson/Ninja build (`cmake/ThorVG.cmake`) even
-  when the tidy target list is scoped to `graphscore_rendering` alone, since
-  all four M05 rendering dependencies are fetched together behind one
-  `if (GRAPHSCORE_BUILD_WRITER)` gate — the same cost profile that took the
-  CI clang-tidy job off the critical path in the first place, now forced
-  onto every local `git push` rather than only on changes that touch a
-  gated branch. Until this repository moves to an organization account and
-  restores the CI clang-tidy job (at which point it should run the writer-ON
-  configuration too, closing this gap centrally), a reviewer or worker
-  touching a `GRAPHSCORE_BUILD_WRITER`-gated branch must run the canonical
-  `build/tidy` command above with `-DGRAPHSCORE_BUILD_WRITER=ON` by hand and
-  report the result, as this milestone's rendering-dependency work did.
+- The sanitizer CI jobs configure with
+  `-DGRAPHSCORE_BUILD_WRITER=OFF`. Instrumenting SDL3 costs most of those
+  jobs' time on third-party code GraphScore does not own.
 - Linux needs X11, Wayland, xkbcommon, and OpenGL (`libgl-dev`,
   `mesa-common-dev`) development packages for the SDL3 build; see
   `.github/workflows/ci.yml` for the exact list. The OpenGL headers back

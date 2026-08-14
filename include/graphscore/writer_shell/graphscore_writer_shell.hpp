@@ -192,7 +192,6 @@ class WriterShell {
   // the point the destructor is instantiated — defaulting in-class would not
   // compile. performance-trivially-destructible sees only the translation
   // unit where Impl is complete and cannot know that.
-  // NOLINTNEXTLINE(performance-trivially-destructible)
   ~WriterShell();
 
   WriterShell(const WriterShell&)            = delete;
@@ -276,9 +275,8 @@ class WriterShell {
   // apply — key events carry no coordinates.  Does nothing when no handler
   // is registered.  Compiles and behaves identically in writer-ON and
   // writer-OFF builds, and lives in the shared (non-#ifdef) region of
-  // writer_shell.cpp for that reason — which also means the writer-OFF
-  // clang-tidy pre-commit hook analyses this seam, unlike the SDL
-  // translation helpers in writer_shell.cpp.
+  // writer_shell.cpp for that reason, unlike the SDL translation helpers in
+  // writer_shell.cpp.
   void dispatch_test_key_event(KeyEvent event);
 
   // Test-only: inject a synthetic key event through the actual production

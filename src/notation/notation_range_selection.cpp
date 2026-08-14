@@ -150,7 +150,6 @@ constexpr std::int64_t kRangeSelectionGridDenominator = 192;
       // Voice::create fails only when index < kMin || index > kMax
       // (graphscore/core/voice.hpp), and this loop's own bounds keep
       // voice_index within [kMin, kMax] throughout, so this can never fail.
-      // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
       const Voice         voice   = *Voice::create(voice_index);
       const VoiceContent& content = voices->voice(voice);
       if (!voice_overlaps_span(content, span)) {

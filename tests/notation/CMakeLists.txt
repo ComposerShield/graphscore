@@ -16,7 +16,6 @@ add_executable(graphscore_notation_test
 
 target_compile_features(graphscore_notation_test PRIVATE cxx_std_23)
 graphscore_apply_warnings(graphscore_notation_test)
-graphscore_apply_const_correctness(graphscore_notation_test)
 
 target_include_directories(graphscore_notation_test
   PRIVATE

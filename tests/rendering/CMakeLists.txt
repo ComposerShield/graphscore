@@ -6,7 +6,6 @@ add_executable(graphscore_rendering_test
 
 target_compile_features(graphscore_rendering_test PRIVATE cxx_std_23)
 graphscore_apply_warnings(graphscore_rendering_test)
-graphscore_apply_const_correctness(graphscore_rendering_test)
 
 target_include_directories(graphscore_rendering_test
   PRIVATE

@@ -34,8 +34,7 @@ namespace graphscore {
 #ifdef GRAPHSCORE_HAVE_SDL3
 
 struct WriterShell::Impl {
-  // Platform handle: non-const because SDL's C API takes non-const pointers
-  // (cmake/ConstCorrectness.cmake, exception category 4).
+  // Platform handle: non-const because SDL's C API takes non-const pointers.
   SDL_Window* window            = nullptr;
   bool        initialised_video = false;
   std::string backend;
@@ -145,8 +144,8 @@ void dispatch_sdl_event(InputHandler* handler, SDL_Renderer* renderer,
   const double sx = test_dpi_scale != 0.0 ? test_dpi_scale : dpi_scale_x;
   const double sy = test_dpi_scale != 0.0 ? test_dpi_scale : dpi_scale_y;
 
-  if (!SDL_SetRenderScale(renderer, static_cast<float>(sx),  // NOLINT
-                          static_cast<float>(sy))) {         // NOLINT
+  if (!SDL_SetRenderScale(renderer, static_cast<float>(sx),
+                          static_cast<float>(sy))) {
     return ShellResult{
         ShellError::kRenderingSetupFailed,
         std::string("SDL_SetRenderScale failed: ").append(SDL_GetError())};
@@ -400,11 +399,11 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
 [[nodiscard]] PointerButton sdl_button_to_pointer_button(
     std::uint8_t sdl_button) noexcept {
   switch (sdl_button) {
-    case 1:  // NOLINT(readability-magic-numbers)
+    case 1:
       return PointerButton::kPrimary;
-    case 3:  // NOLINT(readability-magic-numbers)
+    case 3:
       return PointerButton::kSecondary;
-    case 2:  // NOLINT(readability-magic-numbers)
+    case 2:
       return PointerButton::kMiddle;
     default:
       return PointerButton::kUnknown;
@@ -791,8 +790,7 @@ void WriterShell::dispatch_test_key_event(KeyEvent event) {
   // Unlike the pointer headless seam, key events carry no coordinates, so
   // there is no DPI scale to apply here — the event is delivered
   // unchanged. This function lives outside any GRAPHSCORE_HAVE_SDL3
-  // #ifdef, so it compiles identically in writer-ON and writer-OFF
-  // builds, and the writer-OFF clang-tidy pre-commit hook analyses it.
+  // #ifdef, so it compiles identically in writer-ON and writer-OFF builds.
   handler->on_key_press(event);
 }
 

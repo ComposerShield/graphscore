@@ -157,7 +157,6 @@ TEST(VoiceRevisionLineageTest, MoveConstructionInvalidatesSourceTokens) {
   EXPECT_FALSE(destination.delta_since(source_token).has_value());
   // Accepted move-from source category: exercise the documented valid
   // moved-from token invalidation and reuse contract.
-  // NOLINTNEXTLINE(clang-analyzer-cplusplus.Move)
   EXPECT_FALSE(source.delta_since(source_token).has_value());
   const auto moved_from_token = source.capture_revision();
   ASSERT_TRUE(
@@ -182,7 +181,6 @@ TEST(VoiceRevisionLineageTest, MoveAssignmentInvalidatesSourceTokens) {
   EXPECT_FALSE(destination.delta_since(destination_token).has_value());
   // Accepted move-from source category: exercise the documented valid
   // moved-from token invalidation and reuse contract.
-  // NOLINTNEXTLINE(clang-analyzer-cplusplus.Move)
   EXPECT_FALSE(source.delta_since(source_token).has_value());
   const auto moved_from_token = source.capture_revision();
   ASSERT_TRUE(
@@ -207,7 +205,6 @@ TEST(TrackLaneRevisionLineageTest, MoveConstructionInvalidatesSourceTokens) {
   EXPECT_FALSE(destination.pedal_delta_since(source_token).has_value());
   // Accepted move-from source category: exercise the documented valid
   // moved-from token invalidation and reuse contract.
-  // NOLINTNEXTLINE(clang-analyzer-cplusplus.Move)
   EXPECT_FALSE(source.pedal_delta_since(source_token).has_value());
   const auto    moved_from_token = source.capture_revision();
   const StaveId new_stave        = StaveId::generate();
@@ -238,7 +235,6 @@ TEST(TrackLaneRevisionLineageTest, MoveAssignmentInvalidatesSourceTokens) {
   EXPECT_FALSE(destination.pedal_delta_since(destination_token).has_value());
   // Accepted move-from source category: exercise the documented valid
   // moved-from token invalidation and reuse contract.
-  // NOLINTNEXTLINE(clang-analyzer-cplusplus.Move)
   EXPECT_FALSE(source.pedal_delta_since(source_token).has_value());
   const auto    moved_from_token = source.capture_revision();
   const StaveId new_stave        = StaveId::generate();

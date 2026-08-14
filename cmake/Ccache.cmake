@@ -6,9 +6,8 @@
 # Why this is a module rather than a flag on each command
 # ---------------------------------------------------------------------------
 #
-# Every configure path in this repository benefits: the presets, the ad-hoc
-# `build/tidy` tree the Git hooks configure, the scratch tree
-# `graphscore_offline_dependencies` configures, and any tree a developer
+# Every configure path in this repository benefits: the presets, the scratch
+# tree `graphscore_offline_dependencies` configures, and any tree a developer
 # configures by hand. Auto-detecting here means no command in AGENTS.md has
 # to carry a `-DCMAKE_CXX_COMPILER_LAUNCHER=` argument, and a machine without
 # ccache installed keeps working unchanged.
@@ -20,22 +19,6 @@
 # driven through its own Meson/Ninja build (cmake/ThorVG.cmake), not as a
 # CMake subproject, so this variable never reaches it. Meson performs its own
 # ccache detection from the PATH, which is the only mechanism available there.
-#
-# ---------------------------------------------------------------------------
-# Interaction with the const-correctness analysis
-# ---------------------------------------------------------------------------
-#
-# In a `GRAPHSCORE_ENABLE_CLANG_TIDY=ON` tree the two compose rather than
-# conflict: CMake emits
-#
-#   cmake -E __run_co_compile --tidy=<clang-tidy> -- <launcher> <compiler> ...
-#
-# so clang-tidy still analyzes every translation unit it would have analyzed
-# without a cache, and only the compile half is served from the cache. This is
-# deliberate — the analysis is the part whose findings gate the commit, and it
-# is also the expensive half (roughly 3-4x the compile on this codebase). The
-# cache removes the redundant compile that runs alongside it, not the
-# analysis.
 #
 # ---------------------------------------------------------------------------
 # CMake wiring

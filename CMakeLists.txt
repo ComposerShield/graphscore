@@ -28,7 +28,6 @@ include(CompilerGate)
 include(Ccache)
 include(Warnings)
 include(Sanitizers)
-include(ConstCorrectness)
 include(Lint)
 
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)

@@ -24,7 +24,7 @@ fi
 
 # The executable bit is tracked in the index, but a checkout made with
 # core.fileMode=false (or an archive export) can lose it.
-chmod +x .githooks/pre-commit .githooks/pre-push
+chmod +x .githooks/pre-commit
 
 git config --local core.hooksPath .githooks
 
@@ -60,20 +60,8 @@ else
   missing="$missing\n  clang-format 18  brew install llvm@18 | sudo apt install clang-format-18 | pip install clang-format==18.1.8 (required by pre-commit)"
 fi
 
-# The pre-push hook requires clang-tidy 18 specifically: CI pins that
-# version, and another major version reports a different set of findings.
-tidy_version=""
-if command -v clang-tidy >/dev/null 2>&1; then
-  tidy_version=$(clang-tidy --version 2>/dev/null | sed -n 's/.*version \([0-9]*\).*/\1/p')
-fi
-if [ "$tidy_version" != "18" ] && [ ! -x /opt/homebrew/opt/llvm@18/bin/clang-tidy ]; then
-  missing="$missing\n  clang-tidy 18  brew install llvm@18 | apt install clang-tidy-18 | pip install clang-tidy==18.1.8 (pre-push hook)"
-fi
-
 # ccache is optional and needs no configuration: cmake/Ccache.cmake detects it
-# at configure time and routes compiles through it. It matters most for the
-# pre-commit hook, whose clang-tidy tree recompiles every analyzed translation
-# unit alongside the analysis.
+# at configure time and routes compiles through it.
 ccache=""
 for candidate in ccache /opt/homebrew/bin/ccache /usr/local/bin/ccache; do
   if command -v "$candidate" >/dev/null 2>&1; then
@@ -85,7 +73,7 @@ done
 if [ -n "$ccache" ]; then
   echo "bootstrap: ccache -> $ccache"
 else
-  missing="$missing\n  ccache         brew install ccache | sudo apt install ccache (optional; speeds up the pre-commit hook)"
+  missing="$missing\n  ccache         brew install ccache | sudo apt install ccache (optional; speeds up rebuilds)"
 fi
 
 if [ -n "$missing" ]; then

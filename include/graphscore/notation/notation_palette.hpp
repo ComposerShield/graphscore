@@ -245,10 +245,8 @@ class NotePaletteState {
   // either std::nullopt or an already-validated TupletRatio. So
   // Duration::create(note_value_, dots_, tuplet_) can never fail here, and
   // this returns Duration by value rather than pushing a dead optional
-  // branch onto every caller. clang-tidy's dataflow analysis cannot see
-  // that class invariant across this call, hence the suppression below.
+  // branch onto every caller.
   [[nodiscard]] constexpr Duration resolved_duration() const noexcept {
-    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
     return *Duration::create(note_value_, dots_, tuplet_);
   }
 
