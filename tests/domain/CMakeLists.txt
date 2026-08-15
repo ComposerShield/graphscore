@@ -4,7 +4,31 @@ add_executable(graphscore_domain_test
   articulation_test.cpp
   clef_lane_test.cpp
   clipboard_command_test.cpp
-  command_test.cpp
+  command/command_basic_history_test.cpp
+  command/command_connector_event_8d_test.cpp
+  command/command_connector_name_8c_test.cpp
+  command/command_graph_route_8c_test.cpp
+  command/command_history_transaction_test.cpp
+  command/command_marking_lifecycle_test.cpp
+  command/command_marking_scope_test.cpp
+  command/command_marking_test.cpp
+  command/command_move_notehead_test.cpp
+  command/command_property_8b_integration_test.cpp
+  command/command_property_8b_test.cpp
+  command/command_set_event_test.cpp
+  command/command_set_tie_test.cpp
+  command/command_step_accidental_test.cpp
+  command/command_tempo_test.cpp
+  command/command_test_support.cpp
+  command/command_test_tempo_support.cpp
+  command/command_timeline_pickdown_test.cpp
+  command/command_track_node_8d_test.cpp
+  command/command_track_output_8c_test.cpp
+  command/command_transaction_compensation_test.cpp
+  command/command_transaction_order_test.cpp
+  command/command_voice_event_duration_test.cpp
+  command/command_voice_event_rest_test.cpp
+  command/command_voice_event_semantics_test.cpp
   connector_test.cpp
   create_voice_stream_command_test.cpp
   duplicate_nodes_command_test.cpp
