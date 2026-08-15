@@ -11,7 +11,21 @@ add_executable(graphscore_notation_test
   note_entry_test.cpp
   note_palette_test.cpp
   note_preview_test.cpp
-  selection_resolver_test.cpp
+  selection/selection_drag_lifecycle_test.cpp
+  selection/selection_highlight_rects_test.cpp
+  selection/selection_hit_isolation_test.cpp
+  selection/selection_hit_notehead_column_test.cpp
+  selection/selection_hit_object_kind_test.cpp
+  selection/selection_hit_regression_test.cpp
+  selection/selection_hit_stemless_defect_test.cpp
+  selection/selection_hit_tie_geometry_test.cpp
+  selection/selection_measure_extension_test.cpp
+  selection/selection_measure_test.cpp
+  selection/selection_range_extension_test.cpp
+  selection/selection_range_spec_test.cpp
+  selection/selection_range_test.cpp
+  selection/selection_staff_step_test.cpp
+  selection/selection_test_support.cpp
 )
 
 target_compile_features(graphscore_notation_test PRIVATE cxx_std_23)
