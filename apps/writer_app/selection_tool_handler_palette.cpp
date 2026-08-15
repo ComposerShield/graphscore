@@ -257,6 +257,31 @@ bool SelectionToolHandler::copy_cut_available() const {
   return graphscore::extract_fragment(project_, *committed).status.ok();
 }
 
+// M5-phase-28b: exact make_insert_measure_command/make_delete_measure_command
+// eligibility against the committed selection, so the palette can never offer
+// a measure-structure row its own execution would reject. The sole-measure
+// delete guard and the alignment/arm checks both live in the domain helper,
+// so insert and delete eligibility naturally differ without any duplicated
+// precondition logic here.
+bool SelectionToolHandler::measure_insert_available(
+    graphscore::MeasureInsertMode mode) const {
+  const auto& committed = drag_.committed_selection();
+  if (!committed.has_value()) {
+    return false;
+  }
+  return graphscore::make_insert_measure_command(project_, *committed, mode) !=
+         nullptr;
+}
+
+bool SelectionToolHandler::measure_delete_available() const {
+  const auto& committed = drag_.committed_selection();
+  if (!committed.has_value()) {
+    return false;
+  }
+  return graphscore::make_delete_measure_command(project_, *committed) !=
+         nullptr;
+}
+
 bool SelectionToolHandler::step_entry_cursor_live() const {
   if (!step_entry_cursor_.has_value()) {
     return false;
@@ -368,6 +393,9 @@ palette_interval(PaletteCommandId id) {
     case PaletteCommandId::kUndo:
     case PaletteCommandId::kRedo:
     case PaletteCommandId::kStepEntryRest:
+    case PaletteCommandId::kInsertMeasureBefore:
+    case PaletteCommandId::kAppendMeasure:
+    case PaletteCommandId::kDeleteMeasure:
       return true;
     default:
       return false;
@@ -511,6 +539,12 @@ bool SelectionToolHandler::palette_command_available(
       return history_.can_undo();
     case PaletteCommandId::kRedo:
       return history_.can_redo();
+    case PaletteCommandId::kInsertMeasureBefore:
+      return measure_insert_available(graphscore::MeasureInsertMode::kBefore);
+    case PaletteCommandId::kAppendMeasure:
+      return measure_insert_available(graphscore::MeasureInsertMode::kAppend);
+    case PaletteCommandId::kDeleteMeasure:
+      return measure_delete_available();
   }
   return false;
 }
@@ -615,6 +649,32 @@ std::string SelectionToolHandler::palette_command_unavailable_reason(
     case PaletteCommandId::kToggleTool:
     case PaletteCommandId::kTogglePalette:
       return "";
+    case PaletteCommandId::kInsertMeasureBefore:
+    case PaletteCommandId::kAppendMeasure:
+      return "requires an aligned full-measure selection";
+    case PaletteCommandId::kDeleteMeasure: {
+      // Alignment is checked first, via the exact aligned/valid precondition
+      // make_insert_measure_command already enforces (delete requires the
+      // identical alignment -- see make_delete_measure_command's own
+      // comment), so a misaligned FullMeasureSet is reported as misaligned
+      // rather than misattributed to the sole-measure guard below merely
+      // because its front item's node happens to carry one measure.
+      const auto& committed = drag_.committed_selection();
+      if (!committed.has_value() ||
+          graphscore::make_insert_measure_command(
+              project_, *committed, graphscore::MeasureInsertMode::kBefore) ==
+              nullptr) {
+        return "requires an aligned full-measure selection";
+      }
+      const auto*             set = current_measure_set();
+      const graphscore::Node* node_ptr =
+          project_.find_node(set->items().front().node);
+      if (node_ptr != nullptr && node_ptr->timeline() != nullptr &&
+          node_ptr->timeline()->measures().measure_count() <= 1u) {
+        return "cannot delete the node's only measure";
+      }
+      return "requires an aligned full-measure selection";
+    }
   }
   return "";
 }
@@ -841,6 +901,12 @@ bool SelectionToolHandler::run_palette_command(PaletteCommandId id) {
       // an explicit no-op with a diagnostic.
       post_diagnostic("range staff scope requires explicit endpoints");
       return false;
+    case PaletteCommandId::kInsertMeasureBefore:
+      return insert_measure_before();
+    case PaletteCommandId::kAppendMeasure:
+      return append_measure();
+    case PaletteCommandId::kDeleteMeasure:
+      return delete_measure();
   }
   return false;
 }

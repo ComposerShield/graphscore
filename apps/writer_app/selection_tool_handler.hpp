@@ -69,6 +69,27 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // equal-duration rest and selects the resulting rest.
   bool convert_selection_to_rest();
 
+  // ---- measure structure editing (M5-phase-28b, palette-only) --------------
+
+  // Inserts a new measure before the selected measure across every track,
+  // stave, and voice (the domain's InsertMeasureCommand cascade). Requires
+  // the committed selection to be an ALIGNED FullMeasureSet (one NodeId, one
+  // measure_index); every other selection is a no-op with a diagnostic.
+  // Reachable only through the command palette (no key chord).
+  bool insert_measure_before();
+
+  // Appends a new measure at the node's own end, inheriting the final
+  // measure's signature. Same eligible-selection requirement as
+  // insert_measure_before(); the selection's own measure_index only
+  // identifies the anchor node and (track, stave) scopes, not the insertion
+  // point. Reachable only through the command palette.
+  bool append_measure();
+
+  // Deletes the selected measure across every track, stave, and voice.
+  // Additionally rejected when the node's own timeline carries exactly one
+  // measure. Reachable only through the command palette.
+  bool delete_measure();
+
   // Primary+Up/Down (M5-phase-24): moves the committed selection to the
   // prior/next staff of the node, wrapping within it. A pure SELECTION
   // change that builds no Command and opens no history transaction.
@@ -295,6 +316,13 @@ class SelectionToolHandler final : public graphscore::InputHandler {
 
   [[nodiscard]] const graphscore::ChordSet* current_chord_set() const noexcept;
 
+  // The committed selection's own FullMeasureSet, or nullptr when there is
+  // no committed selection or it is not that arm. Does not itself check
+  // alignment -- insert_measure_before()/append_measure()/delete_measure()
+  // delegate that to make_insert_measure_command/make_delete_measure_command.
+  [[nodiscard]] const graphscore::FullMeasureSet* current_measure_set()
+      const noexcept;
+
   void sync_staff_endpoints_from_committed();
 
   bool step_staff_scope(int direction);
@@ -323,6 +351,33 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   convert_to_rest_invalidation(
       const std::optional<graphscore::NoteheadItem>& notehead_item,
       const std::optional<graphscore::ChordItem>&    chord_item) const;
+
+  // Which measure-structure edit measure_structure_invalidation below scopes
+  // its kMeasureStructure invalidation for.
+  enum class MeasureStructureEdit : std::uint8_t {
+    kInsertBefore,
+    kAppend,
+    kDelete
+  };
+
+  // The exact kMeasureStructure invalidation for a measure insert/append/
+  // delete (M5-phase-28b): the first changed ordinal, which
+  // NotationLayoutCache::update takes as first_measure == last_measure and
+  // invalidates every later system. `measure_index` is the selection's own
+  // shared FullMeasureItem::measure_index; it is consulted for kInsertBefore
+  // and kDelete and ignored for kAppend, whose first changed ordinal is the
+  // node's own pre-edit measure_count() regardless of which measure the
+  // selection names (mirroring make_insert_measure_command's own kAppend
+  // documentation). kDelete's first changed ordinal is `measure_index`
+  // clamped to the post-edit last index, mirroring
+  // selection_after_delete_measure's own clamp. Computed against the
+  // PRE-edit project (called before the edit's CommandHistory transaction
+  // executes); returns std::nullopt only when `node` no longer has a
+  // timeline.
+  [[nodiscard]] std::optional<graphscore::NotationInvalidation>
+  measure_structure_invalidation(graphscore::NodeId   node,
+                                 std::size_t          measure_index,
+                                 MeasureStructureEdit edit) const;
 
   bool refresh_layout(
       std::optional<graphscore::NotationInvalidation> forced = std::nullopt);
@@ -456,6 +511,17 @@ class SelectionToolHandler final : public graphscore::InputHandler {
 
   // Exact PasteFragmentCommand eligibility against a project value copy.
   [[nodiscard]] bool paste_available() const;
+
+  // Exact make_insert_measure_command eligibility for `mode` against the
+  // committed selection: the same source of truth insert_measure_before()/
+  // append_measure() themselves execute, so availability can never drift
+  // from execution (M5-phase-28b §11).
+  [[nodiscard]] bool measure_insert_available(
+      graphscore::MeasureInsertMode mode) const;
+
+  // Exact make_delete_measure_command eligibility for the committed
+  // selection, including the sole-measure guard.
+  [[nodiscard]] bool measure_delete_available() const;
 
   // Whether a live step-entry cursor exists (the pitch/rest commit rows'
   // precondition, distinct from the palette-arming rows that need none).

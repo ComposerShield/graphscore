@@ -142,6 +142,14 @@ const std::vector<PaletteCommand> kInventory = [] {
   add(PaletteCommandId::kAccessibleRangeStaffScope, "Range: staff scope", "",
       "Set the range staff scope (accessible control)");
 
+  // M5-phase-28b structural measure editing: chord-less, palette-only rows.
+  add(PaletteCommandId::kInsertMeasureBefore, "Insert measure before", "",
+      "Insert a new measure before the selected measure");
+  add(PaletteCommandId::kAppendMeasure, "Append measure", "",
+      "Append a new measure at the end of the node");
+  add(PaletteCommandId::kDeleteMeasure, "Delete measure", "",
+      "Delete the selected measure");
+
   return rows;
 }();
 

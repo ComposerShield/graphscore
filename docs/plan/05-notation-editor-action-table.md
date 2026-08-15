@@ -586,21 +586,37 @@ action in this table, and it is what makes the numpad-only bindings
   chord is the toggle in the notation context and the close in the palette
   context — coherent with §5 and never swallowed as filter text.
 - **Inventory.** The palette enumerates exactly the actions in §7, one row per
-  binding (Backspace and Delete are one row naming one action), plus the
-  accessible range controls of §7.8. Each row carries a stable **name**, its
-  **chord hint** (empty for chord-less accessible controls), a one-line
-  description, and a live **availability** state.
+  binding (Backspace and Delete are one row naming one action); the
+  accessible range controls of §7.8; and the three chord-less structural
+  measure-editing actions of M5-phase-28 — insert a measure before the
+  selected measure, append a measure at the node's own end, and delete the
+  selected measure. All three structural rows carry an **empty chord hint**:
+  they are deliberately **not** bound to any key chord (no row in §7 names
+  them), so §7's `(chord, key)` space is unchanged by their addition and
+  §12's claim that this space is exhaustively enumerable still holds. Each
+  row carries a stable **name**, its **chord hint** (empty for the
+  chord-less accessible controls and the chord-less structural
+  measure-editing actions), a one-line description, and a live
+  **availability** state.
 - **Availability.** A row's availability is derived from the same precondition
-  and fallback logic as its chord row: "Cut" is available exactly when a valid
-  `FullMeasureSet` or `ArbitraryRangeSet` is committed; "Paste" when the
-  clipboard is non-empty and a `PasteAnchor` can be derived (§10); the
-  duration/rest/dots rows are available exactly when `kNoteEntry` is active
-  (they are Entry-tool actions). An unavailable row is shown disabled with the
+  and fallback logic as its chord row, for a row that has one: "Cut" is
+  available exactly when a valid `FullMeasureSet` or `ArbitraryRangeSet` is
+  committed; "Paste" when the clipboard is non-empty and a `PasteAnchor` can
+  be derived (§10); the duration/rest/dots rows are available exactly when
+  `kNoteEntry` is active (they are Entry-tool actions). A chord-less row's
+  availability is its own precondition: each structural measure-editing row
+  is available exactly when the operation it names would succeed, so "Delete
+  measure" is unavailable on a node carrying its only measure while the two
+  insert rows remain available. An unavailable row is shown disabled with the
   reason from its fallback.
 - **Execution.** Running a row performs the identical action with the identical
   fallback as its chord, including the tool gate: running an Entry-tool action
   while `kSelection` is active is the same no-op as pressing its chord (the
   palette never switches tools or performs a broader operation than the chord).
+  A chord-less row performs its own action under its own precondition; like
+  the clipboard and history rows of §7.3, the structural measure-editing rows
+  are ungated by tool, since their precondition is a committed selection
+  rather than an active tool.
 - **Search.** The filter matches the name and description, case-insensitively;
   filtering never changes an action's availability or chord hint.
 

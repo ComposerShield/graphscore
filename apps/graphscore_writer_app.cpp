@@ -13,7 +13,7 @@
 //
 // M05 scope: the active tool (note-entry or range-selection) and the
 // selection-drag state machine are owned at the application assembly layer
-// (see writer_app/selection_tool_handler.hpp). The 16 `--test-*` flags below
+// (see writer_app/selection_tool_handler.hpp). The 17 `--test-*` flags below
 // exercise that layer through the WriterShell event-dispatch seams; their
 // declarations live in writer_app/selftests/selftests.hpp.
 //
@@ -57,6 +57,7 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::kKeyEventsShellTestFlag;
   using graphscore::writer_app::kKeyEventsTestFlag;
   using graphscore::writer_app::kKeySelectionTestFlag;
+  using graphscore::writer_app::kMeasureEditTestFlag;
   using graphscore::writer_app::kNoteheadDeleteTestFlag;
   using graphscore::writer_app::kNoteheadMoveTestFlag;
   using graphscore::writer_app::kSelectionToolShellTestFlag;
@@ -64,6 +65,7 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::kSmokeTestFlag;
   using graphscore::writer_app::kStaffStepTestFlag;
   using graphscore::writer_app::kStepEntryTestFlag;
+  using graphscore::writer_app::measure_edit_test;
   using graphscore::writer_app::notehead_delete_test;
   using graphscore::writer_app::notehead_move_test;
   using graphscore::writer_app::run;
@@ -89,6 +91,7 @@ int main(int argc, char** argv) {
   bool run_clipboard_test            = false;
   bool run_command_palette_test      = false;
   bool run_action_table_test         = false;
+  bool run_measure_edit_test         = false;
   for (int i = 1; i < argc; ++i) {
     if (kSmokeTestFlag == argv[i]) {
       smoke_test = true;
@@ -141,6 +144,9 @@ int main(int argc, char** argv) {
     if (kActionTableTestFlag == argv[i]) {
       run_action_table_test = true;
     }
+    if (kMeasureEditTestFlag == argv[i]) {
+      run_measure_edit_test = true;
+    }
   }
 
   try {
@@ -191,6 +197,9 @@ int main(int argc, char** argv) {
     }
     if (run_action_table_test) {
       return action_table_test();
+    }
+    if (run_measure_edit_test) {
+      return measure_edit_test();
     }
     return run(smoke_test);
   } catch (const std::exception& error) {

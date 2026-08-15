@@ -12,9 +12,11 @@ namespace graphscore::writer_app {
 // (docs/plan/05-notation-editor-action-table.md §11): a stable identifier
 // for every palette row. One row per §7 action, with Backspace and Delete
 // as one row naming one action, plus the chord-less accessible range
-// controls of §7.8. Visual presentation and OS-clipboard interchange are
-// out of scope; this models routing, inventory, availability, search, and
-// execution only.
+// controls of §7.8, plus the chord-less structural measure-editing actions
+// of M5-phase-28 (insert a measure before, append a measure, delete a
+// measure -- reachable only through the palette, never a key chord). Visual
+// presentation and OS-clipboard interchange are out of scope; this models
+// routing, inventory, availability, search, and execution only.
 enum class PaletteCommandId : std::uint8_t {
   kMoveNoteUp,
   kMoveNoteDown,
@@ -76,6 +78,9 @@ enum class PaletteCommandId : std::uint8_t {
   kAccessibleRangeStart,
   kAccessibleRangeEnd,
   kAccessibleRangeStaffScope,
+  kInsertMeasureBefore,
+  kAppendMeasure,
+  kDeleteMeasure,
 };
 
 // One palette row: a stable name, its chord hint (empty for the chord-less
@@ -89,9 +94,10 @@ struct PaletteCommand {
   std::string      description;
 };
 
-// The complete inventory, in a stable order: every §7 binding family plus
-// the §7.8 accessible range controls. This is a pure value: it never reads
-// handler or project state.
+// The complete inventory, in a stable order: every §7 binding family, the
+// §7.8 accessible range controls, and the M5-phase-28 chord-less structural
+// measure-editing actions. This is a pure value: it never reads handler or
+// project state.
 [[nodiscard]] const std::vector<PaletteCommand>& palette_inventory();
 
 }  // namespace graphscore::writer_app

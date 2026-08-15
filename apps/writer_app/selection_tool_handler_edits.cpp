@@ -392,6 +392,203 @@ bool SelectionToolHandler::convert_selection_to_rest() {
   return true;
 }
 
+// Palette-only (M5-phase-28b, no key chord): inserts a new measure before
+// the selected measure across every track, stave, and voice, remapping
+// signatures, clefs, tempo anchors, spans, selection, and rests atomically
+// -- the domain's own InsertMeasureCommand cascade
+// (make_insert_measure_command's own comment). Requires the committed
+// selection to be an ALIGNED FullMeasureSet (one NodeId, one
+// measure_index); every other selection -- including a misaligned
+// FullMeasureSet -- is a no-op with a diagnostic. A boundary the domain
+// only detects at execute() (a tuplet group the insertion would cut, or a
+// pickdown it would invalidate) still builds a valid command here; the
+// rejection surfaces as an inactive transaction below, diagnosed rather
+// than silently returning true.
+bool SelectionToolHandler::insert_measure_before() {
+  if (history_.poisoned()) {
+    post_diagnostic("insert measure: history unavailable");
+    return false;
+  }
+  const auto* set = current_measure_set();
+  if (set == nullptr) {
+    post_diagnostic("insert measure: requires a full-measure selection");
+    return false;
+  }
+  const graphscore::Selection selection{*set};
+
+  std::optional<graphscore::Selection> next_selection =
+      graphscore::selection_after_insert_measure(
+          project_, selection, graphscore::MeasureInsertMode::kBefore);
+  std::unique_ptr<graphscore::Command> command =
+      graphscore::make_insert_measure_command(
+          project_, selection, graphscore::MeasureInsertMode::kBefore);
+  if (command == nullptr || !next_selection.has_value()) {
+    post_diagnostic("insert measure: ineligible or misaligned selection");
+    return false;
+  }
+
+  const graphscore::NodeId node          = set->items().front().node;
+  const std::size_t        measure_index = set->items().front().measure_index;
+  const std::optional<graphscore::NotationInvalidation> invalidation =
+      measure_structure_invalidation(node, measure_index,
+                                     MeasureStructureEdit::kInsertBefore);
+  if (!invalidation.has_value()) {
+    post_diagnostic("insert measure: cannot invalidate layout");
+    return false;
+  }
+  graphscore::CommandHistory::Transaction transaction =
+      history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active()) {
+    post_diagnostic(
+        "insert measure: rejected (tuplet boundary, invalid pickdown, or "
+        "history is full)");
+    return false;
+  }
+  if (!refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      recover_from_failed_rollback();
+      return false;
+    }
+    layout_cache_.reset();
+    warm_layout_cache();
+    post_diagnostic("insert measure: layout refresh failed");
+    return false;
+  }
+  if (!transaction.commit().ok()) {
+    post_diagnostic("insert measure: commit failed");
+    return false;
+  }
+  set_committed_selection(std::move(next_selection));
+  return true;
+}
+
+// Palette-only (M5-phase-28b): appends a new measure at the node's own end,
+// inheriting the final measure's signature, regardless of which measure the
+// committed selection itself names. Same eligible-selection requirement and
+// atomic execute()-time rejection handling as insert_measure_before() above.
+bool SelectionToolHandler::append_measure() {
+  if (history_.poisoned()) {
+    post_diagnostic("append measure: history unavailable");
+    return false;
+  }
+  const auto* set = current_measure_set();
+  if (set == nullptr) {
+    post_diagnostic("append measure: requires a full-measure selection");
+    return false;
+  }
+  const graphscore::Selection selection{*set};
+
+  std::optional<graphscore::Selection> next_selection =
+      graphscore::selection_after_insert_measure(
+          project_, selection, graphscore::MeasureInsertMode::kAppend);
+  std::unique_ptr<graphscore::Command> command =
+      graphscore::make_insert_measure_command(
+          project_, selection, graphscore::MeasureInsertMode::kAppend);
+  if (command == nullptr || !next_selection.has_value()) {
+    post_diagnostic("append measure: ineligible or misaligned selection");
+    return false;
+  }
+
+  const graphscore::NodeId node          = set->items().front().node;
+  const std::size_t        measure_index = set->items().front().measure_index;
+  const std::optional<graphscore::NotationInvalidation> invalidation =
+      measure_structure_invalidation(node, measure_index,
+                                     MeasureStructureEdit::kAppend);
+  if (!invalidation.has_value()) {
+    post_diagnostic("append measure: cannot invalidate layout");
+    return false;
+  }
+  graphscore::CommandHistory::Transaction transaction =
+      history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active()) {
+    post_diagnostic(
+        "append measure: rejected (tuplet boundary, invalid pickdown, or "
+        "history is full)");
+    return false;
+  }
+  if (!refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      recover_from_failed_rollback();
+      return false;
+    }
+    layout_cache_.reset();
+    warm_layout_cache();
+    post_diagnostic("append measure: layout refresh failed");
+    return false;
+  }
+  if (!transaction.commit().ok()) {
+    post_diagnostic("append measure: commit failed");
+    return false;
+  }
+  set_committed_selection(std::move(next_selection));
+  return true;
+}
+
+// Palette-only (M5-phase-28b): deletes the selected measure across every
+// track, stave, and voice. Same eligible-selection requirement as
+// insert_measure_before() above, plus the domain's own sole-measure guard
+// (make_delete_measure_command pre-rejects a node whose timeline carries
+// exactly one measure).
+bool SelectionToolHandler::delete_measure() {
+  if (history_.poisoned()) {
+    post_diagnostic("delete measure: history unavailable");
+    return false;
+  }
+  const auto* set = current_measure_set();
+  if (set == nullptr) {
+    post_diagnostic("delete measure: requires a full-measure selection");
+    return false;
+  }
+  const graphscore::Selection selection{*set};
+
+  std::optional<graphscore::Selection> next_selection =
+      graphscore::selection_after_delete_measure(project_, selection);
+  std::unique_ptr<graphscore::Command> command =
+      graphscore::make_delete_measure_command(project_, selection);
+  if (command == nullptr || !next_selection.has_value()) {
+    post_diagnostic(
+        "delete measure: ineligible, misaligned, or sole-measure selection");
+    return false;
+  }
+
+  const graphscore::NodeId node          = set->items().front().node;
+  const std::size_t        measure_index = set->items().front().measure_index;
+  const std::optional<graphscore::NotationInvalidation> invalidation =
+      measure_structure_invalidation(node, measure_index,
+                                     MeasureStructureEdit::kDelete);
+  if (!invalidation.has_value()) {
+    post_diagnostic("delete measure: cannot invalidate layout");
+    return false;
+  }
+  graphscore::CommandHistory::Transaction transaction =
+      history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active()) {
+    post_diagnostic(
+        "delete measure: rejected (tuplet boundary, invalid pickdown, or "
+        "history is full)");
+    return false;
+  }
+  if (!refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      recover_from_failed_rollback();
+      return false;
+    }
+    layout_cache_.reset();
+    warm_layout_cache();
+    post_diagnostic("delete measure: layout refresh failed");
+    return false;
+  }
+  if (!transaction.commit().ok()) {
+    post_diagnostic("delete measure: commit failed");
+    return false;
+  }
+  set_committed_selection(std::move(next_selection));
+  return true;
+}
+
 // Primary+Up/Down (M5-phase-24): moves the committed selection to the
 // prior/next staff of the node, wrapping within it, and selects the
 // same-voice note nearest the musical position -- then the visually

@@ -83,9 +83,9 @@ and the collision-free interval rule — lives in
 
 ### Structural editing
 
-- [ ] M5-phase-28 Insert/delete measures across every track and update signatures, clefs, tempo anchors, spans, selection, and rests atomically.
+- [x] M5-phase-28 Insert/delete measures across every track and update signatures, clefs, tempo anchors, spans, selection, and rests atomically.
   - [x] M5-phase-28a Resolve an aligned measure selection to the domain insert/append/delete command and remap the selection the edit invalidates.
-  - [ ] M5-phase-28b Route the structural measure actions through the command palette and record them in the action table.
+  - [x] M5-phase-28b Route the structural measure actions through the command palette and record them in the action table.
 - [ ] M5-phase-29 Create and edit arbitrary single-level `N:M` tuplets without allowing nested tuplets.
 - [ ] M5-phase-30 Edit articulations, dynamics, ties, slurs, hairpins, pedal spans, beam breaks/joins, and stem overrides with clear invalid-target feedback.
 - [ ] M5-phase-31 Create the final pickdown through an explicit node-end duration setting and show the transition boundary distinctly.
@@ -95,6 +95,18 @@ and the collision-free interval rule — lives in
 - [ ] M5-phase-35 Default paste replaces only the corresponding destination time/staff/voice range, preserves all material outside it, fills uncovered time with normalized rests, and commits as one undoable transaction.
 - [ ] M5-phase-36 Apply the domain-defined clipping/reconnection policy to ties, slurs, tuplets, hairpins, pedal spans, signatures, clefs, dynamics, and other boundary-crossing entities, with diagnostics when a fragment cannot be pasted validly.
 - [ ] M5-phase-37 Range operations also include delete and diatonic/chromatic transpose while preserving valid rhythm.
+
+#### Carried obligation: step-entry cursor after a structural edit
+
+A measure insert, append, or delete remaps the committed selection
+(M5-phase-28a) but leaves the app-owned step-entry cursor's absolute
+node-time position untouched, so after a structural edit the cursor can name
+different music than before, or a position past the node's end. This
+degrades safely today — the step-entry availability checks trial-execute
+against a project copy and report the action unavailable rather than
+corrupting anything — and the clipboard's cut path has had the identical
+property since M5-phase-27. Whichever phase takes up step-entry cursor
+revalidation owns remapping the cursor across both.
 
 ### Playback semantics in the editor model
 

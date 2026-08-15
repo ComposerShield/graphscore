@@ -260,6 +260,20 @@ const graphscore::ChordSet* SelectionToolHandler::current_chord_set()
   return std::get_if<graphscore::ChordSet>(&*committed);
 }
 
+// The committed selection's own FullMeasureSet, or nullptr when there is no
+// committed selection or it is not that arm. insert_measure_before()/
+// append_measure()/delete_measure() (M5-phase-28b) require exactly this
+// arm; alignment is checked by make_insert_measure_command/
+// make_delete_measure_command, not here.
+const graphscore::FullMeasureSet* SelectionToolHandler::current_measure_set()
+    const noexcept {
+  const auto& committed = drag_.committed_selection();
+  if (!committed.has_value()) {
+    return nullptr;
+  }
+  return std::get_if<graphscore::FullMeasureSet>(&*committed);
+}
+
 std::optional<graphscore::MeasureScope> SelectionToolHandler::first_staff()
     const noexcept {
   return first_staff_;

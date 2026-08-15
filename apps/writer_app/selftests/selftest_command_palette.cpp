@@ -336,11 +336,11 @@ int command_palette_test() {
 
   // --- test 5: the inventory is exhaustive — exactly one row per
   //     PaletteCommandId, Backspace and Delete coalesced into one row, and
-  //     the chord-less accessible range controls present. -------------------
+  //     the chord-less accessible range controls and M5-phase-28 structural
+  //     measure-editing rows present. -----------------------------------
   {
     const auto& inventory = palette_inventory();
-    const int   count =
-        static_cast<int>(PaletteCommandId::kAccessibleRangeStaffScope) + 1;
+    const int   count = static_cast<int>(PaletteCommandId::kDeleteMeasure) + 1;
     if (inventory.size() != static_cast<std::size_t>(count)) {
       std::fprintf(stderr,
                    "command-palette-test: inventory size %zu != %d "
@@ -367,9 +367,13 @@ int command_palette_test() {
           row.id == PaletteCommandId::kAccessibleRangeStart ||
           row.id == PaletteCommandId::kAccessibleRangeEnd ||
           row.id == PaletteCommandId::kAccessibleRangeStaffScope;
-      if (is_accessible != row.chord_hint.empty()) {
+      const bool is_structural =
+          row.id == PaletteCommandId::kInsertMeasureBefore ||
+          row.id == PaletteCommandId::kAppendMeasure ||
+          row.id == PaletteCommandId::kDeleteMeasure;
+      if ((is_accessible || is_structural) != row.chord_hint.empty()) {
         std::fprintf(stderr,
-                     "command-palette-test: chord-hint/accessible mismatch "
+                     "command-palette-test: chord-hint/chord-less mismatch "
                      "(5)\n");
         return 1;
       }
@@ -1053,22 +1057,41 @@ int command_palette_test() {
     }
 
     const std::vector<PaletteCommandId> mutating_rows = {
-        PaletteCommandId::kMoveNoteUp,     PaletteCommandId::kMoveNoteDown,
-        PaletteCommandId::kAccidentalDown, PaletteCommandId::kAccidentalUp,
-        PaletteCommandId::kDeleteNotehead, PaletteCommandId::kConvertToRest,
-        PaletteCommandId::kIntervalAbove2, PaletteCommandId::kIntervalAbove3,
-        PaletteCommandId::kIntervalAbove4, PaletteCommandId::kIntervalAbove5,
-        PaletteCommandId::kIntervalAbove6, PaletteCommandId::kIntervalAbove7,
-        PaletteCommandId::kIntervalAbove8, PaletteCommandId::kIntervalBelow2,
-        PaletteCommandId::kIntervalBelow3, PaletteCommandId::kIntervalBelow4,
-        PaletteCommandId::kIntervalBelow5, PaletteCommandId::kIntervalBelow6,
-        PaletteCommandId::kIntervalBelow7, PaletteCommandId::kIntervalBelow8,
-        PaletteCommandId::kPitchA,         PaletteCommandId::kPitchB,
-        PaletteCommandId::kPitchC,         PaletteCommandId::kPitchD,
-        PaletteCommandId::kPitchE,         PaletteCommandId::kPitchF,
-        PaletteCommandId::kPitchG,         PaletteCommandId::kCut,
-        PaletteCommandId::kPaste,          PaletteCommandId::kUndo,
-        PaletteCommandId::kRedo,           PaletteCommandId::kStepEntryRest,
+        PaletteCommandId::kMoveNoteUp,
+        PaletteCommandId::kMoveNoteDown,
+        PaletteCommandId::kAccidentalDown,
+        PaletteCommandId::kAccidentalUp,
+        PaletteCommandId::kDeleteNotehead,
+        PaletteCommandId::kConvertToRest,
+        PaletteCommandId::kIntervalAbove2,
+        PaletteCommandId::kIntervalAbove3,
+        PaletteCommandId::kIntervalAbove4,
+        PaletteCommandId::kIntervalAbove5,
+        PaletteCommandId::kIntervalAbove6,
+        PaletteCommandId::kIntervalAbove7,
+        PaletteCommandId::kIntervalAbove8,
+        PaletteCommandId::kIntervalBelow2,
+        PaletteCommandId::kIntervalBelow3,
+        PaletteCommandId::kIntervalBelow4,
+        PaletteCommandId::kIntervalBelow5,
+        PaletteCommandId::kIntervalBelow6,
+        PaletteCommandId::kIntervalBelow7,
+        PaletteCommandId::kIntervalBelow8,
+        PaletteCommandId::kPitchA,
+        PaletteCommandId::kPitchB,
+        PaletteCommandId::kPitchC,
+        PaletteCommandId::kPitchD,
+        PaletteCommandId::kPitchE,
+        PaletteCommandId::kPitchF,
+        PaletteCommandId::kPitchG,
+        PaletteCommandId::kCut,
+        PaletteCommandId::kPaste,
+        PaletteCommandId::kUndo,
+        PaletteCommandId::kRedo,
+        PaletteCommandId::kStepEntryRest,
+        PaletteCommandId::kInsertMeasureBefore,
+        PaletteCommandId::kAppendMeasure,
+        PaletteCommandId::kDeleteMeasure,
     };
     for (const PaletteCommandId id : mutating_rows) {
       if (handler.palette_command_available(id) ||

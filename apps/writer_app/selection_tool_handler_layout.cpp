@@ -253,4 +253,54 @@ SelectionToolHandler::convert_to_rest_invalidation(
   return notehead_invalidation(item);
 }
 
+// The kMeasureStructure invalidation for a measure insert/append/delete
+// (M5-phase-28b): the first changed ordinal as both first_measure and
+// last_measure (NotationLayoutCache::update's own well-formedness check for
+// this kind), which invalidates every later system regardless of the exact
+// span. `node`/`measure_index` are read against the PRE-edit project
+// (this is always called before the edit's CommandHistory transaction
+// executes), so the arithmetic below matches make_insert_measure_command/
+// make_delete_measure_command's own documented index exactly:
+//
+//   kInsertBefore -- the selection's own measure_index: the new measure
+//     takes that index, and every measure from there onward shifts right.
+//   kAppend       -- the node's own pre-edit measure_count(), ignoring
+//     `measure_index` entirely (mirroring make_insert_measure_command's own
+//     kAppend documentation: the selection's measure_index names only the
+//     anchor node and (track, stave) scopes, never the insertion point).
+//   kDelete       -- `measure_index` clamped to the post-edit last index
+//     (new_count - 1), mirroring selection_after_delete_measure's own
+//     clamp; make_delete_measure_command's sole-measure guard already
+//     rejects a node with fewer than two measures, so new_count - 1 is
+//     always well defined here.
+std::optional<graphscore::NotationInvalidation>
+SelectionToolHandler::measure_structure_invalidation(
+    graphscore::NodeId node, std::size_t measure_index,
+    MeasureStructureEdit edit) const {
+  const graphscore::Node* node_ptr = project_.find_node(node);
+  if (node_ptr == nullptr || node_ptr->timeline() == nullptr) {
+    return std::nullopt;
+  }
+  const std::size_t old_count =
+      node_ptr->timeline()->measures().measure_count();
+  std::size_t first_measure = measure_index;
+  switch (edit) {
+    case MeasureStructureEdit::kInsertBefore:
+      first_measure = measure_index;
+      break;
+    case MeasureStructureEdit::kAppend:
+      first_measure = old_count;
+      break;
+    case MeasureStructureEdit::kDelete:
+      if (old_count < 2) {
+        return std::nullopt;
+      }
+      first_measure = std::min(measure_index, old_count - 2);
+      break;
+  }
+  return graphscore::NotationInvalidation{
+      graphscore::NotationInvalidationKind::kMeasureStructure, first_measure,
+      first_measure};
+}
+
 }  // namespace graphscore::writer_app
