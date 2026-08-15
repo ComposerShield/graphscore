@@ -68,8 +68,18 @@ Provide a polished, directly editable focused notation system inside a node, wit
 - [x] M5-phase-23 `R` converts the entire selected note/chord event to an equal-duration rest.
 - [x] M5-phase-24 Primary is Command on macOS and Control on Windows/Linux. Primary+Up/Down moves to the prior/next staff, wraps within the node, and selects the same-voice note nearest the musical position, then the visually nearest note on a tie, or places a caret.
 - [x] M5-phase-25 `2` through `8` add a key-spelled diatonic interval above; Shift variants add below; the inserted notehead becomes selected and `1` remains a no-op.
-- [ ] M5-phase-26 Record a platform-normalized action table before UI binding, including physical/logical key behavior on non-US layouts, focus contexts, tie-breaking, and every no-selection fallback.
+- [x] M5-phase-26 Record a platform-normalized action table before UI binding, including physical/logical key behavior on non-US layouts, focus contexts, tie-breaking, and every no-selection fallback.
 - [ ] M5-phase-27 Add keyboard step entry, explicit voice shortcuts, duration actions, range extension, cut/copy/paste, and command-palette discoverability without conflicting with interval keys.
+
+#### Platform-normalized action table
+
+The normative, implementation-ready action table for M5-phase-26 — platform
+modifier mapping, physical/logical key identity on non-US layouts, focus
+contexts and routing, precedence and tie-breaking, the complete binding set
+including the M5-phase-27 additions, the step-entry cursor lifecycle and pitch
+reference, the clipboard handoff, the command-palette discoverability route,
+and the collision-free interval rule — lives in
+[05-notation-editor-action-table.md](05-notation-editor-action-table.md).
 
 ### Structural editing
 
