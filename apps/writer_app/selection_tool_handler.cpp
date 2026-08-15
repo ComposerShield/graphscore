@@ -98,6 +98,11 @@ void SelectionToolHandler::set_accidental_command_factory(
   accidental_command_factory_ = std::move(factory);
 }
 
+void SelectionToolHandler::set_event_style_command_wrapper(
+    EventStyleCommandWrapper wrapper) {
+  event_style_command_wrapper_ = std::move(wrapper);
+}
+
 // Builds the retained incremental layout cache from the current project and
 // layout, so a later refresh_layout() reuses unaffected systems instead of
 // full-resetting on its first call (which rebuilds everything and hides a
@@ -212,15 +217,21 @@ bool SelectionToolHandler::undo_action() {
     return false;
   }
   if (!history_.undo(project_).ok()) {
+    post_diagnostic("undo: command failed");
+    return false;
+  }
+  const auto invalidation = full_invalidation();
+  if (!invalidation.has_value() || !refresh_layout(invalidation)) {
+    const graphscore::Result restored = history_.rollback_last_undo(project_);
+    layout_cache_.reset();
+    warm_layout_cache();
+    post_diagnostic(restored.ok() ? "undo: layout refresh failed; undo restored"
+                                  : "undo: layout refresh and restore failed");
     return false;
   }
   if (step_entry_cursor_.has_value() && previous_pitch_.has_value() &&
       history_.undo_stack_size() < previous_pitch_undo_depth_) {
     reset_pitch_reference();
-  }
-  const auto invalidation = full_invalidation();
-  if (invalidation.has_value()) {
-    std::ignore = refresh_layout(invalidation);
   }
   return true;
 }
@@ -231,11 +242,17 @@ bool SelectionToolHandler::redo_action() {
     return false;
   }
   if (!history_.redo(project_).ok()) {
+    post_diagnostic("redo: command failed");
     return false;
   }
   const auto invalidation = full_invalidation();
-  if (invalidation.has_value()) {
-    std::ignore = refresh_layout(invalidation);
+  if (!invalidation.has_value() || !refresh_layout(invalidation)) {
+    const graphscore::Result restored = history_.rollback_last_redo(project_);
+    layout_cache_.reset();
+    warm_layout_cache();
+    post_diagnostic(restored.ok() ? "redo: layout refresh failed; redo restored"
+                                  : "redo: layout refresh and restore failed");
+    return false;
   }
   return true;
 }

@@ -32,6 +32,7 @@ add_library(graphscore_domain STATIC
   event_queue.cpp
   event_registry.cpp
   event_state_machine.cpp
+  event_style_command.cpp
   graph.cpp
   insert_measure_command.cpp
   measure_map.cpp

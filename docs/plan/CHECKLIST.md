@@ -135,6 +135,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [ ] Clipboard boundary/span and paste-preview behavior validated
 - [ ] Structural editing completed
 - [x] &nbsp;&nbsp;Measure insert/append/delete increment completed
+- [x] &nbsp;&nbsp;Articulation and stem-override editing increment completed
 - [ ] Playback semantics in the editor model completed
 - [ ] Accessibility completed
 - [ ] Acceptance criteria passed

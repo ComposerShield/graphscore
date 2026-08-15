@@ -8,6 +8,7 @@
 #include <string>
 
 #include <graphscore/core/note_audition.hpp>
+#include <graphscore/domain/event_style_command.hpp>
 #include <graphscore/domain/selection.hpp>
 #include <graphscore/notation/notation_palette.hpp>
 #include <graphscore/notation/notation_types.hpp>
@@ -19,6 +20,28 @@ class Project;
 enum class AccidentalStepDirection : std::uint8_t;
 enum class IntervalDirection : std::uint8_t;
 enum class NoteheadStepDirection : std::uint8_t;
+
+// A toolkit-neutral factory result used both for command-palette availability
+// and execution. An unavailable edit carries a composer-facing reason and no
+// command; an available edit carries the reversible domain command.
+struct NotationEditCommandResult {
+  std::unique_ptr<Command> command;
+  std::string              unavailable_reason;
+
+  [[nodiscard]] bool available() const noexcept { return command != nullptr; }
+};
+
+// Applies an articulation to one selected Note/Chord event. Change and remove
+// address one selected articulation marking. Duplicate and conflicting
+// duration articulations are rejected rather than silently normalized.
+[[nodiscard]] NotationEditCommandResult make_articulation_edit_command(
+    const Project& project, const Selection& selection, ArticulationEdit edit,
+    Articulation articulation);
+
+// Sets Auto/Up/Down on one selected Note/Chord event. Auto is the model's
+// explicit representation of clearing a manual override.
+[[nodiscard]] NotationEditCommandResult make_stem_edit_command(
+    const Project& project, const Selection& selection, StemDirection stem);
 
 // A conventional tuplet number omits M when M is the greatest power of two
 // strictly below N (3:2, 5:4, 7:4, 9:8, ...). This is the standard simple

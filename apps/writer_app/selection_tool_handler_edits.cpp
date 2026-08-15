@@ -21,6 +21,66 @@
 
 namespace graphscore::writer_app {
 
+std::optional<graphscore::NotationInvalidation>
+SelectionToolHandler::event_style_invalidation() const {
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value())
+    return std::nullopt;
+  graphscore::NodeId           node_id;
+  graphscore::TrackId          track_id;
+  graphscore::StaveId          stave_id;
+  graphscore::Voice            voice = *graphscore::Voice::create(1);
+  graphscore::NotationEntityId entity;
+  if (const auto* notes = std::get_if<graphscore::NoteheadSet>(&*selection);
+      notes != nullptr && notes->items().size() == 1u) {
+    const auto& item = notes->items().front();
+    node_id          = item.node;
+    track_id         = item.track;
+    stave_id         = item.stave;
+    voice            = item.voice;
+    entity           = item.entity;
+  } else if (const auto* chords =
+                 std::get_if<graphscore::ChordSet>(&*selection);
+             chords != nullptr && chords->items().size() == 1u) {
+    const auto& item = chords->items().front();
+    node_id          = item.node;
+    track_id         = item.track;
+    stave_id         = item.stave;
+    voice            = item.voice;
+    entity           = item.entity;
+  } else if (const auto* markings =
+                 std::get_if<graphscore::MarkingSet>(&*selection);
+             markings != nullptr && markings->items().size() == 1u &&
+             markings->items().front().kind ==
+                 graphscore::MarkingKind::kArticulation &&
+             markings->items().front().voice.has_value()) {
+    const auto& item = markings->items().front();
+    node_id          = item.node;
+    track_id         = item.track;
+    stave_id         = item.stave;
+    voice            = *item.voice;
+    entity           = item.anchor;
+  } else {
+    return std::nullopt;
+  }
+  const graphscore::Node*      node = project_.find_node(node_id);
+  const graphscore::TrackLane* lane =
+      node == nullptr ? nullptr : node->lane(track_id);
+  const graphscore::StaveVoices* stave =
+      lane == nullptr ? nullptr : lane->stave(stave_id);
+  if (node == nullptr || node->timeline() == nullptr || stave == nullptr ||
+      node_id != layout_.node_id)
+    return std::nullopt;
+  const auto position = stave->voice(voice).position_of_event(entity);
+  if (!position.has_value())
+    return std::nullopt;
+  const auto measure = node->timeline()->measures().measure_index_at(*position);
+  if (!measure.has_value())
+    return std::nullopt;
+  return graphscore::NotationInvalidation{
+      graphscore::NotationInvalidationKind::kLocalContent, *measure, *measure};
+}
+
 // Moves the single selected notehead one diatonic staff step (M5-phase-20).
 // Requires the committed selection to be a NoteheadSet with exactly one
 // item; any other selection -- none, a range, a non-notehead arm, or a
@@ -712,6 +772,116 @@ bool SelectionToolHandler::remove_selected_tuplet() {
   if (!transaction.commit().ok())
     return false;
   set_committed_selection(std::nullopt);
+  return true;
+}
+
+bool SelectionToolHandler::edit_selected_articulation(
+    graphscore::ArticulationEdit edit, graphscore::Articulation articulation) {
+  if (history_.poisoned()) {
+    post_diagnostic("articulation: command history is unavailable");
+    return false;
+  }
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value()) {
+    post_diagnostic("articulation: requires a note, chord, or articulation");
+    return false;
+  }
+  graphscore::NotationEditCommandResult built =
+      graphscore::make_articulation_edit_command(project_, *selection, edit,
+                                                 articulation);
+  if (!built.available()) {
+    post_diagnostic("articulation: " + built.unavailable_reason);
+    return false;
+  }
+  const auto invalidation = event_style_invalidation();
+  if (!invalidation.has_value()) {
+    post_diagnostic("articulation: cannot invalidate layout");
+    return false;
+  }
+  if (event_style_command_wrapper_) {
+    built.command = event_style_command_wrapper_(std::move(built.command));
+  }
+  auto transaction =
+      history_.begin_transaction(std::move(built.command), project_);
+  if (!transaction.active()) {
+    post_diagnostic("articulation: target changed or edit was rejected");
+    return false;
+  }
+  if (!refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      recover_from_failed_rollback();
+    } else {
+      layout_cache_.reset();
+      warm_layout_cache();
+    }
+    post_diagnostic("articulation: layout refresh failed");
+    return false;
+  }
+  if (!transaction.commit().ok()) {
+    post_diagnostic("articulation: commit failed");
+    return false;
+  }
+  if (edit == graphscore::ArticulationEdit::kRemove) {
+    set_committed_selection(std::nullopt);
+  } else if (edit == graphscore::ArticulationEdit::kChange) {
+    const auto* markings = std::get_if<graphscore::MarkingSet>(&*selection);
+    if (markings != nullptr && markings->items().size() == 1u) {
+      graphscore::MarkingItem changed = markings->items().front();
+      changed.articulation            = articulation;
+      const auto updated = graphscore::MarkingSet::create({changed});
+      if (updated.has_value())
+        set_committed_selection(graphscore::Selection{*updated});
+    }
+  }
+  return true;
+}
+
+bool SelectionToolHandler::set_selected_stem(graphscore::StemDirection stem) {
+  if (history_.poisoned()) {
+    post_diagnostic("stem direction: command history is unavailable");
+    return false;
+  }
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value()) {
+    post_diagnostic("stem direction: requires a note or chord");
+    return false;
+  }
+  graphscore::NotationEditCommandResult built =
+      graphscore::make_stem_edit_command(project_, *selection, stem);
+  if (!built.available()) {
+    post_diagnostic("stem direction: " + built.unavailable_reason);
+    return false;
+  }
+  const auto invalidation = event_style_invalidation();
+  if (!invalidation.has_value()) {
+    post_diagnostic("stem direction: cannot invalidate layout");
+    return false;
+  }
+  if (event_style_command_wrapper_) {
+    built.command = event_style_command_wrapper_(std::move(built.command));
+  }
+  auto transaction =
+      history_.begin_transaction(std::move(built.command), project_);
+  if (!transaction.active()) {
+    post_diagnostic("stem direction: target changed or edit was rejected");
+    return false;
+  }
+  if (!refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      recover_from_failed_rollback();
+    } else {
+      layout_cache_.reset();
+      warm_layout_cache();
+    }
+    post_diagnostic("stem direction: layout refresh failed");
+    return false;
+  }
+  if (!transaction.commit().ok()) {
+    post_diagnostic("stem direction: commit failed");
+    return false;
+  }
   return true;
 }
 

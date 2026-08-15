@@ -41,6 +41,17 @@ class Command {
   // successful undo.
   virtual Result redo(Project& project) noexcept = 0;
 
+  // Restores command/project state after a successful undo/redo that could
+  // not be published. Concrete commands may override these with a stronger
+  // non-inverse compensation path. The default preserves legacy behavior.
+  virtual Result compensate_undo(Project& project) noexcept {
+    return redo(project);
+  }
+
+  virtual Result compensate_redo(Project& project) noexcept {
+    return undo(project);
+  }
+
  protected:
   // kFresh  — constructed but never successfully executed.
   // kDone   — executed or re-executed, ready to undo.

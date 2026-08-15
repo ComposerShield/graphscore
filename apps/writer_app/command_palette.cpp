@@ -159,6 +159,42 @@ const std::vector<PaletteCommand> kInventory = [] {
   add(PaletteCommandId::kRemoveTuplet, "Remove tuplet", "",
       "Remove the selected tuplet marking while keeping its group bounds");
 
+  // M5-phase-30 articulation and stem editing: palette-only rows. These add
+  // no key chords to the locked action-table key space.
+  add(PaletteCommandId::kApplyAccent, "Apply accent", "",
+      "Apply an accent to the selected note or chord");
+  add(PaletteCommandId::kApplyMarcato, "Apply marcato", "",
+      "Apply a marcato to the selected note or chord");
+  add(PaletteCommandId::kApplyStaccato, "Apply staccato", "",
+      "Apply staccato to the selected note or chord");
+  add(PaletteCommandId::kApplyStaccatissimo, "Apply staccatissimo", "",
+      "Apply staccatissimo to the selected note or chord");
+  add(PaletteCommandId::kApplyTenuto, "Apply tenuto", "",
+      "Apply tenuto to the selected note or chord");
+  add(PaletteCommandId::kChangeArticulationToAccent,
+      "Change articulation to accent", "",
+      "Change the selected articulation marking to accent");
+  add(PaletteCommandId::kChangeArticulationToMarcato,
+      "Change articulation to marcato", "",
+      "Change the selected articulation marking to marcato");
+  add(PaletteCommandId::kChangeArticulationToStaccato,
+      "Change articulation to staccato", "",
+      "Change the selected articulation marking to staccato");
+  add(PaletteCommandId::kChangeArticulationToStaccatissimo,
+      "Change articulation to staccatissimo", "",
+      "Change the selected articulation marking to staccatissimo");
+  add(PaletteCommandId::kChangeArticulationToTenuto,
+      "Change articulation to tenuto", "",
+      "Change the selected articulation marking to tenuto");
+  add(PaletteCommandId::kRemoveArticulation, "Remove articulation", "",
+      "Remove the selected articulation marking");
+  add(PaletteCommandId::kStemAuto, "Stem direction: auto", "",
+      "Clear the selected note or chord's explicit stem override");
+  add(PaletteCommandId::kStemUp, "Stem direction: up", "",
+      "Set the selected note or chord's stem override up");
+  add(PaletteCommandId::kStemDown, "Stem direction: down", "",
+      "Set the selected note or chord's stem override down");
+
   return rows;
 }();
 

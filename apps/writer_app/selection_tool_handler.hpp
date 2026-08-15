@@ -97,6 +97,10 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   bool apply_tuplet_ratio(std::uint16_t played, std::uint16_t normal);
   bool remove_selected_tuplet();
 
+  bool edit_selected_articulation(graphscore::ArticulationEdit edit,
+                                  graphscore::Articulation     articulation);
+  bool set_selected_stem(graphscore::StemDirection stem);
+
   // Toolkit-neutral parameter-entry handoff established by the palette row.
   // A platform dialog/AT can observe this and call apply_tuplet_ratio().
   void               request_tuplet_ratio_entry();
@@ -152,6 +156,12 @@ class SelectionToolHandler final : public graphscore::InputHandler {
           graphscore::AccidentalStepDirection)>;
 
   void set_accidental_command_factory(AccidentalCommandFactory factory);
+
+  using EventStyleCommandWrapper =
+      std::function<std::unique_ptr<graphscore::Command>(
+          std::unique_ptr<graphscore::Command>)>;
+
+  void set_event_style_command_wrapper(EventStyleCommandWrapper wrapper);
 
   // Builds the retained incremental layout cache from the current project and
   // layout, so a later refresh_layout() reuses unaffected systems.
@@ -465,6 +475,9 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   [[nodiscard]] std::optional<graphscore::NotationInvalidation>
   full_invalidation() const;
 
+  [[nodiscard]] std::optional<graphscore::NotationInvalidation>
+  event_style_invalidation() const;
+
   // The start of the node's measure `measure_index`, or nullopt when the
   // node/track/stave is absent, the track is archived, or the index is out
   // of range -- a bounded, validated lookup used by every selection-derived
@@ -579,6 +592,7 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // tests replace it with a deterministic failing wrapper.
   AccidentalCommandFactory accidental_command_factory_ =
       &graphscore::make_step_accidental_command;
+  EventStyleCommandWrapper event_style_command_wrapper_;
   // Glyph metrics used to refresh the retained layout after a move; see
   // set_metrics() and refresh_layout().
   const graphscore::GlyphMetrics* metrics_ = nullptr;

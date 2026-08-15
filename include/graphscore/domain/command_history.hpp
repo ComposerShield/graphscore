@@ -162,6 +162,13 @@ class CommandHistory {
   // in progress, kCommandFaulted while poisoned.
   [[nodiscard]] Result redo(Project& project) noexcept;
 
+  // Immediately rolls back the most recent successful undo/redo when a
+  // separate publication step fails. Uses Command's compensation protocol,
+  // not its normal inverse operation, then restores the command to its exact
+  // source stack. No allocation is needed: undo()/redo() reserved the slot.
+  [[nodiscard]] Result rollback_last_undo(Project& project) noexcept;
+  [[nodiscard]] Result rollback_last_redo(Project& project) noexcept;
+
   // Discards all undo and redo history without undoing or redoing anything.
   // A checked operation: returns kInvalidArgument while a transaction is
   // active and kCommandFaulted while the history is poisoned, preserving

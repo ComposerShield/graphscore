@@ -202,6 +202,32 @@ Result CommandHistory::redo(Project& project) noexcept {
   }
 }
 
+Result CommandHistory::rollback_last_undo(Project& project) noexcept {
+  if (poisoned_ || transaction_active_ || redo_stack_.empty())
+    return Result(poisoned_ ? ResultCode::kCommandFaulted
+                            : ResultCode::kInvalidArgument);
+  std::unique_ptr<Command>& command = redo_stack_.back();
+  const Result              result  = command->compensate_undo(project);
+  if (!result.ok())
+    return result;
+  undo_stack_.push_back(std::move(command));
+  redo_stack_.pop_back();
+  return Result();
+}
+
+Result CommandHistory::rollback_last_redo(Project& project) noexcept {
+  if (poisoned_ || transaction_active_ || undo_stack_.empty())
+    return Result(poisoned_ ? ResultCode::kCommandFaulted
+                            : ResultCode::kInvalidArgument);
+  std::unique_ptr<Command>& command = undo_stack_.back();
+  const Result              result  = command->compensate_redo(project);
+  if (!result.ok())
+    return result;
+  redo_stack_.push_back(std::move(command));
+  undo_stack_.pop_back();
+  return Result();
+}
+
 Result CommandHistory::clear() noexcept {
   if (poisoned_)
     return Result(ResultCode::kCommandFaulted);

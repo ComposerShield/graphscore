@@ -27,6 +27,7 @@ add_executable(graphscore_writer_app
   writer_app/selftests/selftest_clipboard.cpp
   writer_app/selftests/selftest_command_palette.cpp
   writer_app/selftests/selftest_convert_to_rest.cpp
+  writer_app/selftests/selftest_event_style_edit.cpp
   writer_app/selftests/selftest_fixtures.cpp
   writer_app/selftests/selftest_interval_entry.cpp
   writer_app/selftests/selftest_interval_entry_shell.cpp

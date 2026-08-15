@@ -7,6 +7,7 @@ add_executable(graphscore_domain_test
   command/command_basic_history_test.cpp
   command/command_connector_event_8d_test.cpp
   command/command_connector_name_8c_test.cpp
+  command/command_event_style_test.cpp
   command/command_graph_route_8c_test.cpp
   command/command_history_transaction_test.cpp
   command/command_marking_lifecycle_test.cpp

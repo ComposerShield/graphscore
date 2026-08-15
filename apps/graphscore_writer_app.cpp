@@ -42,6 +42,7 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::clipboard_test;
   using graphscore::writer_app::command_palette_test;
   using graphscore::writer_app::convert_to_rest_test;
+  using graphscore::writer_app::event_style_edit_test;
   using graphscore::writer_app::interval_entry_shell_test;
   using graphscore::writer_app::interval_entry_test;
   using graphscore::writer_app::kAccidentalStepTestFlag;
@@ -49,6 +50,7 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::kClipboardTestFlag;
   using graphscore::writer_app::kCommandPaletteTestFlag;
   using graphscore::writer_app::kConvertToRestTestFlag;
+  using graphscore::writer_app::kEventStyleEditTestFlag;
   using graphscore::writer_app::key_events_shell_test;
   using graphscore::writer_app::key_events_test;
   using graphscore::writer_app::key_selection_test;
@@ -95,6 +97,7 @@ int main(int argc, char** argv) {
   bool run_action_table_test         = false;
   bool run_measure_edit_test         = false;
   bool run_tuplet_edit_test          = false;
+  bool run_event_style_edit_test     = false;
   for (int i = 1; i < argc; ++i) {
     if (kSmokeTestFlag == argv[i]) {
       smoke_test = true;
@@ -153,6 +156,9 @@ int main(int argc, char** argv) {
     if (kTupletEditTestFlag == argv[i]) {
       run_tuplet_edit_test = true;
     }
+    if (kEventStyleEditTestFlag == argv[i]) {
+      run_event_style_edit_test = true;
+    }
   }
 
   try {
@@ -209,6 +215,9 @@ int main(int argc, char** argv) {
     }
     if (run_tuplet_edit_test) {
       return tuplet_edit_test();
+    }
+    if (run_event_style_edit_test) {
+      return event_style_edit_test();
     }
     return run(smoke_test);
   } catch (const std::exception& error) {

@@ -84,6 +84,20 @@ enum class PaletteCommandId : std::uint8_t {
   kCreateTriplet,
   kTupletRatioEntry,
   kRemoveTuplet,
+  kApplyAccent,
+  kApplyMarcato,
+  kApplyStaccato,
+  kApplyStaccatissimo,
+  kApplyTenuto,
+  kChangeArticulationToAccent,
+  kChangeArticulationToMarcato,
+  kChangeArticulationToStaccato,
+  kChangeArticulationToStaccatissimo,
+  kChangeArticulationToTenuto,
+  kRemoveArticulation,
+  kStemAuto,
+  kStemUp,
+  kStemDown,
 };
 
 // One palette row: a stable name, its chord hint (empty for the chord-less

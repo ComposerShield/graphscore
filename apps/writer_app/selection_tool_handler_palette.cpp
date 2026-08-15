@@ -398,9 +398,61 @@ palette_interval(PaletteCommandId id) {
     case PaletteCommandId::kDeleteMeasure:
     case PaletteCommandId::kCreateTriplet:
     case PaletteCommandId::kRemoveTuplet:
+    case PaletteCommandId::kApplyAccent:
+    case PaletteCommandId::kApplyMarcato:
+    case PaletteCommandId::kApplyStaccato:
+    case PaletteCommandId::kApplyStaccatissimo:
+    case PaletteCommandId::kApplyTenuto:
+    case PaletteCommandId::kChangeArticulationToAccent:
+    case PaletteCommandId::kChangeArticulationToMarcato:
+    case PaletteCommandId::kChangeArticulationToStaccato:
+    case PaletteCommandId::kChangeArticulationToStaccatissimo:
+    case PaletteCommandId::kChangeArticulationToTenuto:
+    case PaletteCommandId::kRemoveArticulation:
+    case PaletteCommandId::kStemAuto:
+    case PaletteCommandId::kStemUp:
+    case PaletteCommandId::kStemDown:
       return true;
     default:
       return false;
+  }
+}
+
+[[nodiscard]] std::optional<
+    std::pair<graphscore::ArticulationEdit, graphscore::Articulation>>
+palette_articulation(PaletteCommandId id) {
+  const int value = static_cast<int>(id);
+  const int apply = static_cast<int>(PaletteCommandId::kApplyAccent);
+  const int change =
+      static_cast<int>(PaletteCommandId::kChangeArticulationToAccent);
+  if (value >= apply && value < apply + graphscore::kArticulationCount) {
+    return std::pair{
+        graphscore::ArticulationEdit::kApply,
+        graphscore::kAllArticulations[static_cast<std::size_t>(value - apply)]};
+  }
+  if (value >= change && value < change + graphscore::kArticulationCount) {
+    return std::pair{graphscore::ArticulationEdit::kChange,
+                     graphscore::kAllArticulations[static_cast<std::size_t>(
+                         value - change)]};
+  }
+  if (id == PaletteCommandId::kRemoveArticulation) {
+    return std::pair{graphscore::ArticulationEdit::kRemove,
+                     graphscore::Articulation::kAccent};
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] std::optional<graphscore::StemDirection> palette_stem(
+    PaletteCommandId id) {
+  switch (id) {
+    case PaletteCommandId::kStemAuto:
+      return graphscore::StemDirection::kAuto;
+    case PaletteCommandId::kStemUp:
+      return graphscore::StemDirection::kUp;
+    case PaletteCommandId::kStemDown:
+      return graphscore::StemDirection::kDown;
+    default:
+      return std::nullopt;
   }
 }
 
@@ -553,6 +605,33 @@ bool SelectionToolHandler::palette_command_available(
       return true;
     case PaletteCommandId::kRemoveTuplet:
       return tuplet_remove_available();
+    case PaletteCommandId::kApplyAccent:
+    case PaletteCommandId::kApplyMarcato:
+    case PaletteCommandId::kApplyStaccato:
+    case PaletteCommandId::kApplyStaccatissimo:
+    case PaletteCommandId::kApplyTenuto:
+    case PaletteCommandId::kChangeArticulationToAccent:
+    case PaletteCommandId::kChangeArticulationToMarcato:
+    case PaletteCommandId::kChangeArticulationToStaccato:
+    case PaletteCommandId::kChangeArticulationToStaccatissimo:
+    case PaletteCommandId::kChangeArticulationToTenuto:
+    case PaletteCommandId::kRemoveArticulation: {
+      const auto& selection = drag_.committed_selection();
+      const auto  operation = palette_articulation(id);
+      return selection.has_value() && operation.has_value() &&
+             graphscore::make_articulation_edit_command(
+                 project_, *selection, operation->first, operation->second)
+                 .available();
+    }
+    case PaletteCommandId::kStemAuto:
+    case PaletteCommandId::kStemUp:
+    case PaletteCommandId::kStemDown: {
+      const auto& selection = drag_.committed_selection();
+      const auto  stem      = palette_stem(id);
+      return selection.has_value() && stem.has_value() &&
+             graphscore::make_stem_edit_command(project_, *selection, *stem)
+                 .available();
+    }
   }
   return false;
 }
@@ -689,6 +768,35 @@ std::string SelectionToolHandler::palette_command_unavailable_reason(
       return "";
     case PaletteCommandId::kRemoveTuplet:
       return "requires a selected tuplet marking";
+    case PaletteCommandId::kApplyAccent:
+    case PaletteCommandId::kApplyMarcato:
+    case PaletteCommandId::kApplyStaccato:
+    case PaletteCommandId::kApplyStaccatissimo:
+    case PaletteCommandId::kApplyTenuto:
+    case PaletteCommandId::kChangeArticulationToAccent:
+    case PaletteCommandId::kChangeArticulationToMarcato:
+    case PaletteCommandId::kChangeArticulationToStaccato:
+    case PaletteCommandId::kChangeArticulationToStaccatissimo:
+    case PaletteCommandId::kChangeArticulationToTenuto:
+    case PaletteCommandId::kRemoveArticulation: {
+      const auto& selection = drag_.committed_selection();
+      const auto  operation = palette_articulation(id);
+      if (!selection.has_value() || !operation.has_value())
+        return "requires a note, chord, or articulation marking";
+      return graphscore::make_articulation_edit_command(
+                 project_, *selection, operation->first, operation->second)
+          .unavailable_reason;
+    }
+    case PaletteCommandId::kStemAuto:
+    case PaletteCommandId::kStemUp:
+    case PaletteCommandId::kStemDown: {
+      const auto& selection = drag_.committed_selection();
+      const auto  stem      = palette_stem(id);
+      if (!selection.has_value() || !stem.has_value())
+        return "requires one live note or chord event";
+      return graphscore::make_stem_edit_command(project_, *selection, *stem)
+          .unavailable_reason;
+    }
   }
   return "";
 }
@@ -928,6 +1036,27 @@ bool SelectionToolHandler::run_palette_command(PaletteCommandId id) {
       return true;
     case PaletteCommandId::kRemoveTuplet:
       return remove_selected_tuplet();
+    case PaletteCommandId::kApplyAccent:
+    case PaletteCommandId::kApplyMarcato:
+    case PaletteCommandId::kApplyStaccato:
+    case PaletteCommandId::kApplyStaccatissimo:
+    case PaletteCommandId::kApplyTenuto:
+    case PaletteCommandId::kChangeArticulationToAccent:
+    case PaletteCommandId::kChangeArticulationToMarcato:
+    case PaletteCommandId::kChangeArticulationToStaccato:
+    case PaletteCommandId::kChangeArticulationToStaccatissimo:
+    case PaletteCommandId::kChangeArticulationToTenuto:
+    case PaletteCommandId::kRemoveArticulation: {
+      const auto operation = palette_articulation(id);
+      return operation.has_value() &&
+             edit_selected_articulation(operation->first, operation->second);
+    }
+    case PaletteCommandId::kStemAuto:
+    case PaletteCommandId::kStemUp:
+    case PaletteCommandId::kStemDown: {
+      const auto stem = palette_stem(id);
+      return stem.has_value() && set_selected_stem(*stem);
+    }
   }
   return false;
 }
