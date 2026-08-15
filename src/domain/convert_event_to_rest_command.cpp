@@ -73,7 +73,8 @@ Result ConvertEventToRestCommand::execute(Project& project) noexcept {
       replacement = existing;
     } else {
       const NotationEntityId source_id = event_id(existing);
-      replacement                      = VoiceEvent(Rest{source_id, dur});
+      replacement =
+          VoiceEvent(Rest{source_id, dur, event_tuplet_group(existing)});
     }
 
     VoiceContent pre_snapshot = *voice;

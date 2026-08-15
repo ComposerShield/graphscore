@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -20,12 +21,13 @@ namespace graphscore {
 // duration articulations are flagged by the referential validator, not
 // prevented here. `stem` is a manual auto/up/down override.
 struct Note {
-  NotationEntityId          id;
-  SpelledPitch              pitch;
-  Duration                  duration;
-  bool                      tied_to_next = false;
-  std::vector<Articulation> articulations;
-  StemDirection             stem = StemDirection::kAuto;
+  NotationEntityId             id;
+  SpelledPitch                 pitch;
+  Duration                     duration;
+  bool                         tied_to_next = false;
+  std::vector<Articulation>    articulations;
+  StemDirection                stem         = StemDirection::kAuto;
+  std::optional<TupletGroupId> tuplet_group = std::nullopt;
 
   [[nodiscard]] bool operator==(const Note&) const = default;
 };
@@ -45,18 +47,20 @@ struct ChordNote {
 // and the stem override apply to the whole chord, matching how they are
 // notated: one marking/stem per chord column, not per notehead.
 struct Chord {
-  NotationEntityId          id;
-  Duration                  duration;
-  std::vector<ChordNote>    notes;
-  std::vector<Articulation> articulations;
-  StemDirection             stem = StemDirection::kAuto;
+  NotationEntityId             id;
+  Duration                     duration;
+  std::vector<ChordNote>       notes;
+  std::vector<Articulation>    articulations;
+  StemDirection                stem         = StemDirection::kAuto;
+  std::optional<TupletGroupId> tuplet_group = std::nullopt;
 
   [[nodiscard]] bool operator==(const Chord&) const = default;
 };
 
 struct Rest {
-  NotationEntityId id;
-  Duration         duration;
+  NotationEntityId             id;
+  Duration                     duration;
+  std::optional<TupletGroupId> tuplet_group = std::nullopt;
 
   [[nodiscard]] bool operator==(const Rest&) const = default;
 };
@@ -82,6 +86,12 @@ using VoiceEvent = std::variant<Note, Chord, Rest>;
 [[nodiscard]] const Duration& event_duration(const VoiceEvent& event);
 
 [[nodiscard]] NotationEntityId event_id(const VoiceEvent& event);
+
+// A tuplet group is identified independently of its ratio. This makes two
+// adjacent groups with the same ratio unambiguous. Valid voice content has a
+// group exactly when its Duration has a tuplet ratio.
+[[nodiscard]] const std::optional<TupletGroupId>& event_tuplet_group(
+    const VoiceEvent& event);
 
 // True if `event` sounds `pitch`: a Note with a matching pitch, or a Chord
 // with a matching notehead. Always false for a Rest.

@@ -65,7 +65,8 @@ void fill_stave(TrackLane* lane, const StaveId stave_id,
 
 VoiceContent tuplet_voice(const Rational prefix, const std::size_t event_count,
                           const bool chords, const Rational total_length) {
-  VoiceContent content;
+  VoiceContent        content;
+  const TupletGroupId group = TupletGroupId::generate();
   if (prefix > Rational(0)) {
     const std::optional<std::vector<Rest>> rests = decompose_rest(prefix);
     assert(rests.has_value());
@@ -76,13 +77,16 @@ VoiceContent tuplet_voice(const Rational prefix, const std::size_t event_count,
   }
   for (std::size_t index = 0; index < event_count; ++index) {
     if (chords) {
-      [[maybe_unused]] const Result chord_result = content.append(make_chord(
+      Chord chord = make_chord(
           triplet_quarter(), {{NotationEntityId{}, pitch(Letter::kC), false},
-                              {NotationEntityId{}, pitch(Letter::kE), false}}));
+                              {NotationEntityId{}, pitch(Letter::kE), false}});
+      chord.tuplet_group                         = group;
+      [[maybe_unused]] const Result chord_result = content.append(chord);
       assert(chord_result.ok());
     } else {
-      [[maybe_unused]] const Result note_result =
-          content.append(make_note(pitch(Letter::kC), triplet_quarter()));
+      Note note         = make_note(pitch(Letter::kC), triplet_quarter());
+      note.tuplet_group = group;
+      [[maybe_unused]] const Result note_result = content.append(note);
       assert(note_result.ok());
     }
   }

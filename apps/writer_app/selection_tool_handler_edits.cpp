@@ -589,6 +589,141 @@ bool SelectionToolHandler::delete_measure() {
   return true;
 }
 
+bool SelectionToolHandler::tuplet_ratio_available(
+    graphscore::TupletRatio ratio) const {
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value())
+    return false;
+  return graphscore::make_tuplet_create_command(project_, *selection, ratio) !=
+             nullptr ||
+         graphscore::make_tuplet_change_command(project_, *selection, ratio) !=
+             nullptr;
+}
+
+bool SelectionToolHandler::tuplet_remove_available() const {
+  const auto& selection = drag_.committed_selection();
+  return selection.has_value() && graphscore::make_tuplet_remove_command(
+                                      project_, *selection) != nullptr;
+}
+
+bool SelectionToolHandler::create_triplet() {
+  return apply_tuplet_ratio(3, 2);
+}
+
+bool SelectionToolHandler::apply_tuplet_ratio(std::uint16_t played,
+                                              std::uint16_t normal) {
+  const auto ratio = graphscore::TupletRatio::create(played, normal);
+  if (!ratio.has_value() || played == normal) {
+    post_diagnostic("tuplet: ratio must be non-zero and non-trivial N:M");
+    return false;
+  }
+  if (history_.poisoned()) {
+    post_diagnostic("tuplet: command history is unavailable");
+    return false;
+  }
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value()) {
+    post_diagnostic("tuplet: select an exact rhythmic range or tuplet marking");
+    return false;
+  }
+
+  const bool creating =
+      std::holds_alternative<graphscore::ArbitraryRangeSet>(*selection);
+  std::optional<graphscore::Selection> next;
+  std::unique_ptr<graphscore::Command> command;
+  if (creating) {
+    next = graphscore::selection_after_tuplet_create(project_, *selection);
+    command =
+        graphscore::make_tuplet_create_command(project_, *selection, *ratio);
+  } else {
+    command =
+        graphscore::make_tuplet_change_command(project_, *selection, *ratio);
+  }
+  if (command == nullptr || (creating && !next.has_value())) {
+    post_diagnostic(
+        "tuplet: target must be complete contiguous events in one voice; "
+        "nested tuplets are not allowed");
+    return false;
+  }
+  const auto invalidation = full_invalidation();
+  if (!invalidation.has_value()) {
+    post_diagnostic("tuplet: cannot invalidate layout");
+    return false;
+  }
+  auto transaction = history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active()) {
+    post_diagnostic("tuplet: ratio does not fit the fixed group bounds");
+    return false;
+  }
+  if (!refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      recover_from_failed_rollback();
+    } else {
+      layout_cache_.reset();
+      warm_layout_cache();
+    }
+    post_diagnostic("tuplet: layout refresh failed");
+    return false;
+  }
+  if (!transaction.commit().ok()) {
+    post_diagnostic("tuplet: commit failed");
+    return false;
+  }
+  if (next.has_value())
+    set_committed_selection(std::move(next));
+  tuplet_ratio_entry_requested_ = false;
+  return true;
+}
+
+bool SelectionToolHandler::remove_selected_tuplet() {
+  if (history_.poisoned()) {
+    post_diagnostic("remove tuplet: command history is unavailable");
+    return false;
+  }
+  const auto&                          selection = drag_.committed_selection();
+  std::unique_ptr<graphscore::Command> command =
+      selection.has_value()
+          ? graphscore::make_tuplet_remove_command(project_, *selection)
+          : nullptr;
+  if (command == nullptr) {
+    post_diagnostic("remove tuplet: requires a selected tuplet marking");
+    return false;
+  }
+  const auto invalidation = full_invalidation();
+  if (!invalidation.has_value())
+    return false;
+  auto transaction = history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active()) {
+    post_diagnostic("remove tuplet: fixed group bounds cannot be normalized");
+    return false;
+  }
+  if (!refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      recover_from_failed_rollback();
+    } else {
+      layout_cache_.reset();
+      warm_layout_cache();
+    }
+    post_diagnostic("remove tuplet: layout refresh failed");
+    return false;
+  }
+  if (!transaction.commit().ok())
+    return false;
+  set_committed_selection(std::nullopt);
+  return true;
+}
+
+void SelectionToolHandler::request_tuplet_ratio_entry() {
+  tuplet_ratio_entry_requested_ = true;
+  post_diagnostic("tuplet ratio: enter played N and normal M, then apply N:M");
+}
+
+bool SelectionToolHandler::tuplet_ratio_entry_requested() const noexcept {
+  return tuplet_ratio_entry_requested_;
+}
+
 // Primary+Up/Down (M5-phase-24): moves the committed selection to the
 // prior/next staff of the node, wrapping within it, and selects the
 // same-voice note nearest the musical position -- then the visually

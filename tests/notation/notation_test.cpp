@@ -695,6 +695,7 @@ TEST(NotationLayoutTest, CentralizesExactSmuflBravuraVocabularyAndFallback) {
       {SmuflGlyph::kPedalUp, U'\uE655'},
       {SmuflGlyph::kTimeDigit0, U'\uE080'},
       {SmuflGlyph::kTupletDigit0, U'\uE880'},
+      {SmuflGlyph::kTupletColon, U'\uE88A'},
   };
   for (const auto& [glyph, codepoint] : expected) {
     EXPECT_EQ(graphscore::smufl_codepoint(glyph), codepoint);

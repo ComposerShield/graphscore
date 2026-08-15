@@ -12,8 +12,8 @@ namespace graphscore {
 
 Note make_note(SpelledPitch pitch, Duration duration, bool tied_to_next,
                std::vector<Articulation> articulations, StemDirection stem) {
-  return Note{NotationEntityId::generate(), pitch, duration, tied_to_next,
-              std::move(articulations),     stem};
+  return Note{NotationEntityId::generate(), pitch, duration,    tied_to_next,
+              std::move(articulations),     stem,  std::nullopt};
 }
 
 Chord make_chord(Duration duration, std::vector<ChordNote> notes,
@@ -23,11 +23,11 @@ Chord make_chord(Duration duration, std::vector<ChordNote> notes,
       notehead.id = NotationEntityId::generate();
   }
   return Chord{NotationEntityId::generate(), duration, std::move(notes),
-               std::move(articulations), stem};
+               std::move(articulations),     stem,     std::nullopt};
 }
 
 Rest make_rest(Duration duration) {
-  return Rest{NotationEntityId::generate(), duration};
+  return Rest{NotationEntityId::generate(), duration, std::nullopt};
 }
 
 const Duration& event_duration(const VoiceEvent& event) {
@@ -37,6 +37,15 @@ const Duration& event_duration(const VoiceEvent& event) {
 
 NotationEntityId event_id(const VoiceEvent& event) {
   return std::visit([](const auto& e) { return e.id; }, event);
+}
+
+const std::optional<TupletGroupId>& event_tuplet_group(
+    const VoiceEvent& event) {
+  return std::visit(
+      [](const auto& e) -> const std::optional<TupletGroupId>& {
+        return e.tuplet_group;
+      },
+      event);
 }
 
 bool event_sounds_pitch(const VoiceEvent& event, const SpelledPitch& pitch) {

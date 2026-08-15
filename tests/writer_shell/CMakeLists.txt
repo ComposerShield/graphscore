@@ -349,6 +349,14 @@ add_test(NAME graphscore_writer_command_palette_test
   COMMAND graphscore_writer_app --test-command-palette
 )
 
+add_test(NAME graphscore_writer_tuplet_edit_test
+  COMMAND graphscore_writer_app --test-tuplet-edit
+)
+
+set_tests_properties(graphscore_writer_tuplet_edit_test PROPERTIES
+  TIMEOUT 30
+)
+
 set_tests_properties(graphscore_writer_command_palette_test PROPERTIES
   PASS_REGULAR_EXPRESSION "command-palette-test: ok"
   TIMEOUT 30

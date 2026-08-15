@@ -46,6 +46,12 @@ namespace graphscore {
     return std::nullopt;
   const VoiceContent& content = stave->voice(armed.voice);
 
+  // Tuplets are structural groups. A single note-entry click cannot know the
+  // complete group bounds, so it must use the range-based tuplet action rather
+  // than minting one implicit group per event.
+  if (armed.duration.tuplet().has_value())
+    return std::nullopt;
+
   // Explicit voice-stream workflow: the armed voice has never held
   // anything, so there is no existing event boundary to click on. Match
   // `position` against the onsets of the same hypothetical measure-aligned

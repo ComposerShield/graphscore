@@ -337,10 +337,10 @@ int command_palette_test() {
   // --- test 5: the inventory is exhaustive — exactly one row per
   //     PaletteCommandId, Backspace and Delete coalesced into one row, and
   //     the chord-less accessible range controls and M5-phase-28 structural
-  //     measure-editing rows present. -----------------------------------
+  //     measure-editing and tuplet rows present. ----------------------------
   {
     const auto& inventory = palette_inventory();
-    const int   count = static_cast<int>(PaletteCommandId::kDeleteMeasure) + 1;
+    const int   count = static_cast<int>(PaletteCommandId::kRemoveTuplet) + 1;
     if (inventory.size() != static_cast<std::size_t>(count)) {
       std::fprintf(stderr,
                    "command-palette-test: inventory size %zu != %d "
@@ -370,7 +370,10 @@ int command_palette_test() {
       const bool is_structural =
           row.id == PaletteCommandId::kInsertMeasureBefore ||
           row.id == PaletteCommandId::kAppendMeasure ||
-          row.id == PaletteCommandId::kDeleteMeasure;
+          row.id == PaletteCommandId::kDeleteMeasure ||
+          row.id == PaletteCommandId::kCreateTriplet ||
+          row.id == PaletteCommandId::kTupletRatioEntry ||
+          row.id == PaletteCommandId::kRemoveTuplet;
       if ((is_accessible || is_structural) != row.chord_hint.empty()) {
         std::fprintf(stderr,
                      "command-palette-test: chord-hint/chord-less mismatch "

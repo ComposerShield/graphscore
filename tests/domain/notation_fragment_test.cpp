@@ -1033,17 +1033,20 @@ TEST(NotationFragmentTest, R4WhollyContainedTupletCopiedVerbatim) {
 
   const Selection selection = *ArbitraryRangeSet::create(
       {ArbitraryRangeItem{fx.node_id, fx.track_a, fx.stave_a_treble, kVoice1,
-                          MusicalSpan{Rational(0), rat(1, 12)}}});
+                          MusicalSpan{Rational(0), rat(1, 4)}}});
   const FragmentExtraction result = extract_fragment(fx.project, selection);
   ASSERT_EQ(result.status.code(), ResultCode::kSuccess);
   ASSERT_TRUE(result.fragment.has_value());
 
   const VoiceContent& content = result.fragment->parts()[0].content;
-  ASSERT_EQ(content.events().size(), 1u);
+  ASSERT_EQ(content.events().size(), 3u);
   const Note& note = std::get<Note>(content.events()[0]);
   EXPECT_EQ(note.pitch, pitch(Letter::kC));
   EXPECT_TRUE(note.duration.tuplet().has_value());
   EXPECT_EQ(note.duration, tuplet_eighth());
+  ASSERT_TRUE(note.tuplet_group.has_value());
+  EXPECT_EQ(event_tuplet_group(content.events()[1]), note.tuplet_group);
+  EXPECT_EQ(event_tuplet_group(content.events()[2]), note.tuplet_group);
 }
 
 TEST(NotationFragmentTest, R4WhollyContainedTupletChordCopiedVerbatim) {
@@ -1061,13 +1064,13 @@ TEST(NotationFragmentTest, R4WhollyContainedTupletChordCopiedVerbatim) {
 
   const Selection selection = *ArbitraryRangeSet::create(
       {ArbitraryRangeItem{fx.node_id, fx.track_a, fx.stave_a_treble, kVoice1,
-                          MusicalSpan{Rational(0), rat(1, 12)}}});
+                          MusicalSpan{Rational(0), rat(1, 4)}}});
   const FragmentExtraction result = extract_fragment(fx.project, selection);
   ASSERT_EQ(result.status.code(), ResultCode::kSuccess);
   ASSERT_TRUE(result.fragment.has_value());
 
   const VoiceContent& content = result.fragment->parts()[0].content;
-  ASSERT_EQ(content.events().size(), 1u);
+  ASSERT_EQ(content.events().size(), 3u);
   const Chord& chord = std::get<Chord>(content.events()[0]);
   EXPECT_TRUE(chord.duration.tuplet().has_value());
   EXPECT_EQ(chord.duration, tuplet_eighth());
@@ -1607,7 +1610,7 @@ TEST(NotationFragmentTest, ExtractionDoesNotMutateProjectOnSuccessOrFailure) {
   // A successful extraction (wholly-contained tuplet, no boundary issues).
   const Selection success_selection = *ArbitraryRangeSet::create(
       {ArbitraryRangeItem{fx.node_id, fx.track_a, fx.stave_a_treble, kVoice1,
-                          MusicalSpan{Rational(0), rat(1, 12)}}});
+                          MusicalSpan{Rational(0), rat(1, 4)}}});
   const FragmentExtraction success_result =
       extract_fragment(fx.project, success_selection);
   ASSERT_EQ(success_result.status.code(), ResultCode::kSuccess);

@@ -86,7 +86,7 @@ and the collision-free interval rule — lives in
 - [x] M5-phase-28 Insert/delete measures across every track and update signatures, clefs, tempo anchors, spans, selection, and rests atomically.
   - [x] M5-phase-28a Resolve an aligned measure selection to the domain insert/append/delete command and remap the selection the edit invalidates.
   - [x] M5-phase-28b Route the structural measure actions through the command palette and record them in the action table.
-- [ ] M5-phase-29 Create and edit arbitrary single-level `N:M` tuplets without allowing nested tuplets.
+- [x] M5-phase-29 Create and edit arbitrary single-level `N:M` tuplets without allowing nested tuplets.
 - [ ] M5-phase-30 Edit articulations, dynamics, ties, slurs, hairpins, pedal spans, beam breaks/joins, and stem overrides with clear invalid-target feedback.
 - [ ] M5-phase-31 Create the final pickdown through an explicit node-end duration setting and show the transition boundary distinctly.
 - [ ] M5-phase-32 Copy/paste one or more complete selected measures to an explicitly chosen destination measure and staff/track scope.

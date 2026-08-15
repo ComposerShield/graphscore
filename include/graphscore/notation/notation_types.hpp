@@ -176,6 +176,7 @@ enum class SmuflGlyph : std::uint8_t {
   kPedalUp,
   kTimeDigit0,
   kTupletDigit0,
+  kTupletColon,
 };
 
 [[nodiscard]] char32_t smufl_codepoint(SmuflGlyph glyph) noexcept;

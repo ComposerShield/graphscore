@@ -124,14 +124,14 @@ struct FragmentMeasureContext {
 //   R3 -- a rest overlapping either boundary is clipped to the
 //     intersection and re-decomposed into plain rests.
 //
-//   R4 -- a tuplet event (Duration::tuplet().has_value(), any kind --
-//     Note, Chord, or Rest) is copied verbatim only when wholly contained
-//     in the copied range. A tuplet event that overlaps but is not
-//     wholly contained fails the whole extraction: nested/renormalized
-//     tuplets are out of "0.1.0" scope, and a deterministic failure is
-//     preferable to silently corrupting the tuplet's rhythm. This
-//     precedes R1-R3: a straddling tuplet event never becomes a
-//     head/tail-straddle rest/tie chain.
+//   R4 -- a stable tuplet group (any mix of Note, Chord, or Rest) is copied
+//     verbatim only when the complete group is wholly contained in the copied
+//     range. A range containing only part of a group fails the whole
+//     extraction: nested/renormalized tuplets are out of scope, and a
+//     deterministic failure is preferable to silently corrupting the tuplet's
+//     rhythm. This precedes R1-R3: a straddling tuplet event never becomes a
+//     head/tail-straddle rest/tie chain. The copied group receives one fresh
+//     TupletGroupId shared by all of its copied members.
 //
 //   R5 -- ties on events fully inside the copied range (contained plain
 //     or tuplet copies) keep their source tied_to_next state, except the

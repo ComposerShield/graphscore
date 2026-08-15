@@ -250,53 +250,62 @@ void append_tuplet_diagnostics_for_positions(
     const std::vector<std::size_t>&  positions,
     std::vector<NotationDiagnostic>& diagnostics,
     std::vector<NotationEntityId>&   visited) {
-  const std::size_t total = events.size();
-  std::vector<bool> done(total, false);
-  for (const std::size_t pos : positions) {
-    if (pos >= total || done[pos])
-      continue;
-
-    const std::optional<TupletRatio> ratio =
-        event_duration(events[pos]).tuplet();
-    if (!ratio.has_value()) {
-      done[pos] = true;
-      continue;
-    }
-
-    std::size_t run_start = pos;
-    while (run_start > 0) {
-      const auto prev = event_duration(events[run_start - 1]).tuplet();
-      if (prev.has_value() && *prev == *ratio)
-        --run_start;
-      else
-        break;
-    }
-    std::size_t run_end = pos;
-    while (run_end + 1 < total) {
-      const auto next = event_duration(events[run_end + 1]).tuplet();
-      if (next.has_value() && *next == *ratio)
-        ++run_end;
-      else
-        break;
-    }
-    for (std::size_t j = run_start; j <= run_end; ++j) {
-      done[j] = true;
-      visited.push_back(event_id(events[j]));
-    }
-
-    Rational sum(0);
-    for (std::size_t j = run_start; j <= run_end; ++j)
-      sum = sum + event_duration(events[j]).resolved();
-    const std::optional<Duration> base =
-        Duration::create(event_duration(events[run_start]).base(), 0);
-    assert(base.has_value());
-    const Rational mult = sum / base->resolved();
-    if (mult.denominator() != 1 || mult.numerator() <= 0) {
+  (void)positions;
+  std::unordered_map<TupletGroupId, std::vector<std::size_t>> groups;
+  for (std::size_t index = 0; index < events.size(); ++index) {
+    const std::optional<TupletRatio>& ratio =
+        event_duration(events[index]).tuplet();
+    const std::optional<TupletGroupId>& group =
+        event_tuplet_group(events[index]);
+    if (ratio.has_value() != group.has_value()) {
       diagnostics.push_back(
-          {event_id(events[run_start]),
+          {event_id(events[index]),
            NotationDiagnosticCode::kIncompleteTupletGroup,
-           "tuplet run's summed length is not a whole multiple of its "
-           "un-tupleted base unit"});
+           "tuplet ratio and stable group identity must appear together"});
+      visited.push_back(event_id(events[index]));
+      continue;
+    }
+    if (group.has_value())
+      groups[*group].push_back(index);
+  }
+
+  std::vector<std::vector<std::size_t>> ordered_groups;
+  ordered_groups.reserve(groups.size());
+  for (auto& [group, indices] : groups) {
+    (void)group;
+    ordered_groups.push_back(std::move(indices));
+  }
+  std::sort(ordered_groups.begin(), ordered_groups.end(),
+            [](const auto& left, const auto& right) {
+              return left.front() < right.front();
+            });
+
+  for (const std::vector<std::size_t>& indices : ordered_groups) {
+    const std::size_t first = indices.front();
+    const TupletRatio ratio = *event_duration(events[first]).tuplet();
+    bool              valid = ratio.played() != ratio.normal();
+    Rational          sum(0);
+    for (std::size_t offset = 0; offset < indices.size(); ++offset) {
+      const std::size_t index = indices[offset];
+      visited.push_back(event_id(events[index]));
+      if (index != first + offset ||
+          event_duration(events[index]).tuplet() != ratio) {
+        valid = false;
+      }
+      sum = sum + event_duration(events[index]).resolved();
+    }
+    const std::optional<Duration> base =
+        Duration::create(event_duration(events[first]).base(), 0);
+    assert(base.has_value());
+    const Rational multiple = sum / base->resolved();
+    if (multiple.denominator() != 1 || multiple.numerator() <= 0)
+      valid = false;
+    if (!valid) {
+      diagnostics.push_back(
+          {event_id(events[first]),
+           NotationDiagnosticCode::kIncompleteTupletGroup,
+           "tuplet group must be contiguous, use one non-trivial ratio, and "
+           "sum to whole un-tupleted base units"});
     }
   }
 }

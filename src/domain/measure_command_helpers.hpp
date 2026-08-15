@@ -39,9 +39,9 @@ struct MeasureCascade {
   Rational    position(0);
   std::size_t index = 0;
   while (index < events.size()) {
-    const std::optional<TupletRatio>& ratio =
-        event_duration(events[index]).tuplet();
-    if (!ratio.has_value()) {
+    const std::optional<TupletGroupId>& group =
+        event_tuplet_group(events[index]);
+    if (!group.has_value()) {
       position = position + event_duration(events[index]).resolved();
       ++index;
       continue;
@@ -49,9 +49,9 @@ struct MeasureCascade {
 
     const Rational group_start = position;
     while (index < events.size()) {
-      const std::optional<TupletRatio>& next =
-          event_duration(events[index]).tuplet();
-      if (!next.has_value() || *next != *ratio)
+      const std::optional<TupletGroupId>& next =
+          event_tuplet_group(events[index]);
+      if (next != group)
         break;
       position = position + event_duration(events[index]).resolved();
       ++index;

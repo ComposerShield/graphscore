@@ -403,10 +403,11 @@ struct ResolvedMarkingRecord {
 // exactly what validate_selection's kTuplet check rejects
 // (kMarkingNotPresent, "event is not the first event of its tuplet run").
 // This walks `voice`'s own full, unfragmented event list backward from
-// `anchor` while the preceding event carries an equal TupletRatio, landing
-// on the true first event regardless of which system the click happened
-// in. Returns std::nullopt if `anchor` does not name a voice event, or
-// names one with no tuplet ratio at all (a stale layout).
+// `anchor` while the preceding event carries the same TupletGroupId, landing
+// on the true first event regardless of which system the click happened in
+// without merging an adjacent equal-ratio group. Returns std::nullopt if
+// `anchor` does not name a voice event, or names one with no group identity
+// (a stale layout).
 [[nodiscard]] std::optional<NotationEntityId> normalize_tuplet_anchor(
     const VoiceContent& voice, NotationEntityId anchor) {
   const std::vector<VoiceEvent>& events = voice.events();
@@ -420,15 +421,12 @@ struct ResolvedMarkingRecord {
   if (!index.has_value()) {
     return std::nullopt;
   }
-  const std::optional<TupletRatio> ratio =
-      event_duration(events[*index]).tuplet();
-  if (!ratio.has_value()) {
+  const std::optional<TupletGroupId> group = event_tuplet_group(events[*index]);
+  if (!group.has_value()) {
     return std::nullopt;
   }
   while (*index > 0) {
-    const std::optional<TupletRatio> previous =
-        event_duration(events[*index - 1]).tuplet();
-    if (!previous.has_value() || *previous != *ratio) {
+    if (event_tuplet_group(events[*index - 1]) != group) {
       break;
     }
     --*index;

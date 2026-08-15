@@ -40,6 +40,7 @@ add_executable(graphscore_writer_app
   writer_app/selftests/selftest_selection_tool_shell.cpp
   writer_app/selftests/selftest_staff_step.cpp
   writer_app/selftests/selftest_step_entry.cpp
+  writer_app/selftests/selftest_tuplet_edit.cpp
   writer_app/selftests/selftest_support.cpp
 )
 

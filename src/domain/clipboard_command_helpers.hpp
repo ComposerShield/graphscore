@@ -209,7 +209,7 @@ struct ClippedRegion {
     const bool is_last = (i + 1 == pieces->size());
     if (i == 0) {
       out.push_back(Note{event.id, event.pitch, (*pieces)[i].duration, !is_last,
-                         event.articulations, event.stem});
+                         event.articulations, event.stem, std::nullopt});
     } else {
       out.push_back(make_note(event.pitch, (*pieces)[i].duration, !is_last));
     }
@@ -432,10 +432,18 @@ struct RegeneratedEvents {
 
 [[nodiscard]] inline RegeneratedEvents regenerate_events(
     const std::vector<VoiceEvent>& source_events) {
-  RegeneratedEvents out;
+  RegeneratedEvents                                out;
+  std::unordered_map<TupletGroupId, TupletGroupId> tuplet_ids;
   out.events.reserve(source_events.size());
   for (const VoiceEvent& event : source_events) {
     VoiceEvent copy = regenerate_event(event);
+    if (const auto& source_group = event_tuplet_group(event);
+        source_group.has_value()) {
+      const auto [it, inserted] =
+          tuplet_ids.emplace(*source_group, TupletGroupId::generate());
+      (void)inserted;
+      std::visit([&](auto& copied) { copied.tuplet_group = it->second; }, copy);
+    }
     out.id_map.emplace(event_id(event), event_id(copy));
     out.events.push_back(std::move(copy));
   }

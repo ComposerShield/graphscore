@@ -370,18 +370,20 @@ std::optional<SelectionDiagnostic> validate_voice_marking(
       if (!index.has_value())
         return anchor_mismatch(voice_contains_entity(voice, item.anchor),
                                item_index, "anchor is not a top-level event");
-      const std::optional<TupletRatio> ratio =
+      const std::optional<TupletRatio>& ratio =
           event_duration(voice.events()[*index]).tuplet();
-      if (!ratio.has_value())
+      const std::optional<TupletGroupId>& group =
+          event_tuplet_group(voice.events()[*index]);
+      if (!ratio.has_value() || !group.has_value())
         return SelectionDiagnostic{item_index,
                                    SelectionDiagnosticCode::kMarkingNotPresent,
                                    "event carries no tuplet"};
       // The bracket and number belong to the run, drawn from its first
       // event; a later event of the same run is not an address for it.
       if (*index > 0) {
-        const std::optional<TupletRatio> previous =
-            event_duration(voice.events()[*index - 1]).tuplet();
-        if (previous.has_value() && *previous == *ratio)
+        const std::optional<TupletGroupId>& previous =
+            event_tuplet_group(voice.events()[*index - 1]);
+        if (previous == group)
           return SelectionDiagnostic{
               item_index, SelectionDiagnosticCode::kMarkingNotPresent,
               "event is not the first event of its tuplet run"};

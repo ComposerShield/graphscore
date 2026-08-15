@@ -574,6 +574,36 @@ Rejections (no-op with a diagnostic, clipboard untouched):
 A successful paste leaves the clipboard intact (paste does not consume the
 fragment).
 
+### 10.3 Tuplet structural actions (M5-phase-29)
+
+Tuplets are chord-less command-palette actions and parameterized app actions;
+they do not consume top-row digits, so the `1`–`8` interval bindings remain
+unchanged.
+
+- **Create or change to triplet** applies `3:2` in one action. An exact,
+  non-empty `ArbitraryRangeSet` containing complete contiguous events on one
+  staff and voice creates a group. A single selected tuplet `MarkingSet`
+  changes that complete group to `3:2` without changing its identity or bounds.
+- **Tuplet ratio (`N:M`)...** requests played/normal integer input from the
+  platform presentation or assistive-technology client. The toolkit-neutral
+  app exposes the corresponding parameterized action; the palette row itself
+  clearly requests input and never guesses a ratio. Validated arbitrary ratios
+  use the same create/change target rules as the triplet action.
+- **Remove tuplet** requires one selected tuplet marking and removes the ratio
+  from that complete stable group with fixed bounds.
+
+Partial-event ranges, mixed staff/voice ranges, stale selections, trivial or
+zero ratios, and any range already containing tuplet membership are rejected
+with a diagnostic. Every mutation is one undoable command and availability is
+computed by constructing the same notation-layer command execution uses.
+Single-click/step note entry never creates tuplet membership: it cannot know a
+complete group, so tuplets are applied only through these range actions.
+
+Engraving omits `M` for the conventional simple-subdivision family where `M`
+is the greatest power of two strictly below `N` (`3:2`, `5:4`, `7:4`, `9:8`,
+...). Every other ratio is explicit `N:M`; for example, `10:9` is printed
+`10:9`.
+
 ## 11. Command palette (complete normative route)
 
 The command palette is the universal keyboard and accessibility route to every
@@ -587,16 +617,17 @@ action in this table, and it is what makes the numpad-only bindings
   context — coherent with §5 and never swallowed as filter text.
 - **Inventory.** The palette enumerates exactly the actions in §7, one row per
   binding (Backspace and Delete are one row naming one action); the
-  accessible range controls of §7.8; and the three chord-less structural
+  accessible range controls of §7.8; the three chord-less structural
   measure-editing actions of M5-phase-28 — insert a measure before the
   selected measure, append a measure at the node's own end, and delete the
-  selected measure. All three structural rows carry an **empty chord hint**:
+  selected measure; and M5-phase-29's three tuplet rows in §10.3. All six
+  structural rows carry an **empty chord hint**:
   they are deliberately **not** bound to any key chord (no row in §7 names
   them), so §7's `(chord, key)` space is unchanged by their addition and
   §12's claim that this space is exhaustively enumerable still holds. Each
   row carries a stable **name**, its **chord hint** (empty for the
-  chord-less accessible controls and the chord-less structural
-  measure-editing actions), a one-line description, and a live
+  chord-less accessible controls and chord-less structural actions), a
+  one-line description, and a live
   **availability** state.
 - **Availability.** A row's availability is derived from the same precondition
   and fallback logic as its chord row, for a row that has one: "Cut" is

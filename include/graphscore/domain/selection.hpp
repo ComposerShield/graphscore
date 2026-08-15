@@ -75,15 +75,13 @@ enum class MarkingKind : std::uint8_t {
 // discriminator* rather than by an id of its own.
 //
 // Articulations (a plain Articulation in Note/Chord::articulations), ties
-// (a plain bool tied_to_next on Note/ChordNote) and tuplets (a
-// TupletRatio inside Duration) are values, not identified records.  Minting
-// a NotationEntityId for each of them so they could be named directly would
-// change three widely-used aggregates and every persistence, clipboard and
-// remapping path that copies them, for no user-visible gain.  The composite
-// key is unambiguous instead: an event cannot carry the same articulation
-// twice (enforced by validate_voice_references' duplicate-articulation
-// check), a note has at most one tie to the following event, and a tuplet
-// run has exactly one first event.
+// (a plain bool tied_to_next on Note/ChordNote) are values, not identified
+// records. Tuplets carry a stable TupletGroupId on every member event, but the
+// selected visible bracket remains anchored to the group's first event. The
+// composite selection key is unambiguous: an event cannot carry the same
+// articulation twice (enforced by validate_voice_references), a note has at
+// most one tie to the following event, and a tuplet group has exactly one
+// first event.
 //
 // Anchor semantics per kind:
 //   kDynamic, kHairpin, kSlur — the marking record's own id, in the
@@ -104,9 +102,8 @@ enum class MarkingKind : std::uint8_t {
 //     pitch mismatch), which is safe: validate_voice_references already
 //     flags that project state, and the Phase 2 resolver works from
 //     geometry, so it can never produce such an item.
-//   kTuplet                  — the id of the *first event of the tuplet
-//     run* (the same event validate_voice_references reports an incomplete
-//     run against), which is where the bracket and number are drawn.
+//   kTuplet                  — the id of the *first event of the stable
+//     tuplet group*, which is where the bracket and number are drawn.
 //
 // The shape rules above (`voice`/`articulation` engaged exactly when the
 // kind requires it) are intrinsic and enforced by MarkingSet::create, like
@@ -369,10 +366,9 @@ class InsertionCaretSet {
 // every marking record's own id (DynamicMarking, Hairpin, Slur, PedalSpan)
 // are load-bearing for exactly the same reason now that RestSet and
 // MarkingSet address them; and because MarkingItem names articulations,
-// ties and tuplets by (anchor event, kind) rather than by an id of their
-// own, M03 must also preserve articulation *order-independent membership*,
-// tied_to_next, and tuplet run boundaries — a migration that reorders a
-// tuplet run or drops a tie flag silently invalidates those selections.
+// ties and tuplets by (anchor event, kind), M03 must also preserve
+// articulation *order-independent membership*, tied_to_next, and stable
+// tuplet group identities and boundaries.
 //
 // New arms are appended rather than grouped with their neighbours so that
 // the existing alternatives keep their variant indices.

@@ -150,6 +150,15 @@ const std::vector<PaletteCommand> kInventory = [] {
   add(PaletteCommandId::kDeleteMeasure, "Delete measure", "",
       "Delete the selected measure");
 
+  // M5-phase-29 tuplets: a one-action common path and an explicit
+  // parameter-entry path for arbitrary ratios.
+  add(PaletteCommandId::kCreateTriplet, "Create or change to triplet", "",
+      "Apply a 3:2 tuplet to the selected rhythmic range or tuplet marking");
+  add(PaletteCommandId::kTupletRatioEntry, "Tuplet ratio (N:M)...", "",
+      "Request N:M input, then apply it to a rhythmic range or tuplet marking");
+  add(PaletteCommandId::kRemoveTuplet, "Remove tuplet", "",
+      "Remove the selected tuplet marking while keeping its group bounds");
+
   return rows;
 }();
 

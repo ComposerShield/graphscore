@@ -90,6 +90,18 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // measure. Reachable only through the command palette.
   bool delete_measure();
 
+  // Applies 3:2 in one action. An arbitrary validated ratio uses
+  // apply_tuplet_ratio(); both create from a rhythmic range and change an
+  // existing selected marking through the notation factories.
+  bool create_triplet();
+  bool apply_tuplet_ratio(std::uint16_t played, std::uint16_t normal);
+  bool remove_selected_tuplet();
+
+  // Toolkit-neutral parameter-entry handoff established by the palette row.
+  // A platform dialog/AT can observe this and call apply_tuplet_ratio().
+  void               request_tuplet_ratio_entry();
+  [[nodiscard]] bool tuplet_ratio_entry_requested() const noexcept;
+
   // Primary+Up/Down (M5-phase-24): moves the committed selection to the
   // prior/next staff of the node, wrapping within it. A pure SELECTION
   // change that builds no Command and opens no history transaction.
@@ -523,6 +535,10 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // selection, including the sole-measure guard.
   [[nodiscard]] bool measure_delete_available() const;
 
+  [[nodiscard]] bool tuplet_ratio_available(
+      graphscore::TupletRatio ratio) const;
+  [[nodiscard]] bool tuplet_remove_available() const;
+
   // Whether a live step-entry cursor exists (the pitch/rest commit rows'
   // precondition, distinct from the palette-arming rows that need none).
   [[nodiscard]] bool step_entry_cursor_live() const;
@@ -638,7 +654,8 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // The nonvisual command-palette model (§11).
   bool        palette_open_ = false;
   std::string palette_filter_;
-  std::size_t palette_selected_index_ = 0;
+  std::size_t palette_selected_index_       = 0;
+  bool        tuplet_ratio_entry_requested_ = false;
 
   // The app-owned composer diagnostic sink (§1, §8.5, §10): appended by
   // every rejected action's fallback, observable and resettable by tests.

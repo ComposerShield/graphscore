@@ -143,9 +143,10 @@ class Project;
 //                     lookback context when scanning for a run that began
 //                     earlier, so this function separately walks the
 //                     addressed voice's own full (unfragmented) event list
-//                     backward from the hit's anchor, while the preceding
-//                     event carries an equal TupletRatio, before building
-//                     the selection.
+//                     backward from the hit's anchor while the preceding
+//                     event carries the same TupletGroupId before building
+//                     the selection. Adjacent equal-ratio groups therefore
+//                     remain distinct selections.
 //   kSystem/kMeasure/kStaff/kVoice/kStaffMeasure hit, or no hit at all --
 //                     InsertionCaretSet
 //                     (one item) at the nearest onset in `palette`'s armed

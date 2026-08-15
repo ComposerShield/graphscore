@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 
 #include <graphscore/core/note_audition.hpp>
 #include <graphscore/domain/selection.hpp>
@@ -18,6 +19,37 @@ class Project;
 enum class AccidentalStepDirection : std::uint8_t;
 enum class IntervalDirection : std::uint8_t;
 enum class NoteheadStepDirection : std::uint8_t;
+
+// A conventional tuplet number omits M when M is the greatest power of two
+// strictly below N (3:2, 5:4, 7:4, 9:8, ...). This is the standard simple
+// subdivision family; every other ratio is printed explicitly as N:M.
+[[nodiscard]] constexpr bool is_conventional_tuplet_ratio(
+    TupletRatio ratio) noexcept {
+  std::uint32_t normal = 1;
+  while (normal * 2u < ratio.played())
+    normal *= 2u;
+  return ratio.played() > 1u && ratio.normal() == normal;
+}
+
+[[nodiscard]] std::string tuplet_label(TupletRatio ratio);
+
+// Creates a single-level tuplet from exactly one non-empty ArbitraryRangeItem.
+// The span must coincide with complete contiguous events in one voice; partial
+// events, multi-staff/voice ranges, and any existing tuplet membership reject.
+[[nodiscard]] std::unique_ptr<Command> make_tuplet_create_command(
+    const Project& project, const Selection& selection, TupletRatio ratio);
+
+// Changes/removes exactly one selected tuplet marking. Group identity fixes the
+// complete bounds, so a partial group cannot be represented by these routes.
+[[nodiscard]] std::unique_ptr<Command> make_tuplet_change_command(
+    const Project& project, const Selection& selection, TupletRatio ratio);
+[[nodiscard]] std::unique_ptr<Command> make_tuplet_remove_command(
+    const Project& project, const Selection& selection);
+
+// The marking selection to install after a successful create. It is computed
+// from the pre-edit range and names the first selected event.
+[[nodiscard]] std::optional<Selection> selection_after_tuplet_create(
+    const Project& project, const Selection& selection);
 
 // Constructs a reversible domain command for the note-entry pointer action
 // described in docs/plan/05-notation-editor.md ("Clicking an existing

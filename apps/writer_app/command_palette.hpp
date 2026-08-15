@@ -81,6 +81,9 @@ enum class PaletteCommandId : std::uint8_t {
   kInsertMeasureBefore,
   kAppendMeasure,
   kDeleteMeasure,
+  kCreateTriplet,
+  kTupletRatioEntry,
+  kRemoveTuplet,
 };
 
 // One palette row: a stable name, its chord hint (empty for the chord-less

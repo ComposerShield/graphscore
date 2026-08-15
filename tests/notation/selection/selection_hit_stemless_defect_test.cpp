@@ -487,11 +487,10 @@ TEST(SelectionResolverTest,
   const int          col1_priority = col1->priority;
 
   const HitRegion stale_col{NotationId{"stale/notehead-column/hit"},
-                            NotationId{"dead-beef-9999"},
-                            HitRole::kEvent,
-                            col1_bounds,
-                            col1_priority,
-                            std::nullopt,
+                            // Keep this deterministically an alternative, not
+                            // hit_test's lexicographically smallest winner.
+                            NotationId{"zzzz-stale-entity"}, HitRole::kEvent,
+                            col1_bounds, col1_priority, std::nullopt,
                             std::nullopt};
   layout.hit_regions.push_back(stale_col);
 

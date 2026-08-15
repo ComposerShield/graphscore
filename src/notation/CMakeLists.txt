@@ -16,6 +16,7 @@ add_library(graphscore_notation STATIC
   notation_range_selection.cpp
   notation_selection.cpp
   notation_staff_step.cpp
+  notation_tuplet_edit.cpp
   notation_types.cpp
 )
 

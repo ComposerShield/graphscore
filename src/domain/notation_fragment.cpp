@@ -213,9 +213,34 @@ struct ClipState {
 std::optional<ClipState> clip_events(
     const std::vector<VoiceEvent>& source_events, Rational origin,
     Rational span_length) {
-  const Rational end = origin + span_length;
-  ClipState      state;
-  Rational       pos(0);
+  const Rational                                   end = origin + span_length;
+  ClipState                                        state;
+  Rational                                         pos(0);
+  std::unordered_map<TupletGroupId, TupletGroupId> tuplet_ids;
+
+  // Tuplet groups are indivisible clipboard entities, not independent
+  // ratio-bearing events. Reject a range containing only part of a group.
+  std::unordered_map<TupletGroupId, std::pair<Rational, Rational>> bounds;
+  Rational scan_position(0);
+  for (const VoiceEvent& event : source_events) {
+    const Rational event_end = scan_position + event_duration(event).resolved();
+    if (const auto& group = event_tuplet_group(event); group.has_value()) {
+      auto [it, inserted] =
+          bounds.emplace(*group, std::pair{scan_position, event_end});
+      if (!inserted)
+        it->second.second = event_end;
+    }
+    scan_position = event_end;
+  }
+  for (const auto& [group, group_bounds] : bounds) {
+    (void)group;
+    const bool intersects =
+        group_bounds.first < end && origin < group_bounds.second;
+    const bool contained =
+        !(group_bounds.first < origin) && !(group_bounds.second > end);
+    if (intersects && !contained)
+      return std::nullopt;
+  }
 
   auto append_rests = [&](Rational length) {
     if (!(length > Rational(0)))
@@ -229,7 +254,14 @@ std::optional<ClipState> clip_events(
   };
 
   auto append_verbatim = [&](const VoiceEvent& source_event) {
-    VoiceEvent             copy    = copy_event_verbatim(source_event);
+    VoiceEvent copy = copy_event_verbatim(source_event);
+    if (const auto& source_group = event_tuplet_group(source_event);
+        source_group.has_value()) {
+      const auto [it, inserted] =
+          tuplet_ids.emplace(*source_group, TupletGroupId::generate());
+      (void)inserted;
+      std::visit([&](auto& copied) { copied.tuplet_group = it->second; }, copy);
+    }
     const NotationEntityId new_id  = event_id(copy);
     const bool             is_rest = std::holds_alternative<Rest>(source_event);
     state.events.push_back(std::move(copy));

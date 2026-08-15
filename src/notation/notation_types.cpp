@@ -92,6 +92,8 @@ char32_t smufl_codepoint(SmuflGlyph glyph) noexcept {
       return U'\uE080';
     case SmuflGlyph::kTupletDigit0:
       return U'\uE880';
+    case SmuflGlyph::kTupletColon:
+      return U'\uE88A';
   }
   return U'\uFFFD';
 }

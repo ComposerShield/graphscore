@@ -54,6 +54,7 @@ add_executable(graphscore_domain_test
   selection_test.cpp
   tempo_lane_test.cpp
   track_test.cpp
+  tuplet_command_test.cpp
   vertical_transition_test.cpp
   validation_service_test.cpp
   voice_content_test.cpp

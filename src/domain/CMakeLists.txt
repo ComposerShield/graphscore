@@ -100,6 +100,7 @@ add_library(graphscore_domain STATIC
   tempo_lane.cpp
   tie_chain.cpp
   track.cpp
+  tuplet_command.cpp
   vertical_transition.cpp
   validation_service.cpp
   voice_content.cpp

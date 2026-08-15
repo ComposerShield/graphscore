@@ -59,6 +59,17 @@ Result SetEventCommand::execute(Project& project) noexcept {
     VoiceContent pre_snapshot = *voice;
     VoiceContent candidate    = pre_snapshot;
 
+    const std::optional<std::size_t> target_index =
+        candidate.find_event_index_at(position_);
+    if (!target_index.has_value())
+      return Result(ResultCode::kInvalidArgument);
+    const VoiceEvent& old_event = candidate.events()[*target_index];
+    if (event_tuplet_group(old_event) != event_tuplet_group(new_event_) ||
+        event_duration(old_event).tuplet() !=
+            event_duration(new_event_).tuplet()) {
+      return Result(ResultCode::kInvalidArgument);
+    }
+
     Result result = candidate.replace_event(position_, new_event_, node_end);
     if (!result.ok())
       return result;

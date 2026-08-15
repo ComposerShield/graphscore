@@ -77,7 +77,8 @@ Result DeleteNoteheadCommand::execute(Project& project) noexcept {
       if (const auto* note = std::get_if<Note>(&event)) {
         if (note->id != notehead_id_)
           return Result(ResultCode::kInvalidArgument);
-        replacement    = VoiceEvent(Rest{note->id, note->duration});
+        replacement =
+            VoiceEvent(Rest{note->id, note->duration, note->tuplet_group});
         found_notehead = true;
       } else if (const auto* chord = std::get_if<Chord>(&event)) {
         std::vector<ChordNote> remaining;
@@ -92,12 +93,14 @@ Result DeleteNoteheadCommand::execute(Project& project) noexcept {
         if (!found_notehead)
           return Result(ResultCode::kInvalidArgument);
         if (remaining.empty()) {
-          replacement = VoiceEvent(Rest{chord->id, chord->duration});
+          replacement =
+              VoiceEvent(Rest{chord->id, chord->duration, chord->tuplet_group});
         } else if (remaining.size() == 1u) {
           const ChordNote& remaining_note = remaining.front();
-          replacement                     = VoiceEvent(Note{
-              remaining_note.id, remaining_note.pitch, chord->duration,
-              remaining_note.tied_to_next, chord->articulations, chord->stem});
+          replacement                     = VoiceEvent(
+              Note{remaining_note.id, remaining_note.pitch, chord->duration,
+                   remaining_note.tied_to_next, chord->articulations,
+                   chord->stem, chord->tuplet_group});
         } else {
           Chord reduced = *chord;
           reduced.notes = std::move(remaining);

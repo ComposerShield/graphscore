@@ -46,6 +46,8 @@ struct ConnectorIdTag {};
 struct EventIdTag {};
 
 struct NotationEntityIdTag {};
+
+struct TupletGroupIdTag {};
 }  // namespace detail
 
 using ProjectId        = StrongId<detail::ProjectIdTag>;
@@ -55,6 +57,7 @@ using NodeId           = StrongId<detail::NodeIdTag>;
 using ConnectorId      = StrongId<detail::ConnectorIdTag>;
 using EventId          = StrongId<detail::EventIdTag>;
 using NotationEntityId = StrongId<detail::NotationEntityIdTag>;
+using TupletGroupId    = StrongId<detail::TupletGroupIdTag>;
 
 }  // namespace graphscore
 

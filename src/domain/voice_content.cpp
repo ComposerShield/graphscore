@@ -252,7 +252,7 @@ struct DecomposeVoiceResult {
     bool gave_id = false;
     for (const Rest& r : *rests) {
       if (!gave_id) {
-        events.push_back(VoiceEvent(Rest{first_id, r.duration}));
+        events.push_back(VoiceEvent(Rest{first_id, r.duration, std::nullopt}));
         gave_id = true;
       } else {
         events.push_back(r);
@@ -314,6 +314,18 @@ Result VoiceContent::append(VoiceEvent event) {
       if (marking_id_exists(cn_id))
         return Result(ResultCode::kInvalidArgument);
     }
+  }
+
+  if (event_duration(event).tuplet().has_value() &&
+      !event_tuplet_group(event).has_value()) {
+    std::optional<TupletGroupId> group;
+    if (!events_.empty() && event_duration(events_.back()).tuplet() ==
+                                event_duration(event).tuplet()) {
+      group = event_tuplet_group(events_.back());
+    }
+    if (!group.has_value())
+      group = TupletGroupId::generate();
+    std::visit([&](auto& value) { value.tuplet_group = group; }, event);
   }
 
   // Prepare the journal payload before semantic mutation.
@@ -755,6 +767,92 @@ Result VoiceContent::replace_event(Rational position, VoiceEvent event,
     remap_event_id_across_references(target_id, new_id);
   advance_revision(std::move(d));
   return Result();
+}
+
+Result VoiceContent::set_tuplet_group(std::size_t first, std::size_t count,
+                                      std::optional<TupletGroupId> group,
+                                      std::optional<TupletRatio>   ratio,
+                                      Rational target_length) {
+  if (count == 0 || first >= events_.size() || count > events_.size() - first ||
+      group.has_value() != ratio.has_value()) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+
+  try {
+    std::vector<VoiceEvent>       temp = events_;
+    Rational                      old_length(0);
+    Rational                      new_length(0);
+    std::vector<NotationEntityId> changed_ids;
+    changed_ids.reserve(count);
+    for (std::size_t index = first; index < first + count; ++index) {
+      old_length = old_length + event_duration(temp[index]).resolved();
+      const Duration&               old_duration = event_duration(temp[index]);
+      const std::optional<Duration> replacement =
+          Duration::create(old_duration.base(), old_duration.dots(), ratio);
+      if (!replacement.has_value())
+        return Result(ResultCode::kInvalidArgument);
+      std::visit(
+          [&](auto& event) {
+            event.duration     = *replacement;
+            event.tuplet_group = group;
+          },
+          temp[index]);
+      new_length = new_length + replacement->resolved();
+      changed_ids.push_back(event_id(temp[index]));
+    }
+
+    const std::size_t following = first + count;
+    if (new_length > old_length) {
+      const Rational needed = new_length - old_length;
+      Rational       consumed(0);
+      std::size_t    end = following;
+      while (end < temp.size() && consumed < needed) {
+        const auto* rest = std::get_if<Rest>(&temp[end]);
+        if (rest == nullptr || rest->tuplet_group.has_value())
+          break;
+        const Rational rest_length = rest->duration.resolved();
+        if (consumed + rest_length <= needed) {
+          consumed = consumed + rest_length;
+          ++end;
+          continue;
+        }
+
+        const Rational remainder = consumed + rest_length - needed;
+        const std::optional<std::vector<Rest>> rests =
+            decompose_rest(remainder);
+        if (!rests.has_value())
+          return Result(ResultCode::kInvalidArgument);
+        std::vector<VoiceEvent> replacement;
+        replacement.reserve(rests->size());
+        for (const Rest& item : *rests)
+          replacement.emplace_back(item);
+        if (!replacement.empty())
+          std::get<Rest>(replacement.front()).id = rest->id;
+        temp.erase(temp.begin() + static_cast<std::ptrdiff_t>(end));
+        temp.insert(temp.begin() + static_cast<std::ptrdiff_t>(end),
+                    replacement.begin(), replacement.end());
+        consumed = needed;
+        break;
+      }
+      if (consumed < needed)
+        return Result(ResultCode::kInvalidArgument);
+      temp.erase(temp.begin() + static_cast<std::ptrdiff_t>(following),
+                 temp.begin() + static_cast<std::ptrdiff_t>(end));
+    }
+
+    const Result complete = normalize_temp(temp, target_length);
+    if (!complete.ok())
+      return complete;
+    VoiceDelta delta = make_event_delta(std::move(changed_ids), true);
+    delta.full_reset = true;
+    events_.swap(temp);
+    advance_revision(std::move(delta));
+    return Result();
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
 }
 
 Result VoiceContent::set_notehead_pitch(NotationEntityId id,

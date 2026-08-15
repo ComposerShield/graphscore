@@ -2,6 +2,7 @@
 
 #include <graphscore/domain/node_timeline.hpp>
 #include <graphscore/domain/voice_content.hpp>
+#include <graphscore/notation/notation_editing.hpp>
 
 #include "engraving.hpp"
 #include "layout_builder.hpp"
@@ -835,14 +836,15 @@ template std::vector<NotationEntityId> system_reference_ids(
       const IndexedEvent& first_record = local_events[local_index];
       const auto          ratio =
           event_duration(events[first_record.event_index]).tuplet();
+      const auto group = event_tuplet_group(events[first_record.event_index]);
       const Rational run_start = first_record.onset;
       std::size_t    end       = local_index + 1;
       Rational       run_end =
           run_start +
           event_duration(events[first_record.event_index]).resolved();
-      while (ratio.has_value() && end < local_events.size() &&
-             event_duration(events[local_events[end].event_index]).tuplet() ==
-                 ratio) {
+      while (
+          ratio.has_value() && group.has_value() && end < local_events.size() &&
+          event_tuplet_group(events[local_events[end].event_index]) == group) {
         run_end =
             run_end +
             event_duration(events[local_events[end].event_index]).resolved();
@@ -860,9 +862,7 @@ template std::vector<NotationEntityId> system_reference_ids(
         }
         std::size_t index = first_record.event_index;
         while (index > 0) {
-          const std::optional<TupletRatio> previous =
-              event_duration(events[index - 1]).tuplet();
-          if (!previous.has_value() || *previous != *ratio) {
+          if (event_tuplet_group(events[index - 1]) != group) {
             break;
           }
           --index;
@@ -882,12 +882,15 @@ template std::vector<NotationEntityId> system_reference_ids(
         const double y = staff.bounds.y - space * (2.5 + voice_index * 0.7);
         builder.add_line(make_id(id, "tuplet/bracket"), {span_x(run_start), y},
                          {span_x(run_end), y}, space * 0.1);
-        const std::string number = std::to_string(ratio->played());
+        const std::string number = tuplet_label(*ratio);
         double            x      = (span_x(run_start) + span_x(run_end)) * 0.5 -
                    static_cast<double>(number.size()) * space * 0.4;
         for (std::size_t digit = 0; digit < number.size(); ++digit) {
-          const char32_t code = smufl_codepoint(SmuflGlyph::kTupletDigit0) +
-                                static_cast<char32_t>(number[digit] - '0');
+          const char32_t code =
+              number[digit] == ':'
+                  ? smufl_codepoint(SmuflGlyph::kTupletColon)
+                  : smufl_codepoint(SmuflGlyph::kTupletDigit0) +
+                        static_cast<char32_t>(number[digit] - '0');
           if (!builder
                    .add_glyph(make_id(id, std::string(kHitRoleTupletDigit) +
                                               "/" + std::to_string(digit)),

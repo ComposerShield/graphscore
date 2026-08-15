@@ -130,9 +130,11 @@ class VoiceContent {
     return events_;
   }
 
-  // Appends `event` to the end of the voice. Fails, leaving the voice
-  // unchanged, if `event` holds a Chord with fewer than two notes, or
-  // if its NotationEntityId duplicates an id already present in the voice.
+  // Appends `event` to the end of the voice. A legacy ratio-bearing event
+  // without an explicit group identity inherits the immediately preceding
+  // equal-ratio group's identity, or starts a fresh group. Fails, leaving the
+  // voice unchanged, if `event` holds a Chord with fewer than two notes, or if
+  // its NotationEntityId duplicates an id already present in the voice.
   [[nodiscard]] Result append(VoiceEvent event);
 
   // Returns the index of the event whose start position exactly equals
@@ -208,6 +210,15 @@ class VoiceContent {
   // normalization fails.
   [[nodiscard]] Result replace_event(Rational position, VoiceEvent event,
                                      Rational target_length);
+
+  // Replaces the tuplet ratio/group metadata on one contiguous event slice.
+  // Rhythmic growth consumes immediately-following plain Rest coverage;
+  // contraction is completed by normalizing the voice at its end. The event
+  // identities and all reference collections are retained. Transactional.
+  [[nodiscard]] Result set_tuplet_group(std::size_t first, std::size_t count,
+                                        std::optional<TupletGroupId> group,
+                                        std::optional<TupletRatio>   ratio,
+                                        Rational target_length);
 
   // Sets only the pitch of the notehead named by `id` to `pitch`. This is
   // the one pitch-only, index-preserving mutation primitive: `id` must name

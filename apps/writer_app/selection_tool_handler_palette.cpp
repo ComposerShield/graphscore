@@ -396,6 +396,8 @@ palette_interval(PaletteCommandId id) {
     case PaletteCommandId::kInsertMeasureBefore:
     case PaletteCommandId::kAppendMeasure:
     case PaletteCommandId::kDeleteMeasure:
+    case PaletteCommandId::kCreateTriplet:
+    case PaletteCommandId::kRemoveTuplet:
       return true;
     default:
       return false;
@@ -545,6 +547,12 @@ bool SelectionToolHandler::palette_command_available(
       return measure_insert_available(graphscore::MeasureInsertMode::kAppend);
     case PaletteCommandId::kDeleteMeasure:
       return measure_delete_available();
+    case PaletteCommandId::kCreateTriplet:
+      return tuplet_ratio_available(*graphscore::TupletRatio::create(3, 2));
+    case PaletteCommandId::kTupletRatioEntry:
+      return true;
+    case PaletteCommandId::kRemoveTuplet:
+      return tuplet_remove_available();
   }
   return false;
 }
@@ -675,6 +683,12 @@ std::string SelectionToolHandler::palette_command_unavailable_reason(
       }
       return "requires an aligned full-measure selection";
     }
+    case PaletteCommandId::kCreateTriplet:
+      return "requires an exact single-voice rhythmic range or tuplet marking";
+    case PaletteCommandId::kTupletRatioEntry:
+      return "";
+    case PaletteCommandId::kRemoveTuplet:
+      return "requires a selected tuplet marking";
   }
   return "";
 }
@@ -907,6 +921,13 @@ bool SelectionToolHandler::run_palette_command(PaletteCommandId id) {
       return append_measure();
     case PaletteCommandId::kDeleteMeasure:
       return delete_measure();
+    case PaletteCommandId::kCreateTriplet:
+      return create_triplet();
+    case PaletteCommandId::kTupletRatioEntry:
+      request_tuplet_ratio_entry();
+      return true;
+    case PaletteCommandId::kRemoveTuplet:
+      return remove_selected_tuplet();
   }
   return false;
 }
