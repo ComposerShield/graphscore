@@ -31,6 +31,9 @@ SelectionToolHandler::~SelectionToolHandler() {
     drag_.cancel();
   }
   if (shell_ != nullptr) {
+    // The palette owns the only current text-input focus. Disable production
+    // composition before this InputHandler can become stale.
+    shell_->set_text_input_active(false);
     shell_->set_highlight_rects({});
   }
 }
@@ -40,7 +43,17 @@ void SelectionToolHandler::set_active_tool(graphscore::ActiveTool tool) {
     if (drag_.is_dragging()) {
       drag_.cancel();
     }
-    active_tool_ = tool;
+    // A pending note-entry press does not survive a tool switch.
+    note_entry_press_pending_ = false;
+    active_tool_              = tool;
+    // M5-phase-27: the step-entry cursor and pitch reference exist only while
+    // kNoteEntry is active (§8.1, §8.4). Entering initializes the cursor from
+    // the committed Selection; exiting discards both.
+    if (tool == graphscore::ActiveTool::kNoteEntry) {
+      enter_step_entry();
+    } else {
+      exit_step_entry();
+    }
     // After tool switch, show whatever highlight fits (committed, if any,
     // or clear entirely if none).
     update_highlight();
@@ -185,6 +198,61 @@ bool SelectionToolHandler::test_undo() {
 
 bool SelectionToolHandler::test_redo() {
   return history_.redo(project_).ok();
+}
+
+// Primary+Z (M5-phase-27): undo the most recent command. Selection-independent
+// (Any tool). A no-op on an empty undo stack. The pitch reference is reset
+// only when the undo actually removed the commit that produced the current
+// previous_pitch_ (including an interval-inserted producer), tracked by the
+// undo-stack depth recorded in record_step_entry_previous_pitch (§8.3):
+// undoing a later accidental step or an unrelated command preserves the
+// reference, while undoing the producer invalidates it.
+bool SelectionToolHandler::undo_action() {
+  if (history_.poisoned() || !history_.can_undo()) {
+    return false;
+  }
+  if (!history_.undo(project_).ok()) {
+    return false;
+  }
+  if (step_entry_cursor_.has_value() && previous_pitch_.has_value() &&
+      history_.undo_stack_size() < previous_pitch_undo_depth_) {
+    reset_pitch_reference();
+  }
+  const auto invalidation = full_invalidation();
+  if (invalidation.has_value()) {
+    std::ignore = refresh_layout(invalidation);
+  }
+  return true;
+}
+
+// Shift+Primary+Z (M5-phase-27): redo the most recently undone command.
+bool SelectionToolHandler::redo_action() {
+  if (history_.poisoned() || !history_.can_redo()) {
+    return false;
+  }
+  if (!history_.redo(project_).ok()) {
+    return false;
+  }
+  const auto invalidation = full_invalidation();
+  if (invalidation.has_value()) {
+    std::ignore = refresh_layout(invalidation);
+  }
+  return true;
+}
+
+void SelectionToolHandler::post_diagnostic(std::string message) {
+  diagnostics_.push_back(std::move(message));
+}
+
+const std::vector<std::string>& SelectionToolHandler::diagnostics()
+    const noexcept {
+  return diagnostics_;
+}
+
+std::vector<std::string> SelectionToolHandler::take_diagnostics() {
+  std::vector<std::string> taken;
+  taken.swap(diagnostics_);
+  return taken;
 }
 
 }  // namespace graphscore::writer_app

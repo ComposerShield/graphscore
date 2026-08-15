@@ -399,6 +399,10 @@ bool SelectionToolHandler::convert_selection_to_rest() {
 // graphscore::selection_after_staff_step; this method owns only the
 // read/commit wiring.
 //
+// In kNoteEntry (M5-phase-27 §8.4) the staff step additionally moves the
+// step-entry cursor to the same voice and position on the target staff and
+// resets the pitch reference, because the staff changed.
+//
 // Unlike every other keyboard action on this handler, this is a PURE
 // SELECTION change: it builds no Command, opens no CommandHistory
 // transaction, mutates no project state, and neither invalidates nor
@@ -408,6 +412,26 @@ bool SelectionToolHandler::convert_selection_to_rest() {
 // single-staff node) returns false and leaves the selection untouched.
 bool SelectionToolHandler::step_selected_staff(
     graphscore::StaffStepDirection direction) {
+  if (active_tool_ == graphscore::ActiveTool::kNoteEntry) {
+    // In kNoteEntry the cursor is the primary state (§8.4): it moves to the
+    // same voice and position on the target staff and the pitch reference
+    // resets, independent of whether the committed selection is an eligible
+    // arm. The committed selection is then re-derived on the target staff by
+    // the same resolution the kSelection path uses, when it is eligible.
+    const bool cursor_moved = step_cursor_staff(direction);
+    const std::optional<graphscore::Selection>& committed =
+        drag_.committed_selection();
+    if (committed.has_value()) {
+      std::optional<graphscore::Selection> stepped =
+          graphscore::selection_after_staff_step(project_, layout_, *committed,
+                                                 direction);
+      if (stepped.has_value()) {
+        set_committed_selection(std::move(stepped));
+      }
+    }
+    return cursor_moved;
+  }
+
   // Bound once and guarded once: a pointer handed back from one of the
   // current_*_set() accessors would not carry its own has_value() proof
   // to a later dereference of committed_selection() itself.

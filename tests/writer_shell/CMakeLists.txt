@@ -314,3 +314,53 @@ else()
   # exercises only the headless interval_entry_test (above), which passes
   # without a rendering backend and never calls dispatch_sdl_test_key_event.
 endif()
+
+# M5-phase-27: exercise the app-owned keyboard step-entry protocol through the
+# writer executable's own --test-step-entry path -- the cursor lifecycle, the
+# deterministic pitch reference and nearest-octave rule, the octave offset,
+# duration/dot/voice arming, rest commit, and the atomic node-end rejection.
+# This is a headless code path -- no window, no SDL -- built on WriterShell's
+# dispatch_test_key_event seam.
+add_test(NAME graphscore_writer_step_entry_test
+  COMMAND graphscore_writer_app --test-step-entry
+)
+
+set_tests_properties(graphscore_writer_step_entry_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "step-entry-test: ok"
+  TIMEOUT 30
+)
+
+# M5-phase-27: exercise the app-owned in-memory clipboard handoff (copy/cut/
+# paste) and undo/redo through the writer executable's own --test-clipboard
+# path.
+add_test(NAME graphscore_writer_clipboard_test
+  COMMAND graphscore_writer_app --test-clipboard
+)
+
+set_tests_properties(graphscore_writer_clipboard_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "clipboard-test: ok"
+  TIMEOUT 30
+)
+
+# M5-phase-27: exercise the nonvisual command-palette model (toggle, routing,
+# inventory, availability, search, execution) through the writer executable's
+# own --test-command-palette path.
+add_test(NAME graphscore_writer_command_palette_test
+  COMMAND graphscore_writer_app --test-command-palette
+)
+
+set_tests_properties(graphscore_writer_command_palette_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "command-palette-test: ok"
+  TIMEOUT 30
+)
+
+# M5-phase-27: exercise the chord-class, collision-rule, and repeat-policy
+# routing through the writer executable's own --test-action-table path.
+add_test(NAME graphscore_writer_action_table_test
+  COMMAND graphscore_writer_app --test-action-table
+)
+
+set_tests_properties(graphscore_writer_action_table_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "action-table-test: ok"
+  TIMEOUT 30
+)

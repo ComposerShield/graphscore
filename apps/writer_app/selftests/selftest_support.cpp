@@ -23,9 +23,16 @@
 #include <vector>
 
 namespace graphscore::writer_app {
+// The letter-mnemonic binding keyed on the physical KeyCode kR must carry the
+// matching logical identity, exactly as the production SDL path delivers both
+// (physical scancode R + logical keycode 'r'); the headless seam populates the
+// logical field here so tests stay faithful to production.
 [[nodiscard]] graphscore::KeyEvent plain_key(graphscore::KeyCode code) {
   graphscore::KeyEvent event;
   event.code = code;
+  if (code == graphscore::KeyCode::kR) {
+    event.logical = graphscore::LogicalKey::kR;
+  }
   return event;
 }
 
@@ -33,6 +40,9 @@ namespace graphscore::writer_app {
   graphscore::KeyEvent event;
   event.code            = code;
   event.modifiers.shift = true;
+  if (code == graphscore::KeyCode::kR) {
+    event.logical = graphscore::LogicalKey::kR;
+  }
   return event;
 }
 

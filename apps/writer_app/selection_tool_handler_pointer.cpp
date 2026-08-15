@@ -26,6 +26,14 @@ void SelectionToolHandler::on_pointer_press(graphscore::PointerEvent event) {
     return;
   }
   const graphscore::NotationPoint point{event.x, event.y};
+  if (active_tool_ == graphscore::ActiveTool::kNoteEntry) {
+    // Note entry (§8.4): a press is the start of a potential click commit.
+    // There is no note-entry drag gesture, so the selection drag state
+    // machine is not involved.
+    note_entry_press_pending_ = true;
+    note_entry_press_point_   = point;
+    return;
+  }
   if (!drag_.begin(active_tool_, point)) {
     // begin() cancels any prior drag and returns false; committed_selection_
     // persists.  Show whatever highlight fits (committed, if any, or clear).
@@ -40,6 +48,12 @@ void SelectionToolHandler::on_pointer_press(graphscore::PointerEvent event) {
 }
 
 void SelectionToolHandler::on_pointer_move(graphscore::PointerEvent event) {
+  if (active_tool_ == graphscore::ActiveTool::kNoteEntry) {
+    // A move during a note-entry press cancels the click (there is no
+    // note-entry drag gesture).
+    note_entry_press_pending_ = false;
+    return;
+  }
   if (!drag_.is_dragging()) {
     return;
   }
@@ -53,6 +67,20 @@ void SelectionToolHandler::on_pointer_move(graphscore::PointerEvent event) {
 }
 
 void SelectionToolHandler::on_pointer_release(graphscore::PointerEvent event) {
+  if (active_tool_ == graphscore::ActiveTool::kNoteEntry) {
+    if (note_entry_press_pending_ &&
+        event.button == graphscore::PointerButton::kPrimary) {
+      note_entry_press_pending_ = false;
+      const graphscore::NotationPoint point{event.x, event.y};
+      if (std::isfinite(point.x) && std::isfinite(point.y)) {
+        std::ignore = pointer_note_entry(point);
+      }
+      update_highlight();
+      return;
+    }
+    note_entry_press_pending_ = false;
+    return;
+  }
   if (!drag_.is_dragging()) {
     return;
   }
@@ -103,6 +131,7 @@ void SelectionToolHandler::on_pointer_release(graphscore::PointerEvent event) {
 }
 
 void SelectionToolHandler::on_cancel() {
+  note_entry_press_pending_ = false;
   if (drag_.is_dragging()) {
     drag_.cancel();
   }

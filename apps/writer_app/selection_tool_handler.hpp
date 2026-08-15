@@ -6,13 +6,32 @@
 #include <graphscore/notation/graphscore_notation.hpp>
 #include <graphscore/writer_shell/graphscore_writer_shell.hpp>
 
+#include "command_palette.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
+#include <vector>
 
 namespace graphscore::writer_app {
+
+// The app-owned step-entry cursor (docs/plan/05-notation-editor-action-table.md
+// §8.1): a distinct value from the committed Selection, holding the
+// (node, track, stave, voice, position) the next step-entry commit targets.
+// It exists only while the note-entry tool is active; the committed Selection
+// keeps its own kSelection meaning.
+struct StepEntryCursor {
+  graphscore::NodeId   node;
+  graphscore::TrackId  track;
+  graphscore::StaveId  stave;
+  graphscore::Voice    voice;
+  graphscore::Rational position;
+
+  [[nodiscard]] bool operator==(const StepEntryCursor&) const = default;
+};
 
 // Owns the drag state machine and active tool at the application assembly
 // layer. Registered with WriterShell before open_window(), so the shell's
@@ -41,6 +60,7 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   void on_pointer_release(graphscore::PointerEvent event) override;
   void on_cancel() override;
   void on_key_press(graphscore::KeyEvent event) override;
+  void on_text_input(graphscore::TextInputEvent event) override;
 
   // "Backspace"/"Delete" (M5-phase-22): deletes the single selected notehead.
   bool delete_selected_notehead();
@@ -120,7 +140,118 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   bool add_selected_interval(graphscore::IntervalDirection direction,
                              std::uint8_t                  interval);
 
+  // ---- step entry (M5-phase-27) -------------------------------------------
+
+  // Initializes the app-owned step-entry cursor from the committed Selection
+  // per §8.2; discards any prior cursor and pitch reference.
+  void enter_step_entry();
+
+  // Discards the cursor and pitch reference (tool exit, §8.4).
+  void exit_step_entry();
+
+  // Commits a natural `letter` at the cursor (§8.3/§8.5). Returns false and
+  // leaves the cursor and pitch reference unchanged on rejection.
+  bool step_entry_commit_pitch(graphscore::Letter letter);
+
+  // Commits a rest of the armed duration at the cursor (KP_0).
+  bool step_entry_commit_rest();
+
+  // Pointer note entry (M5-phase-27 §8.4): a kNoteEntry click commits a note
+  // or rest at the onset the notation layer's preview resolves, repositions
+  // the step-entry cursor to that onset, updates the pitch reference, and
+  // resets the octave offset. A no-op (with a diagnostic) when the click
+  // resolves to nothing or the tool is not kNoteEntry.
+  bool pointer_note_entry(graphscore::NotationPoint point);
+
+  // Arms a duration (KP_1..KP_7, §7.6). Selection-independent.
+  bool step_entry_arm_duration(graphscore::NoteValue value);
+
+  // Cycles the armed dot count 0→1→2→0 (KP_DECIMAL).
+  bool step_entry_cycle_dots();
+
+  // Arms a voice (Alt+1..4, §7.5). Resets the pitch reference on a change.
+  bool step_entry_arm_voice(graphscore::Voice voice);
+
+  // Steps the octave reference (Alt+Up/Down): direction > 0 is up, < 0 down.
+  bool step_entry_step_octave(int direction);
+
+  // Toggles the active tool between kNoteEntry and kSelection (`N`).
+  void toggle_tool();
+
+  // ---- clipboard (M5-phase-27) --------------------------------------------
+
+  bool copy_selection();
+  bool cut_selection();
+  bool paste_clipboard();
+
+  // ---- undo / redo (M5-phase-27) ------------------------------------------
+
+  bool undo_action();
+  bool redo_action();
+
+  // ---- command palette (M5-phase-27) --------------------------------------
+
+  void toggle_command_palette();
+  void close_command_palette();
+
+  [[nodiscard]] bool command_palette_open() const noexcept;
+
+  [[nodiscard]] const std::string& command_palette_filter() const noexcept;
+
+  void command_palette_set_filter(std::string filter);
+
+  // The inventory filtered by name/description, case-insensitively (§11
+  // search). Filtering never changes a row's availability or chord hint.
+  [[nodiscard]] std::vector<PaletteCommand> command_palette_filtered() const;
+
+  // Moves the palette selection within the filtered list (Up/Down).
+  void command_palette_move_selection(int delta);
+
+  [[nodiscard]] std::size_t command_palette_selected_index() const noexcept;
+
+  // Runs the selected row. Returns false when the filtered list is empty or
+  // the action's own fallback is a no-op.
+  bool command_palette_run_selected();
+
+  [[nodiscard]] bool palette_command_available(PaletteCommandId id) const;
+
+  [[nodiscard]] std::string palette_command_unavailable_reason(
+      PaletteCommandId id) const;
+
+  bool run_palette_command(PaletteCommandId id);
+
+  // ---- diagnostics (M5-phase-27) ------------------------------------------
+
+  // Appends one composer diagnostic to the app-owned sink. This is the
+  // observable mechanism the action table's §7/§8/§10 fallbacks surface;
+  // it never couples to a platform logging path.
+  void post_diagnostic(std::string message);
+
+  [[nodiscard]] const std::vector<std::string>& diagnostics() const noexcept;
+
+  // Returns and clears the accumulated diagnostics.
+  [[nodiscard]] std::vector<std::string> take_diagnostics();
+
   // ---- test access ---------------------------------------------------------
+
+  [[nodiscard]] std::optional<StepEntryCursor> step_entry_cursor()
+      const noexcept;
+
+  [[nodiscard]] std::optional<graphscore::SpelledPitch> previous_pitch()
+      const noexcept;
+
+  [[nodiscard]] int octave_offset() const noexcept;
+
+  [[nodiscard]] bool clipboard_has_fragment() const noexcept;
+
+  [[nodiscard]] const std::optional<graphscore::NotationFragment>& clipboard()
+      const noexcept;
+
+  [[nodiscard]] graphscore::NoteValue armed_note_value() const noexcept;
+
+  [[nodiscard]] std::uint8_t armed_dots() const noexcept;
+
+  [[nodiscard]] graphscore::Voice armed_voice() const noexcept;
 
   [[nodiscard]] const graphscore::SelectionDragState& drag_state()
       const noexcept;
@@ -196,6 +327,155 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   bool refresh_layout(
       std::optional<graphscore::NotationInvalidation> forced = std::nullopt);
 
+  // ---- step-entry helpers --------------------------------------------------
+
+  void initialize_step_entry_cursor();
+
+  // Moves the step-entry cursor to the same voice and position on the prior/
+  // next staff of the node (wrapping), resetting the pitch reference (§8.4).
+  bool step_cursor_staff(graphscore::StaffStepDirection direction);
+
+  [[nodiscard]] std::optional<graphscore::Rational> snap_caret(
+      graphscore::NodeId node, graphscore::TrackId track,
+      graphscore::StaveId stave, graphscore::Voice voice,
+      graphscore::Rational position) const;
+
+  [[nodiscard]] std::optional<graphscore::Rational> event_onset(
+      graphscore::NodeId node, graphscore::TrackId track,
+      graphscore::StaveId stave, graphscore::Voice voice,
+      graphscore::NotationEntityId entity) const;
+
+  [[nodiscard]] std::optional<graphscore::Clef> active_clef_at_cursor() const;
+
+  [[nodiscard]] std::optional<graphscore::SpelledPitch>
+  resolve_pitch_for_letter(graphscore::Letter letter) const;
+
+  void reset_pitch_reference() noexcept;
+
+  bool commit_step_entry(graphscore::NotePaletteEntryKind        kind,
+                         std::optional<graphscore::SpelledPitch> pitch);
+
+  [[nodiscard]] std::unique_ptr<graphscore::Command> make_note_entry_command_at(
+      graphscore::NodeId node, graphscore::TrackId track,
+      graphscore::StaveId stave, graphscore::Voice voice,
+      graphscore::Rational position, graphscore::NotePaletteEntryKind kind,
+      std::optional<graphscore::SpelledPitch> pitch) const;
+
+  // Shared core of a note-entry commit at an explicit (node, track, stave,
+  // voice, position): builds make_note_entry_command, runs the reversible
+  // transaction, selects the inserted notehead/rest, updates the pitch
+  // reference on a note, and either advances the cursor by the armed
+  // duration (keyboard §8.5, advance_cursor == true) or repositions it to
+  // the commit position (pointer §8.4, advance_cursor == false). `voice` is
+  // the sole target voice: the cursor's voice for every cursor-init arm and
+  // the preview's armed voice for a pointer commit -- never the palette's
+  // armed voice, which the cursor may disagree with.
+  bool commit_note_entry_at(graphscore::NodeId node, graphscore::TrackId track,
+                            graphscore::StaveId stave, graphscore::Voice voice,
+                            graphscore::Rational                    position,
+                            graphscore::NotePaletteEntryKind        kind,
+                            std::optional<graphscore::SpelledPitch> pitch,
+                            bool advance_cursor);
+
+  [[nodiscard]] std::optional<graphscore::NotationInvalidation>
+  step_entry_invalidation(graphscore::NodeId node, bool voice_was_empty,
+                          graphscore::Rational position) const;
+
+  [[nodiscard]] std::optional<graphscore::Selection>
+  selection_after_step_entry_commit(
+      graphscore::NodeId node, graphscore::TrackId track,
+      graphscore::StaveId stave, graphscore::Voice voice,
+      graphscore::Rational                    position,
+      std::optional<graphscore::SpelledPitch> pitch) const;
+
+  void record_step_entry_previous_pitch(const graphscore::SpelledPitch& pitch);
+
+  // ---- clipboard helpers ---------------------------------------------------
+
+  [[nodiscard]] std::optional<graphscore::PasteAnchor> derive_paste_anchor()
+      const;
+
+  [[nodiscard]] std::optional<graphscore::NotationInvalidation>
+  full_invalidation() const;
+
+  // The start of the node's measure `measure_index`, or nullopt when the
+  // node/track/stave is absent, the track is archived, or the index is out
+  // of range -- a bounded, validated lookup used by every selection-derived
+  // measure_start call so a stale full-measure selection is rejected
+  // atomically rather than indexing past MeasureMap::measure_count().
+  [[nodiscard]] std::optional<graphscore::Rational> measure_start_at(
+      graphscore::NodeId node, graphscore::TrackId track,
+      graphscore::StaveId stave, std::size_t measure_index) const;
+
+  // Whether (node, track, stave) still names a live, active stave the node
+  // engraves (the track is not archived and the lane/stave exist).
+  [[nodiscard]] bool live_stave(graphscore::NodeId  node,
+                                graphscore::TrackId track,
+                                graphscore::StaveId stave) const;
+
+  bool run_interval_action(graphscore::IntervalDirection direction,
+                           std::uint8_t                  interval);
+
+  // ---- palette eligibility probes (M5-phase-27 §11) -----------------------
+
+  // These are the shared, side-effect-free probes the command-palette
+  // availability switch uses. Each mirrors the exact precondition/fallback
+  // its chord's execution path enforces, so availability and execution can
+  // never drift (the palette never offers an action its chord would no-op).
+
+  // The single NoteheadItem when the committed selection is a single-item
+  // NoteheadSet; nullopt otherwise. Arm/cardinality only.
+  [[nodiscard]] std::optional<graphscore::NoteheadItem> single_notehead_item()
+      const;
+
+  // The single ChordItem when the committed selection is a single-item
+  // ChordSet; nullopt otherwise.
+  [[nodiscard]] std::optional<graphscore::ChordItem> single_chord_item() const;
+
+  // Whether the committed selection names a single item of a given arm
+  // (RestSet / InsertionCaretSet), cardinality-checked.
+  [[nodiscard]] bool single_rest_item() const;
+  [[nodiscard]] bool single_caret_item() const;
+
+  // Whether the committed selection is an eligible note/chord target for
+  // "R" (convert-to-rest): a single-item NoteheadSet naming a Note/ChordNote
+  // (never a GraceNote) or a single-item ChordSet, exactly the no-op set
+  // make_convert_event_to_rest_command enforces.
+  [[nodiscard]] bool convert_to_rest_available() const;
+
+  // Whether the committed selection is an eligible staff-step source: a
+  // single-item NoteheadSet/ChordSet/RestSet/InsertionCaretSet that still
+  // validates against the project (stale/archived/missing rejected).
+  [[nodiscard]] bool staff_step_available() const;
+
+  // Whether the committed selection is an eligible copy/cut target whose
+  // extraction would succeed: a FullMeasureSet or ArbitraryRangeSet sharing
+  // one node and one measure index / identical span, passing
+  // validate_selection -- the same preconditions extract_fragment enforces.
+  [[nodiscard]] bool copy_cut_available() const;
+
+  // Exact PasteFragmentCommand eligibility against a project value copy.
+  [[nodiscard]] bool paste_available() const;
+
+  // Whether a live step-entry cursor exists (the pitch/rest commit rows'
+  // precondition, distinct from the palette-arming rows that need none).
+  [[nodiscard]] bool step_entry_cursor_live() const;
+
+  [[nodiscard]] bool step_entry_pitch_available(
+      graphscore::Letter letter) const;
+  [[nodiscard]] bool step_entry_rest_available() const;
+
+  [[nodiscard]] bool octave_step_available(int direction) const noexcept;
+
+  [[nodiscard]] bool staff_step_available(
+      graphscore::StaffStepDirection direction) const;
+
+  // ---- command-palette helpers ---------------------------------------------
+
+  [[nodiscard]] std::size_t palette_filtered_size() const;
+
+  [[nodiscard]] std::optional<PaletteCommand> palette_selected_command() const;
+
   graphscore::Project            project_;
   graphscore::NotationLayout     layout_;
   graphscore::WriterShell*       shell_;
@@ -245,6 +525,12 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   graphscore::PointerButton initiating_button_ =
       graphscore::PointerButton::kUnknown;
 
+  // kNoteEntry pointer press tracking (§8.4): a press followed by a release
+  // with no intervening move is the note-entry click. The drag state machine
+  // is selection-only, so note entry tracks its own press here.
+  bool                      note_entry_press_pending_ = false;
+  graphscore::NotationPoint note_entry_press_point_;
+
   // Which edge of the committed selection's span the next Shift+Left/Right
   // step moves (M5-phase-19b-iii). extend_range_edge() recomputes this
   // after every successful call, since a crossing extension swaps which
@@ -261,6 +547,36 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // ArbitraryRangeSet selection.
   std::optional<graphscore::MeasureScope> first_staff_;
   std::optional<graphscore::MeasureScope> last_staff_;
+
+  // ---- M5-phase-27 state ---------------------------------------------------
+
+  // The app-owned step-entry cursor (§8.1), live only while kNoteEntry is
+  // active.
+  std::optional<StepEntryCursor> step_entry_cursor_;
+  // The pitch reference (§8.3): the last committed natural spelling, and the
+  // pending single-shot octave offset in [-8, +8].
+  std::optional<graphscore::SpelledPitch> previous_pitch_;
+  int                                     octave_offset_ = 0;
+  // The undo-stack depth right after the commit that produced the current
+  // previous_pitch_ (including an interval-inserted producer). Undo only
+  // clears the pitch reference when the undo stack shrinks below this depth,
+  // i.e. when the producer itself was undone -- never for an unrelated or
+  // later command (docs/plan/05-notation-editor-action-table.md §8.3).
+  std::size_t previous_pitch_undo_depth_ = 0;
+
+  // The app-owned in-memory clipboard (§10): a single slot holding at most
+  // one NotationFragment. Not part of CommandHistory; undo/redo never
+  // touches it.
+  std::optional<graphscore::NotationFragment> clipboard_;
+
+  // The nonvisual command-palette model (§11).
+  bool        palette_open_ = false;
+  std::string palette_filter_;
+  std::size_t palette_selected_index_ = 0;
+
+  // The app-owned composer diagnostic sink (§1, §8.5, §10): appended by
+  // every rejected action's fallback, observable and resettable by tests.
+  std::vector<std::string> diagnostics_;
 };
 
 }  // namespace graphscore::writer_app

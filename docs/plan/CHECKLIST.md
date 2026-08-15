@@ -112,7 +112,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [x] &nbsp;&nbsp;Automatic-rest normalization increment completed
 - [x] &nbsp;&nbsp;Explicit voice-stream workflow increment completed
 - [x] &nbsp;&nbsp;Note-audition preview-request increment completed
-- [ ] Selection and keyboard behavior completed
+- [x] Selection and keyboard behavior completed
 - [x] &nbsp;&nbsp;Rest/marking selection-model increment completed
 - [x] &nbsp;&nbsp;Pointer selection-resolver increment completed
 - [x] &nbsp;&nbsp;Marking selection-resolver increment completed

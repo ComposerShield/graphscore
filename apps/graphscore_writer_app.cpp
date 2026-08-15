@@ -13,7 +13,7 @@
 //
 // M05 scope: the active tool (note-entry or range-selection) and the
 // selection-drag state machine are owned at the application assembly layer
-// (see writer_app/selection_tool_handler.hpp). The 13 `--test-*` flags below
+// (see writer_app/selection_tool_handler.hpp). The 16 `--test-*` flags below
 // exercise that layer through the WriterShell event-dispatch seams; their
 // declarations live in writer_app/selftests/selftests.hpp.
 //
@@ -38,10 +38,16 @@
 // applies to the runtime's process path, not to the writer application.
 int main(int argc, char** argv) {
   using graphscore::writer_app::accidental_step_test;
+  using graphscore::writer_app::action_table_test;
+  using graphscore::writer_app::clipboard_test;
+  using graphscore::writer_app::command_palette_test;
   using graphscore::writer_app::convert_to_rest_test;
   using graphscore::writer_app::interval_entry_shell_test;
   using graphscore::writer_app::interval_entry_test;
   using graphscore::writer_app::kAccidentalStepTestFlag;
+  using graphscore::writer_app::kActionTableTestFlag;
+  using graphscore::writer_app::kClipboardTestFlag;
+  using graphscore::writer_app::kCommandPaletteTestFlag;
   using graphscore::writer_app::kConvertToRestTestFlag;
   using graphscore::writer_app::key_events_shell_test;
   using graphscore::writer_app::key_events_test;
@@ -57,12 +63,14 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::kSelectionToolTestFlag;
   using graphscore::writer_app::kSmokeTestFlag;
   using graphscore::writer_app::kStaffStepTestFlag;
+  using graphscore::writer_app::kStepEntryTestFlag;
   using graphscore::writer_app::notehead_delete_test;
   using graphscore::writer_app::notehead_move_test;
   using graphscore::writer_app::run;
   using graphscore::writer_app::selection_tool_shell_test;
   using graphscore::writer_app::selection_tool_test;
   using graphscore::writer_app::staff_step_test;
+  using graphscore::writer_app::step_entry_test;
 
   bool smoke_test                    = false;
   bool run_selection_test            = false;
@@ -77,6 +85,10 @@ int main(int argc, char** argv) {
   bool run_staff_step_test           = false;
   bool run_interval_entry_test       = false;
   bool run_interval_entry_shell_test = false;
+  bool run_step_entry_test           = false;
+  bool run_clipboard_test            = false;
+  bool run_command_palette_test      = false;
+  bool run_action_table_test         = false;
   for (int i = 1; i < argc; ++i) {
     if (kSmokeTestFlag == argv[i]) {
       smoke_test = true;
@@ -117,6 +129,18 @@ int main(int argc, char** argv) {
     if (kIntervalEntryShellTestFlag == argv[i]) {
       run_interval_entry_shell_test = true;
     }
+    if (kStepEntryTestFlag == argv[i]) {
+      run_step_entry_test = true;
+    }
+    if (kClipboardTestFlag == argv[i]) {
+      run_clipboard_test = true;
+    }
+    if (kCommandPaletteTestFlag == argv[i]) {
+      run_command_palette_test = true;
+    }
+    if (kActionTableTestFlag == argv[i]) {
+      run_action_table_test = true;
+    }
   }
 
   try {
@@ -155,6 +179,18 @@ int main(int argc, char** argv) {
     }
     if (run_interval_entry_shell_test) {
       return interval_entry_shell_test();
+    }
+    if (run_step_entry_test) {
+      return step_entry_test();
+    }
+    if (run_clipboard_test) {
+      return clipboard_test();
+    }
+    if (run_command_palette_test) {
+      return command_palette_test();
+    }
+    if (run_action_table_test) {
+      return action_table_test();
     }
     return run(smoke_test);
   } catch (const std::exception& error) {

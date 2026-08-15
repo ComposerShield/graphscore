@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -44,7 +45,8 @@ struct WriterShell::Impl {
   // renderer); the event loop skips rendering in that case.
   SDL_Renderer* renderer = nullptr;
 
-  InputHandler* input_handler = nullptr;
+  InputHandler* input_handler     = nullptr;
+  bool          text_input_active = false;
 
   // Written by set_highlight_rects, consumed by the event loop's render
   // pass. Cleared when the window is closed.
@@ -86,6 +88,10 @@ struct WriterShell::Impl {
   Impl& operator=(Impl&&)      = delete;
 
   ~Impl() {
+    if (window != nullptr && text_input_active) {
+      (void)SDL_StopTextInput(window);
+      text_input_active = false;
+    }
     if (notation_texture != nullptr) {
       SDL_DestroyTexture(notation_texture);
       ++test_texture_counters->destroyed;
@@ -259,6 +265,15 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
   impl_->renderer = SDL_CreateRenderer(impl_->window, nullptr);
   if (impl_->renderer == nullptr) {
     return ShellResult{ShellError::kRendererUnavailable, SDL_GetError()};
+  }
+
+  // A text-consuming app focus may have been established before the native
+  // window existed (notably in a headless/test assembly). Apply that retained
+  // GraphScore-owned state now, using SDL3's window-taking signature.
+  if (impl_->text_input_active && !SDL_StartTextInput(impl_->window)) {
+    return ShellResult{
+        ShellError::kBackendUnavailable,
+        std::string("SDL_StartTextInput failed: ").append(SDL_GetError())};
   }
 
   // Compute the DPI scale factor and set the render scale. Uses the
@@ -458,8 +473,78 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
       return KeyCode::kDigit7;
     case SDL_SCANCODE_8:
       return KeyCode::kDigit8;
+    case SDL_SCANCODE_9:
+      return KeyCode::kDigit9;
+    case SDL_SCANCODE_0:
+      return KeyCode::kDigit0;
+    case SDL_SCANCODE_RETURN:
+      return KeyCode::kReturn;
+    case SDL_SCANCODE_ESCAPE:
+      return KeyCode::kEscape;
+    case SDL_SCANCODE_TAB:
+      return KeyCode::kTab;
+    case SDL_SCANCODE_SPACE:
+      return KeyCode::kSpace;
+    case SDL_SCANCODE_KP_1:
+      return KeyCode::kNumPad1;
+    case SDL_SCANCODE_KP_2:
+      return KeyCode::kNumPad2;
+    case SDL_SCANCODE_KP_3:
+      return KeyCode::kNumPad3;
+    case SDL_SCANCODE_KP_4:
+      return KeyCode::kNumPad4;
+    case SDL_SCANCODE_KP_5:
+      return KeyCode::kNumPad5;
+    case SDL_SCANCODE_KP_6:
+      return KeyCode::kNumPad6;
+    case SDL_SCANCODE_KP_7:
+      return KeyCode::kNumPad7;
+    case SDL_SCANCODE_KP_0:
+      return KeyCode::kNumPad0;
+    case SDL_SCANCODE_KP_PERIOD:
+      return KeyCode::kNumPadDecimal;
     default:
       return KeyCode::kUnknown;
+  }
+}
+
+// Translates SDL's logical keycode (event.key.key, the character the active
+// layout produces) to the letter-mnemonic LogicalKey, for
+// docs/plan/05-notation-editor-action-table.md §4's logical letter bindings.
+// Only the bound letters (A-G, N, R, X, V, Z, K) are recognized; every other
+// keycode maps to kUnknown. SDL3 reports letter keycodes as their lowercase
+// ASCII value (SDLK_A == 'a', ..., SDLK_Z == 'z').
+[[nodiscard]] LogicalKey sdl_keycode_to_logical_key(
+    SDL_Keycode sdl_keycode) noexcept {
+  switch (sdl_keycode) {
+    case SDLK_A:
+      return LogicalKey::kA;
+    case SDLK_B:
+      return LogicalKey::kB;
+    case SDLK_C:
+      return LogicalKey::kC;
+    case SDLK_D:
+      return LogicalKey::kD;
+    case SDLK_E:
+      return LogicalKey::kE;
+    case SDLK_F:
+      return LogicalKey::kF;
+    case SDLK_G:
+      return LogicalKey::kG;
+    case SDLK_N:
+      return LogicalKey::kN;
+    case SDLK_R:
+      return LogicalKey::kR;
+    case SDLK_X:
+      return LogicalKey::kX;
+    case SDLK_V:
+      return LogicalKey::kV;
+    case SDLK_Z:
+      return LogicalKey::kZ;
+    case SDLK_K:
+      return LogicalKey::kK;
+    default:
+      return LogicalKey::kUnknown;
   }
 }
 
@@ -525,15 +610,29 @@ void dispatch_sdl_event(InputHandler* handler, SDL_Renderer* renderer,
       break;
     }
     case SDL_EVENT_KEY_DOWN: {
-      // event.key.repeat is delivered as an ordinary press, not filtered
-      // or specially marked: a held arrow key repeatedly extending a
-      // range selection is the desired behaviour for M5-phase-19b-iii, so
-      // auto-repeat presses are indistinguishable from the initial press
-      // at this layer.
+      // The physical scancode and the layout-mapped logical keycode are
+      // delivered side by side (action table §4): positional/digit/symbol
+      // bindings key on `code`, letter-mnemonic bindings key on `logical`.
+      // OS auto-repeat is surfaced as `repeat` so the app can honour the
+      // repeat-safe/repeat-once policies (§6); the shell does not filter
+      // or re-fire it.
       KeyEvent ke;
       ke.code      = sdl_scancode_to_key_code(event.key.scancode);
       ke.modifiers = sdl_keymod_to_key_modifiers(event.key.mod);
+      ke.repeat    = event.key.repeat;
+      ke.logical   = sdl_keycode_to_logical_key(event.key.key);
       handler->on_key_press(ke);
+      break;
+    }
+    case SDL_EVENT_TEXT_INPUT: {
+      // Composed text is delivered on a separate channel from key identity
+      // (action table §4, §5): the UTF-8 text the active layout produced,
+      // so a text-consumer focus context sees shifted and non-US characters
+      // exactly as the user typed them, never as a KeyCode/LogicalKey
+      // mnemonic. `event.text.text` is a null-terminated UTF-8 buffer.
+      TextInputEvent te;
+      te.text = event.text.text != nullptr ? event.text.text : "";
+      handler->on_text_input(te);
       break;
     }
     default:
@@ -610,7 +709,8 @@ WriterShell::test_read_notation_pixel(std::uint32_t x, std::uint32_t y) {
 struct WriterShell::Impl {
   std::string backend;
 
-  InputHandler* input_handler = nullptr;
+  InputHandler* input_handler     = nullptr;
+  bool          text_input_active = false;
 
   // No-op storage: the writer-OFF path never renders, but setters
   // still compile and are safe to call.
@@ -706,7 +806,34 @@ std::string_view WriterShell::backend_name() const {
 }
 
 void WriterShell::set_input_handler(InputHandler* handler) {
+  // Unregistration severs the only consumer of composed text. Stop platform
+  // generation first so no queued/future text can target a stale handler.
+  if (handler == nullptr) {
+    set_text_input_active(false);
+  }
   impl_->input_handler = handler;
+}
+
+void WriterShell::set_text_input_active(bool active) {
+  if (impl_->text_input_active == active) {
+    return;
+  }
+#ifdef GRAPHSCORE_HAVE_SDL3
+  if (impl_->window != nullptr) {
+    if (active) {
+      if (!SDL_StartTextInput(impl_->window)) {
+        return;
+      }
+    } else {
+      (void)SDL_StopTextInput(impl_->window);
+    }
+  }
+#endif
+  impl_->text_input_active = active;
+}
+
+bool WriterShell::test_text_input_active() const noexcept {
+  return impl_->text_input_active;
 }
 
 void WriterShell::set_highlight_rects(std::vector<NotationRect> rects) {
@@ -794,6 +921,17 @@ void WriterShell::dispatch_test_key_event(KeyEvent event) {
   handler->on_key_press(event);
 }
 
+void WriterShell::dispatch_test_text_input(TextInputEvent event) {
+  InputHandler* handler = impl_->input_handler;
+  if (handler == nullptr) {
+    return;
+  }
+  // Composed text carries no coordinates and no modifiers, so — like the
+  // key headless seam — there is nothing to translate. Delivered unchanged
+  // and compiled in both writer-ON and writer-OFF configurations.
+  handler->on_text_input(std::move(event));
+}
+
 void WriterShell::dispatch_sdl_test_pointer_event(std::uint8_t kind,
                                                   PointerEvent event) {
 #ifdef GRAPHSCORE_HAVE_SDL3
@@ -841,7 +979,8 @@ void WriterShell::dispatch_sdl_test_pointer_event(std::uint8_t kind,
 }
 
 void WriterShell::dispatch_sdl_test_key_event(std::uint32_t sdl_scancode,
-                                              std::uint16_t sdl_key_modifiers) {
+                                              std::uint16_t sdl_key_modifiers,
+                                              std::uint32_t sdl_keycode) {
 #ifdef GRAPHSCORE_HAVE_SDL3
   InputHandler* handler = impl_->input_handler;
   if (handler == nullptr) {
@@ -852,15 +991,42 @@ void WriterShell::dispatch_sdl_test_key_event(std::uint32_t sdl_scancode,
   // the one translation unit permitted to name them, and routed through
   // the production dispatch_sdl_event so a test exercises the actual
   // forward translation rather than a mapping written only for the test.
+  // `sdl_keycode` supplies the layout-mapped logical key, which a plain
+  // scancode alone cannot (scancode is layout-independent); 0 leaves it as
+  // SDLK_UNKNOWN so positional-key tests never depend on the host layout.
   SDL_Event sdl_event{};
   sdl_event.type         = SDL_EVENT_KEY_DOWN;
   sdl_event.key.scancode = static_cast<SDL_Scancode>(sdl_scancode);
   sdl_event.key.mod      = static_cast<SDL_Keymod>(sdl_key_modifiers);
+  sdl_event.key.key      = static_cast<SDL_Keycode>(sdl_keycode);
   sdl_event.key.down     = true;
   dispatch_sdl_event(handler, impl_->renderer, sdl_event);
 #else
   (void)sdl_scancode;
   (void)sdl_key_modifiers;
+  (void)sdl_keycode;
+#endif
+}
+
+void WriterShell::dispatch_sdl_test_text_input(std::string_view text) {
+#ifdef GRAPHSCORE_HAVE_SDL3
+  InputHandler* handler = impl_->input_handler;
+  if (handler == nullptr) {
+    return;
+  }
+  // Build a real SDL_EVENT_TEXT_INPUT carrying the UTF-8 `text` and route it
+  // through the production dispatch_sdl_event, so a test exercises the actual
+  // forward translation (SDL_EVENT_TEXT_INPUT → TextInputEvent) rather than a
+  // mapping written only for the test. SDL_TextInputEvent::text is a pointer
+  // to a UTF-8 buffer; the pointed-to bytes are read inside dispatch_sdl_event
+  // (and copied into the TextInputEvent) before `text` goes out of scope.
+  std::string owned(text);
+  SDL_Event   sdl_event{};
+  sdl_event.type      = SDL_EVENT_TEXT_INPUT;
+  sdl_event.text.text = owned.c_str();
+  dispatch_sdl_event(handler, impl_->renderer, sdl_event);
+#else
+  (void)text;
 #endif
 }
 

@@ -7,178 +7,292 @@
 #include <graphscore/notation/graphscore_notation.hpp>
 #include <graphscore/writer_shell/graphscore_writer_shell.hpp>
 
-#include <algorithm>
-#include <cmath>
-#include <cstddef>
 #include <cstdint>
-#include <functional>
-#include <memory>
 #include <optional>
 #include <string>
-#include <tuple>
-#include <utility>
-#include <variant>
-#include <vector>
 
 namespace graphscore::writer_app {
 
-// Provisional keyboard bindings (M5-phase-19b-iii), superseded by
-// M5-phase-26/M5-phase-27's normalized action table. Shift is required
-// for every range-extension binding below; control, alt, and meta never
-// substitute for it, and an unmodified arrow or a non-Shift chord is a
-// no-op. Acts only when the selection tool is active and a committed
-// ArbitraryRangeSet selection already exists to extend -- this sub-phase
-// never creates a first selection from the keyboard alone.
-//
-//   Shift+Left/Right  -- move the current focus edge (focus_edge_) one
-//                        provisional step earlier/later.
-//   Shift+Up/Down     -- extend the staff scope by one staff in score
-//                        order (up = earlier, down = later).
-//   Shift+Home/End    -- select_to_node_start()/select_to_node_end().
-//
-// M5-phase-20 adds unmodified Up/Down: with exactly one selected notehead,
-// the notehead moves one diatonic staff step (move_selected_notehead). This
-// never conflicts with Shift+Up/Down above, which stays range extension.
-//
-// M5-phase-21 adds unmodified `-`/`=`: with exactly one selected notehead,
-// its accidental steps one rung down/up the double-flat .. double-sharp
-// ladder (step_selected_accidental). Shift+`-`/`=` is not a binding either
-// phase owns, so it falls into the Shift branch above and is a no-op there.
-//
-// M5-phase-23 adds unmodified `R`: with a single-item NoteheadSet or
-// ChordSet selected, converts the entire selected note/chord event to an
-// equal-duration rest (convert_selection_to_rest). Shift+`R` is not a
-// binding this phase owns, so it falls into the Shift branch above and is
-// a no-op there.
-//
-// M5-phase-24 adds Primary+Up/Down (Command on macOS, Control elsewhere;
-// see is_primary_chord): the selection moves to the prior/next staff of
-// the node (step_selected_staff). It also TIGHTENS the Shift branch above
-// to an exact Shift chord. Shift used to be tested first and returned
-// unconditionally, so Shift+Primary+Up silently performed range
-// staff-scope extension; that chord is now a no-op, matching the
-// exact-chord discipline every other binding here already follows.
+// The platform-normalized action table
+// (docs/plan/05-notation-editor-action-table.md §3-§11). Five disjoint bound
+// chord classes plus an explicit unbound remainder; physical identity for
+// positional/digit/symbol keys and logical identity for letter mnemonics
+// (§4); a single focus owner with the command palette above the notation
+// context (§5); and per-binding repeat-safe vs repeat-once policy (§6).
 void SelectionToolHandler::on_key_press(graphscore::KeyEvent event) {
-  if (active_tool_ != graphscore::ActiveTool::kSelection) {
+  const ChordClass chord =
+      classify_chord(event.modifiers, kPlatformPrimaryModifier);
+
+  // Focus context 2: the command palette, above the notation context. Only
+  // the palette's own keys are interpreted; every notation binding is
+  // suppressed, and character keys are consumed here (their composed text is
+  // what feeds the filter, delivered on the separate text-input channel --
+  // §5 context 2, §4). Primary+K is the close here and the toggle in the
+  // notation context.
+  if (palette_open_) {
+    if (chord == ChordClass::kPrimary &&
+        event.logical == graphscore::LogicalKey::kK) {
+      // §6: the command palette is repeat-once — the initial press toggled it
+      // open, so an auto-repeat must not immediately close it again.
+      if (!event.repeat) {
+        close_command_palette();
+      }
+      return;
+    }
+    if (chord == ChordClass::kUnmodified &&
+        event.code == graphscore::KeyCode::kEscape) {
+      if (!event.repeat) {
+        close_command_palette();
+      }
+      return;
+    }
+    if (chord == ChordClass::kUnmodified) {
+      switch (event.code) {
+        case graphscore::KeyCode::kUp:
+          command_palette_move_selection(-1);
+          return;
+        case graphscore::KeyCode::kDown:
+          command_palette_move_selection(1);
+          return;
+        case graphscore::KeyCode::kReturn:
+          std::ignore = command_palette_run_selected();
+          return;
+        default:
+          break;
+      }
+    }
+    // Every other key — all character keys included — is consumed here and
+    // never reaches a notation binding; the filter accumulates only composed
+    // text (see on_text_input below).
     return;
   }
-  if (event.modifiers.shift && !event.modifiers.control &&
-      !event.modifiers.alt && !event.modifiers.meta) {
-    // M5-phase-25: Shift+`2`..`8` add a key-spelled diatonic interval BELOW
-    // the single selected notehead. Tested before the range-extension
-    // branch so Shift+digits are never swallowed by range extension, while
-    // the exact Shift+arrow/Home/End behavior below is preserved unchanged.
-    if (const auto interval = digit_interval(event.code);
-        interval.has_value()) {
-      std::ignore = add_selected_interval(graphscore::IntervalDirection::kBelow,
+
+  switch (chord) {
+    case ChordClass::kUnmodified: {
+      // Numpad key family (physical, Num Lock-independent): durations, the
+      // step-entry rest, and the dot cycle are Entry-tool actions (§7.6).
+      if (const auto note_value = numpad_duration(event.code);
+          note_value.has_value()) {
+        if (active_tool_ == graphscore::ActiveTool::kNoteEntry) {
+          std::ignore = step_entry_arm_duration(*note_value);
+        }
+        return;
+      }
+      if (event.code == graphscore::KeyCode::kNumPad0) {
+        if (active_tool_ == graphscore::ActiveTool::kNoteEntry) {
+          std::ignore = step_entry_commit_rest();
+        }
+        return;
+      }
+      if (event.code == graphscore::KeyCode::kNumPadDecimal) {
+        if (active_tool_ == graphscore::ActiveTool::kNoteEntry &&
+            !event.repeat) {
+          std::ignore = step_entry_cycle_dots();
+        }
+        return;
+      }
+
+      // Letter mnemonics by logical identity (§4).
+      if (event.logical == graphscore::LogicalKey::kN) {
+        if (!event.repeat) {
+          toggle_tool();
+        }
+        return;
+      }
+      if (const auto letter = logical_pitch_letter(event.logical);
+          letter.has_value()) {
+        if (active_tool_ == graphscore::ActiveTool::kNoteEntry) {
+          std::ignore = step_entry_commit_pitch(*letter);
+        }
+        return;
+      }
+      if (event.logical == graphscore::LogicalKey::kR) {
+        std::ignore = convert_selection_to_rest();
+        return;
+      }
+
+      // Physical editing keys (Both tools).
+      switch (event.code) {
+        case graphscore::KeyCode::kBackspace:
+        case graphscore::KeyCode::kDelete:
+          std::ignore = delete_selected_notehead();
+          return;
+        case graphscore::KeyCode::kUp:
+          std::ignore =
+              move_selected_notehead(graphscore::NoteheadStepDirection::kUp);
+          return;
+        case graphscore::KeyCode::kDown:
+          std::ignore =
+              move_selected_notehead(graphscore::NoteheadStepDirection::kDown);
+          return;
+        case graphscore::KeyCode::kMinus:
+          std::ignore = step_selected_accidental(
+              graphscore::AccidentalStepDirection::kLower);
+          return;
+        case graphscore::KeyCode::kEquals:
+          std::ignore = step_selected_accidental(
+              graphscore::AccidentalStepDirection::kRaise);
+          return;
+        default:
+          break;
+      }
+
+      // Top-row `2`..`8` add a diatonic interval above (Both); `1`, `9`,
+      // and `0` are explicit no-ops (§7.1, §7.7).
+      if (const auto interval = digit_interval(event.code);
+          interval.has_value()) {
+        std::ignore = run_interval_action(graphscore::IntervalDirection::kAbove,
                                           *interval);
+      }
       return;
     }
-    const auto* existing = current_range_set();
-    if (existing == nullptr || existing->items().empty()) {
+
+    case ChordClass::kShift: {
+      // Shift+`2`..`8` add a diatonic interval below (Both), tested before
+      // range extension so Shift+digits never reach it (§7.2).
+      if (const auto interval = digit_interval(event.code);
+          interval.has_value()) {
+        std::ignore = run_interval_action(graphscore::IntervalDirection::kBelow,
+                                          *interval);
+        return;
+      }
+      // Range extension is a Selection-tool action only (§7.2).
+      if (active_tool_ != graphscore::ActiveTool::kSelection) {
+        return;
+      }
+      const auto* existing = current_range_set();
+      if (existing == nullptr || existing->items().empty()) {
+        return;
+      }
+      const graphscore::MusicalSpan& span = existing->items().front().span;
+      switch (event.code) {
+        case graphscore::KeyCode::kLeft: {
+          const graphscore::Rational current =
+              focus_edge_ == graphscore::RangeEdge::kStart ? span.start
+                                                           : span.end;
+          std::ignore = extend_range_edge(
+              focus_edge_, current - kProvisionalRangeExtensionStep);
+          break;
+        }
+        case graphscore::KeyCode::kRight: {
+          const graphscore::Rational current =
+              focus_edge_ == graphscore::RangeEdge::kStart ? span.start
+                                                           : span.end;
+          std::ignore = extend_range_edge(
+              focus_edge_, current + kProvisionalRangeExtensionStep);
+          break;
+        }
+        case graphscore::KeyCode::kUp:
+          std::ignore = step_staff_scope(-1);
+          break;
+        case graphscore::KeyCode::kDown:
+          std::ignore = step_staff_scope(1);
+          break;
+        case graphscore::KeyCode::kHome:
+          std::ignore = select_to_node_start();
+          break;
+        case graphscore::KeyCode::kEnd:
+          std::ignore = select_to_node_end();
+          break;
+        case graphscore::KeyCode::kUnknown:
+        default:
+          break;
+      }
       return;
     }
-    const graphscore::MusicalSpan& span = existing->items().front().span;
-    switch (event.code) {
-      case graphscore::KeyCode::kLeft: {
-        const graphscore::Rational current =
-            focus_edge_ == graphscore::RangeEdge::kStart ? span.start
-                                                         : span.end;
-        std::ignore = extend_range_edge(
-            focus_edge_, current - kProvisionalRangeExtensionStep);
-        break;
-      }
-      case graphscore::KeyCode::kRight: {
-        const graphscore::Rational current =
-            focus_edge_ == graphscore::RangeEdge::kStart ? span.start
-                                                         : span.end;
-        std::ignore = extend_range_edge(
-            focus_edge_, current + kProvisionalRangeExtensionStep);
-        break;
-      }
-      case graphscore::KeyCode::kUp:
-        std::ignore = step_staff_scope(-1);
-        break;
-      case graphscore::KeyCode::kDown:
-        std::ignore = step_staff_scope(1);
-        break;
-      case graphscore::KeyCode::kHome:
-        std::ignore = select_to_node_start();
-        break;
-      case graphscore::KeyCode::kEnd:
-        std::ignore = select_to_node_end();
-        break;
-      case graphscore::KeyCode::kUnknown:
-      default:
-        break;
-    }
-    return;
-  }
 
-  // M5-phase-24: Primary+Up/Down steps the selection to the prior/next
-  // staff. Tested before the unmodified branch's modifier guard below
-  // because that guard rejects every control/meta chord, and after the
-  // Shift branch above because is_primary_chord requires Shift clear
-  // anyway (so Shift+Primary+Up reaches neither and is a no-op).
-  if (is_primary_chord(event.modifiers, kPlatformPrimaryModifier)) {
-    switch (event.code) {
-      case graphscore::KeyCode::kUp:
-        std::ignore =
-            step_selected_staff(graphscore::StaffStepDirection::kPrevious);
-        break;
-      case graphscore::KeyCode::kDown:
-        std::ignore =
-            step_selected_staff(graphscore::StaffStepDirection::kNext);
-        break;
-      case graphscore::KeyCode::kUnknown:
-      default:
-        break;
+    case ChordClass::kPrimary: {
+      // Primary+Up/Down step staffs (Both tools).
+      switch (event.code) {
+        case graphscore::KeyCode::kUp:
+          std::ignore =
+              step_selected_staff(graphscore::StaffStepDirection::kPrevious);
+          return;
+        case graphscore::KeyCode::kDown:
+          std::ignore =
+              step_selected_staff(graphscore::StaffStepDirection::kNext);
+          return;
+        default:
+          break;
+      }
+      // Clipboard / undo / palette by logical letter mnemonic (§7.3).
+      switch (event.logical) {
+        case graphscore::LogicalKey::kX:
+          if (!event.repeat) {
+            std::ignore = cut_selection();
+          }
+          return;
+        case graphscore::LogicalKey::kC:
+          std::ignore = copy_selection();
+          return;
+        case graphscore::LogicalKey::kV:
+          if (!event.repeat) {
+            std::ignore = paste_clipboard();
+          }
+          return;
+        case graphscore::LogicalKey::kZ:
+          std::ignore = undo_action();
+          return;
+        case graphscore::LogicalKey::kK:
+          if (!event.repeat) {
+            toggle_command_palette();
+          }
+          return;
+        case graphscore::LogicalKey::kUnknown:
+        default:
+          return;
+      }
     }
-    return;
-  }
 
-  // M5-phase-20: unmodified Up/Down moves the single selected notehead one
-  // diatonic staff step. M5-phase-21: unmodified `-`/`=` steps that
-  // notehead's accidental one rung down/up the double-flat .. double-sharp
-  // ladder. Any other modifier chord is not a binding these phases own and
-  // is a no-op (the full action table is M5-phase-26/27's).
-  if (event.modifiers.control || event.modifiers.alt || event.modifiers.meta) {
-    return;
+    case ChordClass::kShiftPrimary: {
+      if (event.logical == graphscore::LogicalKey::kZ) {
+        std::ignore = redo_action();
+      }
+      return;
+    }
+
+    case ChordClass::kAlt: {
+      if (active_tool_ != graphscore::ActiveTool::kNoteEntry) {
+        return;
+      }
+      // Alt+`1`..`4` (physical digits) arm voices 1-4 (§7.5).
+      if (const auto digit = top_row_digit(event.code);
+          digit.has_value() && *digit >= 1 && *digit <= 4) {
+        const auto voice = graphscore::Voice::create(*digit);
+        if (voice.has_value()) {
+          std::ignore = step_entry_arm_voice(*voice);
+        }
+        return;
+      }
+      // Alt+Up/Down step the octave reference (§7.5).
+      switch (event.code) {
+        case graphscore::KeyCode::kUp:
+          std::ignore = step_entry_step_octave(1);
+          return;
+        case graphscore::KeyCode::kDown:
+          std::ignore = step_entry_step_octave(-1);
+          return;
+        default:
+          return;
+      }
+    }
+
+    case ChordClass::kUnbound:
+      // The explicit no-op remainder: mixed chords, the non-Primary modifier,
+      // and every other combination outside the five bound classes (§3).
+      return;
   }
-  switch (event.code) {
-    case graphscore::KeyCode::kBackspace:
-    case graphscore::KeyCode::kDelete:
-      std::ignore = delete_selected_notehead();
-      break;
-    case graphscore::KeyCode::kUp:
-      std::ignore =
-          move_selected_notehead(graphscore::NoteheadStepDirection::kUp);
-      break;
-    case graphscore::KeyCode::kDown:
-      std::ignore =
-          move_selected_notehead(graphscore::NoteheadStepDirection::kDown);
-      break;
-    case graphscore::KeyCode::kMinus:
-      std::ignore =
-          step_selected_accidental(graphscore::AccidentalStepDirection::kLower);
-      break;
-    case graphscore::KeyCode::kEquals:
-      std::ignore =
-          step_selected_accidental(graphscore::AccidentalStepDirection::kRaise);
-      break;
-    case graphscore::KeyCode::kR:
-      std::ignore = convert_selection_to_rest();
-      break;
-    case graphscore::KeyCode::kUnknown:
-    default:
-      break;
-  }
-  // M5-phase-25: unmodified `2`..`8` add a key-spelled diatonic interval
-  // ABOVE the single selected notehead. `1` is not a binding this phase
-  // owns, so it -- and any other unmapped code -- remains a no-op.
-  if (const auto interval = digit_interval(event.code); interval.has_value()) {
-    std::ignore =
-        add_selected_interval(graphscore::IntervalDirection::kAbove, *interval);
+}
+
+// Composed text input (SDL_EVENT_TEXT_INPUT), delivered on a channel
+// separate from key identity (§4): while the command palette is open (focus
+// context 2, §5) every printable text accumulates into the filter, including
+// shifted characters, symbols, and non-US-layout compositions that never map
+// to a bound LogicalKey. The notation context consumes no text input — all
+// of its actions are key chords routed through on_key_press.
+void SelectionToolHandler::on_text_input(graphscore::TextInputEvent event) {
+  if (palette_open_ && !event.text.empty()) {
+    command_palette_set_filter(command_palette_filter() + event.text);
   }
 }
 

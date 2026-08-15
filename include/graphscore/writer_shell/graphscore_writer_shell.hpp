@@ -44,27 +44,26 @@ struct PointerEvent {
   PointerButton button = PointerButton::kPrimary;
 };
 
-// Platform-neutral key identity. This is deliberately a minimum set, not a
-// general keyboard model: the arrows and Home/End M5-phase-19b's
-// Shift/keyboard range extension needs, the two character keys
-// M5-phase-21's accidental step binds (`-` and `=`), the two delete keys
-// M5-phase-22's notehead deletion binds (Backspace and Delete), `R`
-// M5-phase-23's convert-to-rest binds, and the top-row digit keys `1`
-// through `8` M5-phase-25's diatonic-interval entry binds (`1` is a
-// recognized key that remains a no-op). Every other character/text key, key
-// release, the `9`/`0` digits, and the full platform-normalized action table
-// belong to M5-phase-26/M5-phase-27.
+// Platform-neutral physical key identity. M5-phase-27's action table
+// (docs/plan/05-notation-editor-action-table.md §4) binds every positional,
+// navigation, editing, digit, and symbol key by its PHYSICAL identity — the
+// SDL scancode (USB HID position), which is layout-independent — while
+// binding the letter mnemonics by LOGICAL identity (see LogicalKey below).
 //
-// Every member is translated from SDL's physical scancode in
+// Every member is therefore translated from SDL's physical scancode in
 // writer_shell.cpp, never from the layout-dependent logical keycode. For
 // arrows and Home/End that is exact: they are not remapped by keyboard
 // layout the way character keys are (compare a QWERTY vs. AZERTY 'A' key,
 // which sit at different physical scancodes for the same intended letter).
-// kMinus and kEquals are character keys, so physical identification binds
-// the two keys that carry `-`/`=` on a US layout wherever a different layout
-// puts those characters. Deciding the correct physical/logical behavior on
-// non-US layouts is M5-phase-27's action-table work, which owns exactly that
-// question.
+// kMinus and kEquals are symbol keys, so physical identification binds the
+// two keys that carry `-`/`=` on a US layout wherever a different layout
+// puts those characters. The top-row digits `0`-`9`, numpad keys, and the
+// editing keys (Return/Escape/Tab/Space) are likewise positional.
+//
+// The one physical letter code retained below, kR, exists only so that the
+// historical physical R scancode still round-trips through the headless
+// seam; the app binds the R *action* through LogicalKey::kR (the logical
+// letter), never through this physical code.
 enum class KeyCode : std::uint8_t {
   kUnknown,
   kLeft,
@@ -86,6 +85,59 @@ enum class KeyCode : std::uint8_t {
   kDigit6,
   kDigit7,
   kDigit8,
+  // Top-row digits 9 and 0 (physical, unbound no-ops in the notation
+  // context — the action table's explicit remainder names them so a test
+  // can enumerate the full (chord, key) space).
+  kDigit9,
+  kDigit0,
+  // Editing/whitespace keys the action table names as explicit no-ops in
+  // the notation context; delivered so a future focus context can interpret
+  // them.
+  kReturn,
+  kEscape,
+  kTab,
+  kSpace,
+  // Numpad key family (physical, Num Lock-independent). M5-phase-27 binds
+  // KP_1..KP_7 to durations, KP_0 to the step-entry rest, and KP_DECIMAL to
+  // the dot cycle.
+  kNumPad1,
+  kNumPad2,
+  kNumPad3,
+  kNumPad4,
+  kNumPad5,
+  kNumPad6,
+  kNumPad7,
+  kNumPad0,
+  kNumPadDecimal,
+};
+
+// Platform-neutral logical key identity, for the letter-mnemonic bindings
+// only (docs/plan/05-notation-editor-action-table.md §4): `R` (rest), `N`
+// (step entry), `A`-`G` (pitch), `C`/`X`/`V` (copy/cut/paste), `Z`
+// (undo/redo), `K` (command palette). A mnemonic must mean the same
+// character on every layout, so these are translated from SDL's logical
+// keycode (the character the active layout produces), never from the
+// physical scancode: on AZERTY the physical key that is `R` on QWERTY is
+// labelled `T`, and a physical binding would force the composer to hunt for
+// the US position of a mnemonic.
+//
+// Only the letters that are bound are represented; every other logical key
+// is kUnknown.
+enum class LogicalKey : std::uint8_t {
+  kUnknown,
+  kA,
+  kB,
+  kC,
+  kD,
+  kE,
+  kF,
+  kG,
+  kN,
+  kR,
+  kX,
+  kV,
+  kZ,
+  kK,
 };
 
 // Platform-neutral key modifiers, translated from SDL3's combined
@@ -105,12 +157,33 @@ struct KeyModifiers {
 };
 
 // A single key-press event, platform-neutral. There is no release
-// counterpart in this sub-phase — only key press is delivered, because
-// range extension (M5-phase-19b-iii) is driven entirely by presses; adding
-// on_key_release without a consumer would be speculative.
+// counterpart — actions are driven entirely by presses. The two identity
+// axes follow docs/plan/05-notation-editor-action-table.md §4: `code` is
+// the physical scancode-derived key (positional/digit/symbol keys),
+// `logical` is the layout-mapped letter (letter mnemonics), and `repeat`
+// flags an OS auto-repeat press so the app can honour the action table's
+// repeat-safe vs repeat-once policies (§6).
 struct KeyEvent {
   KeyCode      code = KeyCode::kUnknown;
   KeyModifiers modifiers;
+  // True when the OS reports this press as an auto-repeat, not the initial
+  // physical key-down. The shell surfaces it verbatim; the app decides,
+  // per binding, whether to re-fire or suppress (§6).
+  bool       repeat  = false;
+  LogicalKey logical = LogicalKey::kUnknown;
+};
+
+// A single composed text-input event, platform-neutral: the UTF-8 text the
+// active keyboard layout produced (SDL_EVENT_TEXT_INPUT). Delivered on a
+// separate channel from KeyEvent, whose `code`/`logical` axes name a key's
+// PHYSICAL/LOGICAL identity for the mnemonic bindings. That separation is
+// what lets a text-consumer focus context (the command palette filter,
+// docs/plan/05-notation-editor-action-table.md §5) accept arbitrary
+// printable text -- letters beyond the bound mnemonics, digits, symbols,
+// shifted characters, and non-US-layout compositions -- without any of it
+// being mistaken for a notation action.
+struct TextInputEvent {
+  std::string text;
 };
 
 // Input event callback. graphscore_writer_app implements this and
@@ -140,6 +213,12 @@ class InputHandler {
   // delivery independent of any app-layer handler, which lands in
   // M5-phase-19b-iii. Default: ignore the key.
   virtual void on_key_press(KeyEvent /*event*/) {}
+
+  // Called on a composed text-input event: the UTF-8 text the active
+  // keyboard layout produced. Deliberately not pure virtual, like
+  // on_key_press above, so a handler that only responds to pointer/key
+  // input is not forced to write an empty override. Default: ignore.
+  virtual void on_text_input(TextInputEvent /*event*/) {}
 };
 
 enum class ShellError : std::uint8_t {
@@ -220,6 +299,20 @@ class WriterShell {
   // that owns the event loop). No internal synchronisation is provided.
   void set_input_handler(InputHandler* handler);
 
+  // Enable or disable platform text composition for the current GraphScore
+  // window. The app uses this when a text-consuming focus context (currently
+  // the command palette) opens or closes. The requested state is retained
+  // until a window exists; writer-OFF and windowless shells safely retain the
+  // state without calling a platform API. Passing false is always safe.
+  //
+  // SDL/platform types remain confined to writer_shell.cpp.
+  void set_text_input_active(bool active);
+
+  // Test seam for the GraphScore-owned activation state driven through
+  // set_text_input_active(). This is the state production window creation and
+  // teardown apply to SDL_StartTextInput/SDL_StopTextInput.
+  [[nodiscard]] bool test_text_input_active() const noexcept;
+
   // Set the highlight rectangles the next frame should draw on top of the
   // notation. These are in layout (notation) coordinates; the shell
   // applies no additional transform before rendering. Pass an empty vector
@@ -288,10 +381,30 @@ class WriterShell {
   // when no handler is registered.  In a writer-OFF build this is a no-op.
   //
   // Parameters are plain integers, not an SDL type, so no SDL type reaches
-  // this header: `sdl_scancode` is the raw SDL_Scancode value and
-  // `sdl_key_modifiers` is the raw SDL_Keymod bitmask.
+  // this header: `sdl_scancode` is the raw SDL_Scancode value,
+  // `sdl_key_modifiers` is the raw SDL_Keymod bitmask, and `sdl_keycode` is
+  // the raw SDL_Keycode value (the layout-mapped logical key; 0 means "none
+  // recorded", which the translation reports as LogicalKey::kUnknown).
   void dispatch_sdl_test_key_event(std::uint32_t sdl_scancode,
-                                   std::uint16_t sdl_key_modifiers);
+                                   std::uint16_t sdl_key_modifiers,
+                                   std::uint32_t sdl_keycode = 0);
+
+  // Test-only: inject a synthetic text-input event that calls the registered
+  // InputHandler's on_text_input() directly with a platform-neutral
+  // TextInputEvent, without exercising any SDL conversion. This is the
+  // headless seam for composed text; like the key headless seam it applies
+  // no coordinate/DPI transform and compiles identically in writer-ON and
+  // writer-OFF builds.
+  void dispatch_test_text_input(TextInputEvent event);
+
+  // Test-only: inject a synthetic text-input event through the actual
+  // production SDL event-conversion path, building a real
+  // SDL_EVENT_TEXT_INPUT and routing it through dispatch_sdl_event, so a
+  // test asserts what the handler actually receives. `text` is the UTF-8
+  // string the composed event carries; it is truncated to SDL's own
+  // SDL_TEXTINPUTEVENT_TEXT_SIZE buffer bound. In a writer-OFF build this is
+  // a no-op.
+  void dispatch_sdl_test_text_input(std::string_view text);
 
   // Test-only: override the DPI scale factor the headless test seam
   // dispatch_test_pointer_event applies to incoming coordinates.

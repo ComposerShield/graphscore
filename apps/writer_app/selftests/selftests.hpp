@@ -25,6 +25,10 @@ constexpr std::string_view kStaffStepTestFlag      = "--test-staff-step";
 constexpr std::string_view kIntervalEntryTestFlag  = "--test-interval-entry";
 constexpr std::string_view kIntervalEntryShellTestFlag =
     "--test-interval-entry-shell";
+constexpr std::string_view kStepEntryTestFlag      = "--test-step-entry";
+constexpr std::string_view kClipboardTestFlag      = "--test-clipboard";
+constexpr std::string_view kCommandPaletteTestFlag = "--test-command-palette";
+constexpr std::string_view kActionTableTestFlag    = "--test-action-table";
 
 [[nodiscard]] int selection_tool_test();
 [[nodiscard]] int selection_tool_shell_test();
@@ -38,6 +42,10 @@ constexpr std::string_view kIntervalEntryShellTestFlag =
 [[nodiscard]] int staff_step_test();
 [[nodiscard]] int interval_entry_test();
 [[nodiscard]] int interval_entry_shell_test();
+[[nodiscard]] int step_entry_test();
+[[nodiscard]] int clipboard_test();
+[[nodiscard]] int command_palette_test();
+[[nodiscard]] int action_table_test();
 
 // notehead_move_test is split across two translation units (its local-move
 // checks and its rollback-failure checks), so the four rollback checks below
