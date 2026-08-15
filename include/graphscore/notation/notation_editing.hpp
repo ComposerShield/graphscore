@@ -442,4 +442,125 @@ enum class StaffStepDirection : std::uint8_t { kPrevious, kNext };
     Rational position, const NotePaletteEntrySpec& armed,
     std::optional<SpelledPitch> candidate_pitch);
 
+// Which side of the selected measure make_insert_measure_command/
+// selection_after_insert_measure insert a new measure on -- the composer's
+// "insert before" affordance, or "append" a fresh final measure regardless
+// of where in the node the selection happens to be.
+enum class MeasureInsertMode : std::uint8_t { kBefore, kAppend };
+
+// Constructs the reversible domain command for the measure-structure half
+// of docs/plan/05-notation-editor.md's M5-phase-28: "Insert/delete measures
+// across every track and update signatures, clefs, tempo anchors, spans,
+// selection, and rests atomically." The domain's own InsertMeasureCommand
+// (graphscore/domain/insert_measure_command.hpp) already performs the
+// entire cascade atomically -- every active and archived track, every
+// stave, every voice, signatures, clef changes, tempo anchors (including
+// re-anchoring the mandatory origin), ties, slurs, hairpins, pedal spans,
+// beam overrides, grace groups, automatic rest normalization, and
+// tuplet-boundary/pickdown revalidation -- and is not touched here; this
+// function's only job is picking which index that command targets from
+// `selection`, and rejecting selections the domain cascade was never meant
+// to interpret.
+//
+// `selection` must be a FullMeasureSet whose items are ALIGNED: every item
+// shares one NodeId and one measure_index, exactly the precondition
+// extend_measure_selection (graphscore/notation/notation_selection.hpp)
+// already documents and enforces. Every other Selection arm (NoteheadSet,
+// ChordSet, RestSet, MarkingSet, ArbitraryRangeSet, InsertionCaretSet,
+// NodeSet, ConnectorSet) and a misaligned FullMeasureSet are rejected with
+// nullptr -- never silently normalized to one item.
+//
+// `mode == kBefore` targets `selection`'s own shared measure_index: the new
+// measure is built with the domain's two-argument InsertMeasureCommand
+// constructor, so it inherits the signature of the measure it is inserted
+// before. `mode == kAppend` targets the node's own timeline
+// measure_count() -- the domain's own two-argument constructor inherits the
+// FINAL measure's signature at that index -- regardless of which measure
+// `selection` itself names; for kAppend, `selection`'s own measure_index is
+// used only to identify the anchor node and the (track, stave) scopes the
+// edit applies to, not the insertion point.
+//
+// Returns nullptr when `selection` is not a FullMeasureSet, is misaligned,
+// or fails validate_selection(project, selection) -- which is what rejects
+// an unknown node, a node with no NodeTimeline, an item naming a track that
+// is not active, a stave absent from that track's own StaffLayout, a
+// track/stave with no usable lane in the anchor node, and a measure_index
+// at or beyond measure_count(). This is distinct from a rejection the
+// DOMAIN itself only detects at execute() time -- a boundary that would cut
+// a tuplet group, or a pickdown the edit would invalidate: this function
+// still returns a valid command for those inputs, and
+// CommandHistory::execute_new reports that failure atomically when the
+// command actually runs. Building the command never mutates `project`; the
+// caller applies it through a CommandHistory.
+[[nodiscard]] std::unique_ptr<Command> make_insert_measure_command(
+    const Project& project, const Selection& selection, MeasureInsertMode mode);
+
+// Resolves the selection to hold after make_insert_measure_command's edit
+// succeeds, using the state immediately BEFORE the insert -- a pure query,
+// exactly like selection_after_notehead_delete/selection_after_convert_to_rest
+// above. The result is always a FullMeasureSet naming the identical
+// (track, stave) scopes `selection` itself named, in the same deterministic
+// score order extend_measure_selection guarantees
+// (Project::active_tracks() order, then each track's own
+// StaffLayout::staves() order), with the measure index remapped per this
+// rule: the post-edit selection names the same musical material where that
+// material still exists; where the edit created the material at the
+// composer's focus, it names the measure the composer will work in next.
+//
+//   kBefore -- the selected music shifts right by one measure, so the
+//     result names index + 1: the same measure of music the source
+//     selection named, now one measure later.
+//   kAppend -- no existing material moved, and the composer asked for a
+//     measure at node end specifically to write there, so the result names
+//     the new final measure: measure_count() evaluated BEFORE the insert
+//     (equivalently new_count - 1), regardless of the source selection's
+//     own measure_index.
+//
+// Computed arithmetically from the pre-edit project state; this function
+// never mutates `project` and is callable before the command returned by
+// make_insert_measure_command is executed. Returns std::nullopt under
+// exactly the same conditions make_insert_measure_command returns nullptr
+// for, so a caller checks one without needing to check both.
+[[nodiscard]] std::optional<Selection> selection_after_insert_measure(
+    const Project& project, const Selection& selection, MeasureInsertMode mode);
+
+// Constructs the reversible domain command for the deletion half of
+// M5-phase-28 (see make_insert_measure_command's own comment for the
+// cascade the domain's DeleteMeasureCommand already performs atomically).
+// `selection` must be a FullMeasureSet whose items are aligned exactly as
+// make_insert_measure_command requires; every other arm and a misaligned
+// set are rejected with nullptr. The command targets `selection`'s own
+// shared measure_index.
+//
+// Returns nullptr under every condition make_insert_measure_command
+// rejects for (wrong arm, misalignment, a validate_selection failure), and
+// additionally when the node's own timeline carries exactly one measure --
+// pre-rejecting the domain's own sole-measure guard
+// (DeleteMeasureCommand::execute) rather than returning a command that is
+// guaranteed to fail. As with insert, a rejection the domain itself only
+// detects at execute() time (a boundary cutting a tuplet group, or a
+// pickdown the edit would invalidate) is NOT this function's concern: it
+// still returns a valid command, and the domain reports that failure
+// atomically at execute. Building the command never mutates `project`; the
+// caller applies it through a CommandHistory.
+[[nodiscard]] std::unique_ptr<Command> make_delete_measure_command(
+    const Project& project, const Selection& selection);
+
+// Resolves the selection to hold after make_delete_measure_command's edit
+// succeeds, using the state immediately BEFORE the delete -- a pure query
+// mirroring selection_after_insert_measure above. The result is always a
+// FullMeasureSet naming the identical (track, stave) scopes `selection`
+// itself named, in the same deterministic score order, with the measure
+// index remapped: the material the source selection named is gone, so the
+// selection falls back to the measure that shifted into its old index;
+// when that index was the last measure, it clamps to the new last index,
+// new_count - 1. The sole-measure rejection make_delete_measure_command
+// applies guarantees new_count >= 1, so the clamp is always well defined.
+//
+// Computed arithmetically from the pre-edit project state; never mutates
+// `project`. Returns std::nullopt under exactly the same conditions
+// make_delete_measure_command returns nullptr for.
+[[nodiscard]] std::optional<Selection> selection_after_delete_measure(
+    const Project& project, const Selection& selection);
+
 }  // namespace graphscore

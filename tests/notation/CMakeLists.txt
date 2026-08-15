@@ -6,6 +6,7 @@ add_executable(graphscore_notation_test
   headers/notation_palette_smoke_test.cpp
   headers/notation_selection_smoke_test.cpp
   headers/notation_types_smoke_test.cpp
+  measure_edit_test.cpp
   notation_test.cpp
   note_audition_test.cpp
   note_entry_test.cpp
