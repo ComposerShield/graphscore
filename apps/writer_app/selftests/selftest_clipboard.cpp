@@ -602,10 +602,14 @@ int clipboard_test() {
       return 1;
     }
     handler.set_committed_selection(graphscore::Selection{*caret});
+    const std::vector<graphscore::Node> nodes_before_paste =
+        handler.project().nodes();
     shell.dispatch_test_key_event(
         primary_logical(graphscore::LogicalKey::kV, kPlatformPrimaryModifier));
     // Measure 1's D4 was replaced by the pasted C4.
-    if (first_pitch(handler, *fixture) != spelled(graphscore::Letter::kC, 4)) {
+    if (pitch_at(handler, *fixture, 1) != spelled(graphscore::Letter::kC, 4) ||
+        handler.test_undo_stack_size() != 1u ||
+        handler.test_redo_stack_size() != 0u) {
       std::fprintf(stderr, "clipboard-test: paste did not replace (3)\n");
       shell.set_input_handler(nullptr);
       return 1;
@@ -614,6 +618,25 @@ int clipboard_test() {
     if (!handler.clipboard_has_fragment()) {
       std::fprintf(stderr,
                    "clipboard-test: paste consumed the clipboard (3)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const std::vector<graphscore::Node> nodes_after_paste =
+        handler.project().nodes();
+    if (!handler.undo_action() ||
+        handler.project().nodes() != nodes_before_paste ||
+        handler.test_undo_stack_size() != 0u ||
+        handler.test_redo_stack_size() != 1u) {
+      std::fprintf(stderr,
+                   "clipboard-test: one undo did not restore paste (3)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!handler.redo_action() ||
+        handler.project().nodes() != nodes_after_paste ||
+        handler.test_undo_stack_size() != 1u ||
+        handler.test_redo_stack_size() != 0u) {
+      std::fprintf(stderr, "clipboard-test: redo did not restore paste (3)\n");
       shell.set_input_handler(nullptr);
       return 1;
     }
