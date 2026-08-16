@@ -257,11 +257,10 @@ TEST(CommandTest, AddPedalSpanUndoNonTargetVoiceBrokenAfterExecuteRejected) {
 }
 
 // =====================================================================
-// Phase 8e-ii — Pedal command validates invalid spans on non-target
-//   stave; add_pedal_span rejects absent staves
+// Phase 8e-ii — Pedal command ignores invalid spans on non-target stave
 // =====================================================================
 
-TEST(CommandTest, AddPedalSpanInvalidSpanOnNonTargetStaveRejected) {
+TEST(CommandTest, AddPedalSpanInvalidSpanOnNonTargetStaveDoesNotGateEdit) {
   auto       fx   = make_notation_setup();
   Node*      node = fx.project.find_node(fx.node_id);
   TrackLane* lane = node->lane(fx.track_id);
@@ -278,19 +277,16 @@ TEST(CommandTest, AddPedalSpanInvalidSpanOnNonTargetStaveRejected) {
       make_pedal_span(Rational(0), Rational(2));  // beyond node_end=1
   ASSERT_TRUE(lane->add_pedal_span(stave_b, bad_span).ok());
 
-  // Now try to add a valid span on stave_a via command.
-  // validate_lane_candidate must see the bad span on stave_b and reject.
+  // A valid edit on stave_a validates only stave_a.
   const PedalSpan good_span =
       make_pedal_span(Rational(0), *Rational::create(1, 4));
   auto cmd = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
                                                    stave_a, good_span);
-  const Result r = cmd->execute(fx.project);
-  EXPECT_FALSE(r.ok());
-  EXPECT_EQ(r.code(), ResultCode::kInvalidArgument);
-
-  // The valid span was never added; stave_a has no pedal spans.
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
   const std::vector<PedalSpan>* spans_a = lane->pedal_spans(stave_a);
-  EXPECT_TRUE(spans_a == nullptr || spans_a->empty());
+  ASSERT_NE(spans_a, nullptr);
+  ASSERT_EQ(spans_a->size(), 1u);
+  EXPECT_EQ(spans_a->front(), good_span);
 }
 
 // =====================================================================
@@ -780,4 +776,27 @@ TEST(CommandTest, RemovePedalSpanExactExecuteUndoRedo) {
   // Whole-lane snapshot may preserve the key with an empty vector.
   const std::vector<PedalSpan>* spans_redo = lane->pedal_spans(fx.stave_id);
   EXPECT_TRUE(spans_redo == nullptr || spans_redo->empty());
+}
+
+TEST(CommandTest, PedalCommandsValidateOnlyTheAddressedStave) {
+  auto       fx   = make_notation_setup();
+  Node*      node = fx.project.find_node(fx.node_id);
+  TrackLane* lane = node->lane(fx.track_id);
+  fill_all_voices(lane, fx.stave_id, fx.node_end);
+  const StaveId unrelated = StaveId::generate();
+  lane->ensure_stave(unrelated);
+  // The unrelated stave's four voices deliberately remain incomplete.
+
+  const PedalSpan span = make_pedal_span(Rational(0), *Rational::create(1, 2));
+  auto add = std::make_unique<AddPedalSpanCommand>(fx.node_id, fx.track_id,
+                                                   fx.stave_id, span);
+  ASSERT_TRUE(add->execute(fx.project).ok());
+  ASSERT_TRUE(add->undo(fx.project).ok());
+  ASSERT_TRUE(add->redo(fx.project).ok());
+
+  auto remove = std::make_unique<RemovePedalSpanCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, span.id);
+  ASSERT_TRUE(remove->execute(fx.project).ok());
+  ASSERT_TRUE(remove->undo(fx.project).ok());
+  ASSERT_TRUE(remove->redo(fx.project).ok());
 }

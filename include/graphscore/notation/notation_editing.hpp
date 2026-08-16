@@ -68,6 +68,18 @@ struct NotationEditCommandResult {
 [[nodiscard]] NotationEditCommandResult make_pedal_span_edit_command(
     const Project& project, const Selection& selection, MarkingEdit edit);
 
+// Applies or removes a tie on exactly one selected notehead. Applying requires
+// the immediately following event to sound the same pitch; removing requires
+// the selected notehead already to carry a tie.
+[[nodiscard]] NotationEditCommandResult make_tie_edit_command(
+    const Project& project, const Selection& selection, MarkingEdit edit);
+
+// Applies a slur across an exact range of complete contiguous events on one
+// staff and voice. The first and last events must both sound and are used as
+// the endpoints. Removal addresses exactly one selected slur marking.
+[[nodiscard]] NotationEditCommandResult make_slur_edit_command(
+    const Project& project, const Selection& selection, MarkingEdit edit);
+
 // A conventional tuplet number omits M when M is the greatest power of two
 // strictly below N (3:2, 5:4, 7:4, 9:8, ...). This is the standard simple
 // subdivision family; every other ratio is printed explicitly as N:M.

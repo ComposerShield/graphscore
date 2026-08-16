@@ -98,9 +98,9 @@ void SelectionToolHandler::set_accidental_command_factory(
   accidental_command_factory_ = std::move(factory);
 }
 
-void SelectionToolHandler::set_event_style_command_wrapper(
-    EventStyleCommandWrapper wrapper) {
-  event_style_command_wrapper_ = std::move(wrapper);
+void SelectionToolHandler::set_marking_edit_command_wrapper(
+    MarkingEditCommandWrapper wrapper) {
+  marking_edit_command_wrapper_ = std::move(wrapper);
 }
 
 // Builds the retained incremental layout cache from the current project and
@@ -159,6 +159,12 @@ SelectionToolHandler::last_audition() const noexcept {
 const graphscore::NotationLayoutWork&
 SelectionToolHandler::test_last_layout_work() const noexcept {
   return last_layout_work_;
+}
+
+std::optional<graphscore::NotationInvalidation>
+SelectionToolHandler::test_marking_edit_invalidation(
+    bool include_following_event) const {
+  return marking_edit_invalidation(include_following_event);
 }
 
 // The number of commands on the undo/redo stacks. Test-only; lets a

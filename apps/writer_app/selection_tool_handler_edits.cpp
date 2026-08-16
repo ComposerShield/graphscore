@@ -83,18 +83,25 @@ SelectionToolHandler::event_style_invalidation() const {
 }
 
 std::optional<graphscore::NotationInvalidation>
-SelectionToolHandler::marking_style_invalidation() const {
+SelectionToolHandler::marking_edit_invalidation(
+    bool include_following_event) const {
   const auto& selection = drag_.committed_selection();
   if (!selection.has_value())
     return std::nullopt;
 
   // The (node, track, stave) the edit addresses, plus every musical position
   // the pre-edit and post-edit forms of the marking occupy.
-  graphscore::NodeId                        node_id;
-  graphscore::TrackId                       track_id;
-  graphscore::StaveId                       stave_id;
-  std::optional<graphscore::Voice>          voice;
-  std::vector<graphscore::Rational>         positions;
+  graphscore::NodeId               node_id;
+  graphscore::TrackId              track_id;
+  graphscore::StaveId              stave_id;
+  std::optional<graphscore::Voice> voice;
+
+  struct Position {
+    graphscore::Rational value;
+    bool                 exclusive_end = false;
+  };
+
+  std::vector<Position>                     positions;
   std::vector<graphscore::NotationEntityId> entities;
 
   if (const auto* notes = std::get_if<graphscore::NoteheadSet>(&*selection);
@@ -126,8 +133,8 @@ SelectionToolHandler::marking_style_invalidation() const {
       if (item.node != node_id || item.track != track_id ||
           item.stave != stave_id)
         return std::nullopt;
-      positions.push_back(item.span.start);
-      positions.push_back(item.span.end);
+      positions.push_back({item.span.start, false});
+      positions.push_back({item.span.end, true});
     }
   } else if (const auto* markings =
                  std::get_if<graphscore::MarkingSet>(&*selection);
@@ -141,6 +148,7 @@ SelectionToolHandler::marking_style_invalidation() const {
       case graphscore::MarkingKind::kDynamic:
       case graphscore::MarkingKind::kHairpin:
       case graphscore::MarkingKind::kPedalSpan:
+      case graphscore::MarkingKind::kSlur:
         break;
       default:
         return std::nullopt;
@@ -172,8 +180,8 @@ SelectionToolHandler::marking_style_invalidation() const {
           });
       if (found == spans->end())
         return std::nullopt;
-      positions.push_back(found->start);
-      positions.push_back(found->end);
+      positions.push_back({found->start, false});
+      positions.push_back({found->end, true});
     } else if (voice.has_value()) {
       const graphscore::VoiceContent& content = stave->voice(*voice);
       if (item.kind == graphscore::MarkingKind::kDynamic) {
@@ -184,12 +192,21 @@ SelectionToolHandler::marking_style_invalidation() const {
         if (found == content.dynamics().end())
           return std::nullopt;
         entities.push_back(found->at_event);
-      } else {
+      } else if (item.kind == graphscore::MarkingKind::kHairpin) {
         const auto found = std::ranges::find_if(
             content.hairpins(), [&](const graphscore::Hairpin& record) {
               return record.id == item.anchor;
             });
         if (found == content.hairpins().end())
+          return std::nullopt;
+        entities.push_back(found->start_event);
+        entities.push_back(found->end_event);
+      } else {
+        const auto found = std::ranges::find_if(
+            content.slurs(), [&](const graphscore::Slur& record) {
+              return record.id == item.anchor;
+            });
+        if (found == content.slurs().end())
           return std::nullopt;
         entities.push_back(found->start_event);
         entities.push_back(found->end_event);
@@ -199,13 +216,32 @@ SelectionToolHandler::marking_style_invalidation() const {
     }
   }
 
+  if (include_following_event && entities.size() == 1u && voice.has_value()) {
+    const auto& events = stave->voice(*voice).events();
+    for (std::size_t index = 0; index < events.size(); ++index) {
+      const graphscore::VoiceEvent& event = events[index];
+      bool selected = graphscore::event_id(event) == entities.front();
+      if (const auto* chord = std::get_if<graphscore::Chord>(&event)) {
+        selected = selected ||
+                   std::ranges::any_of(chord->notes,
+                                       [&](const graphscore::ChordNote& note) {
+                                         return note.id == entities.front();
+                                       });
+      }
+      if (selected && index + 1u < events.size()) {
+        entities.push_back(graphscore::event_id(events[index + 1u]));
+        break;
+      }
+    }
+  }
+
   for (const graphscore::NotationEntityId& entity : entities) {
     if (!voice.has_value())
       return std::nullopt;
     const auto position = stave->voice(*voice).position_of_event(entity);
     if (!position.has_value())
       return std::nullopt;
-    positions.push_back(*position);
+    positions.push_back({*position, false});
   }
   if (positions.empty())
     return std::nullopt;
@@ -215,11 +251,13 @@ SelectionToolHandler::marking_style_invalidation() const {
     return std::nullopt;
   std::optional<std::size_t> first;
   std::optional<std::size_t> last;
-  for (const graphscore::Rational& position : positions) {
-    // A span end sitting exactly on node_end has no measure of its own; it
-    // belongs to the final measure, which is what the clamp names.
-    const auto        index    = measures.measure_index_at(position);
-    const std::size_t resolved = index.value_or(measures.measure_count() - 1u);
+  for (const Position& position : positions) {
+    const auto  index    = measures.measure_index_at(position.value);
+    std::size_t resolved = index.value_or(measures.measure_count() - 1u);
+    if (position.exclusive_end && index.has_value() && *index > 0u &&
+        measures.measure_start(*index) == position.value) {
+      resolved = *index - 1u;
+    }
     first = first.has_value() ? std::min(*first, resolved) : resolved;
     last  = last.has_value() ? std::max(*last, resolved) : resolved;
   }
@@ -946,8 +984,8 @@ bool SelectionToolHandler::edit_selected_articulation(
     post_diagnostic("articulation: cannot invalidate layout");
     return false;
   }
-  if (event_style_command_wrapper_) {
-    built.command = event_style_command_wrapper_(std::move(built.command));
+  if (marking_edit_command_wrapper_) {
+    built.command = marking_edit_command_wrapper_(std::move(built.command));
   }
   auto transaction =
       history_.begin_transaction(std::move(built.command), project_);
@@ -1006,8 +1044,8 @@ bool SelectionToolHandler::set_selected_stem(graphscore::StemDirection stem) {
     post_diagnostic("stem direction: cannot invalidate layout");
     return false;
   }
-  if (event_style_command_wrapper_) {
-    built.command = event_style_command_wrapper_(std::move(built.command));
+  if (marking_edit_command_wrapper_) {
+    built.command = marking_edit_command_wrapper_(std::move(built.command));
   }
   auto transaction =
       history_.begin_transaction(std::move(built.command), project_);
@@ -1039,19 +1077,19 @@ bool SelectionToolHandler::set_selected_stem(graphscore::StemDirection stem) {
 // ordering lives here once rather than three times over.
 bool SelectionToolHandler::run_marking_edit(
     std::string_view label, graphscore::NotationEditCommandResult built,
-    bool clears_selection) {
+    bool clears_selection, bool include_following_event) {
   const std::string prefix(label);
   if (!built.available()) {
     post_diagnostic(prefix + ": " + built.unavailable_reason);
     return false;
   }
-  const auto invalidation = marking_style_invalidation();
+  const auto invalidation = marking_edit_invalidation(include_following_event);
   if (!invalidation.has_value()) {
     post_diagnostic(prefix + ": cannot invalidate layout");
     return false;
   }
-  if (event_style_command_wrapper_) {
-    built.command = event_style_command_wrapper_(std::move(built.command));
+  if (marking_edit_command_wrapper_) {
+    built.command = marking_edit_command_wrapper_(std::move(built.command));
   }
   auto transaction =
       history_.begin_transaction(std::move(built.command), project_);
@@ -1128,6 +1166,36 @@ bool SelectionToolHandler::edit_selected_pedal_span(
   return run_marking_edit(
       "pedal span",
       graphscore::make_pedal_span_edit_command(project_, *selection, edit),
+      edit == graphscore::MarkingEdit::kRemove);
+}
+
+bool SelectionToolHandler::edit_selected_tie(graphscore::MarkingEdit edit) {
+  if (history_.poisoned()) {
+    post_diagnostic("tie: command history is unavailable");
+    return false;
+  }
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value()) {
+    post_diagnostic("tie: requires exactly one live notehead");
+    return false;
+  }
+  return run_marking_edit(
+      "tie", graphscore::make_tie_edit_command(project_, *selection, edit),
+      false, true);
+}
+
+bool SelectionToolHandler::edit_selected_slur(graphscore::MarkingEdit edit) {
+  if (history_.poisoned()) {
+    post_diagnostic("slur: command history is unavailable");
+    return false;
+  }
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value()) {
+    post_diagnostic("slur: requires a range or slur marking");
+    return false;
+  }
+  return run_marking_edit(
+      "slur", graphscore::make_slur_edit_command(project_, *selection, edit),
       edit == graphscore::MarkingEdit::kRemove);
 }
 

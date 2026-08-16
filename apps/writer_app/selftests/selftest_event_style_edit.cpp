@@ -262,7 +262,7 @@ int event_style_edit_test() {
         [&shell](const graphscore::NotationLayout& value) {
           return publish_headless_test_surface(value, &shell);
         });
-    undo.set_event_style_command_wrapper(
+    undo.set_marking_edit_command_wrapper(
         [](std::unique_ptr<graphscore::Command> command) {
           return std::make_unique<FailingStyleInverseCommand>(
               std::move(command), 0, 1);
@@ -310,7 +310,7 @@ int event_style_edit_test() {
         [&shell](const graphscore::NotationLayout& value) {
           return publish_headless_test_surface(value, &shell);
         });
-    redo.set_event_style_command_wrapper(
+    redo.set_marking_edit_command_wrapper(
         [](std::unique_ptr<graphscore::Command> command) {
           return std::make_unique<FailingStyleInverseCommand>(
               std::move(command), 2, 0);
