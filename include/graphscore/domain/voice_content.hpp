@@ -250,6 +250,13 @@ class VoiceContent {
 
   [[nodiscard]] Result remove_dynamic(NotationEntityId id);
 
+  // Replaces the dynamic marking named by `id` with `replacement` in place,
+  // preserving the marking's position in the dynamics vector and its
+  // identity. Fails, leaving the voice unchanged, if `id` does not name an
+  // existing dynamic marking or `replacement.id` differs from `id`.
+  [[nodiscard]] Result replace_dynamic(NotationEntityId id,
+                                       DynamicMarking   replacement);
+
   [[nodiscard]] const std::vector<Hairpin>& hairpins() const noexcept {
     return hairpins_;
   }
@@ -257,6 +264,13 @@ class VoiceContent {
   [[nodiscard]] Result add_hairpin(Hairpin hairpin);
 
   [[nodiscard]] Result remove_hairpin(NotationEntityId id);
+
+  // Replaces the hairpin named by `id` with `replacement` in place,
+  // preserving the hairpin's position in the hairpin vector and its identity.
+  // Fails, leaving the voice unchanged, if `id` does not name an existing
+  // hairpin or `replacement.id` differs from `id`.
+  [[nodiscard]] Result replace_hairpin(NotationEntityId id,
+                                       Hairpin          replacement);
 
   [[nodiscard]] const std::vector<Slur>& slurs() const noexcept {
     return slurs_;

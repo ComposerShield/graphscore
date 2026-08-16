@@ -98,6 +98,34 @@ enum class PaletteCommandId : std::uint8_t {
   kStemAuto,
   kStemUp,
   kStemDown,
+  // The eight apply rows and the eight change rows below run parallel to
+  // graphscore::kAllDynamics, softest to loudest; the palette-id arithmetic in
+  // selection_tool_handler_palette.cpp depends on both runs staying contiguous
+  // and in that order.
+  kApplyDynamicPpp,
+  kApplyDynamicPp,
+  kApplyDynamicP,
+  kApplyDynamicMp,
+  kApplyDynamicMf,
+  kApplyDynamicF,
+  kApplyDynamicFf,
+  kApplyDynamicFff,
+  kChangeDynamicToPpp,
+  kChangeDynamicToPp,
+  kChangeDynamicToP,
+  kChangeDynamicToMp,
+  kChangeDynamicToMf,
+  kChangeDynamicToF,
+  kChangeDynamicToFf,
+  kChangeDynamicToFff,
+  kRemoveDynamic,
+  kApplyCrescendo,
+  kApplyDiminuendo,
+  kChangeHairpinToCrescendo,
+  kChangeHairpinToDiminuendo,
+  kRemoveHairpin,
+  kApplyPedalSpan,
+  kRemovePedalSpan,
 };
 
 // One palette row: a stable name, its chord hint (empty for the chord-less

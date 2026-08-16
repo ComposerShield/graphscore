@@ -9,6 +9,7 @@ add_library(graphscore_notation STATIC
   notation_hit_resolution.cpp
   notation_index.cpp
   notation_layout.cpp
+  notation_marking_style_edit.cpp
   notation_measure_edit.cpp
   notation_measure_math.cpp
   notation_measure_selection.cpp

@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 
 namespace graphscore {
@@ -23,5 +24,18 @@ enum class Dynamic : std::uint8_t {
   kFf,
   kFff,
 };
+
+// The single source of truth for "every Dynamic enumerator", so call sites
+// that must reason over all of them (e.g. the writer's dynamic palette rows)
+// derive from this array instead of maintaining their own copy of the
+// enumerator list that could go stale relative to this one. Order is the
+// enumerator declaration order above, softest to loudest.
+inline constexpr std::array<Dynamic, 8> kAllDynamics = {
+    Dynamic::kPpp, Dynamic::kPp, Dynamic::kP,  Dynamic::kMp,
+    Dynamic::kMf,  Dynamic::kF,  Dynamic::kFf, Dynamic::kFff,
+};
+
+inline constexpr std::uint8_t kDynamicCount =
+    static_cast<std::uint8_t>(kAllDynamics.size());
 
 }  // namespace graphscore

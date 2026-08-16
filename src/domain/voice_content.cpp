@@ -1221,6 +1221,61 @@ Result VoiceContent::remove_hairpin(NotationEntityId id) {
   return Result();
 }
 
+Result VoiceContent::replace_dynamic(NotationEntityId id,
+                                     DynamicMarking   replacement) {
+  const auto it =
+      std::find_if(dynamics_.begin(), dynamics_.end(),
+                   [id](const DynamicMarking& m) { return m.id == id; });
+  if (it == dynamics_.end())
+    return Result(ResultCode::kInvalidArgument);
+  if (replacement.id != id)
+    return Result(ResultCode::kInvalidArgument);
+
+  VoiceDelta d;
+  try {
+    // A replacement keeps the marking's position and identity, so it is
+    // expressed as a single kUpdate. The incremental consumer replaces the
+    // retained record in place, preserving its order key; a remove-then-add
+    // would reinsert it after peers and reorder the lane allocation of
+    // horizontally overlapping markings.
+    d.dynamic_ops.push_back(
+        RefOp<DynamicMarking>{RefOpKind::kUpdate, id, replacement});
+    *it = std::move(replacement);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+
+  advance_revision(std::move(d));  // noexcept commit
+  return Result();
+}
+
+Result VoiceContent::replace_hairpin(NotationEntityId id, Hairpin replacement) {
+  const auto it = std::find_if(hairpins_.begin(), hairpins_.end(),
+                               [id](const Hairpin& m) { return m.id == id; });
+  if (it == hairpins_.end())
+    return Result(ResultCode::kInvalidArgument);
+  if (replacement.id != id)
+    return Result(ResultCode::kInvalidArgument);
+
+  VoiceDelta d;
+  try {
+    // See replace_dynamic: a single kUpdate preserves the hairpin's order key
+    // and collection position, so overlapping spans keep their lane stacking.
+    d.hairpin_ops.push_back(
+        RefOp<Hairpin>{RefOpKind::kUpdate, id, replacement});
+    *it = std::move(replacement);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+
+  advance_revision(std::move(d));  // noexcept commit
+  return Result();
+}
+
 Result VoiceContent::remove_slur(NotationEntityId id) {
   const auto it = std::find_if(slurs_.begin(), slurs_.end(),
                                [id](const Slur& m) { return m.id == id; });

@@ -412,6 +412,30 @@ palette_interval(PaletteCommandId id) {
     case PaletteCommandId::kStemAuto:
     case PaletteCommandId::kStemUp:
     case PaletteCommandId::kStemDown:
+    case PaletteCommandId::kApplyDynamicPpp:
+    case PaletteCommandId::kApplyDynamicPp:
+    case PaletteCommandId::kApplyDynamicP:
+    case PaletteCommandId::kApplyDynamicMp:
+    case PaletteCommandId::kApplyDynamicMf:
+    case PaletteCommandId::kApplyDynamicF:
+    case PaletteCommandId::kApplyDynamicFf:
+    case PaletteCommandId::kApplyDynamicFff:
+    case PaletteCommandId::kChangeDynamicToPpp:
+    case PaletteCommandId::kChangeDynamicToPp:
+    case PaletteCommandId::kChangeDynamicToP:
+    case PaletteCommandId::kChangeDynamicToMp:
+    case PaletteCommandId::kChangeDynamicToMf:
+    case PaletteCommandId::kChangeDynamicToF:
+    case PaletteCommandId::kChangeDynamicToFf:
+    case PaletteCommandId::kChangeDynamicToFff:
+    case PaletteCommandId::kRemoveDynamic:
+    case PaletteCommandId::kApplyCrescendo:
+    case PaletteCommandId::kApplyDiminuendo:
+    case PaletteCommandId::kChangeHairpinToCrescendo:
+    case PaletteCommandId::kChangeHairpinToDiminuendo:
+    case PaletteCommandId::kRemoveHairpin:
+    case PaletteCommandId::kApplyPedalSpan:
+    case PaletteCommandId::kRemovePedalSpan:
       return true;
     default:
       return false;
@@ -451,6 +475,65 @@ palette_articulation(PaletteCommandId id) {
       return graphscore::StemDirection::kUp;
     case PaletteCommandId::kStemDown:
       return graphscore::StemDirection::kDown;
+    default:
+      return std::nullopt;
+  }
+}
+
+[[nodiscard]] std::optional<
+    std::pair<graphscore::MarkingEdit, graphscore::Dynamic>>
+palette_dynamic(PaletteCommandId id) {
+  const int value  = static_cast<int>(id);
+  const int apply  = static_cast<int>(PaletteCommandId::kApplyDynamicPpp);
+  const int change = static_cast<int>(PaletteCommandId::kChangeDynamicToPpp);
+  if (value >= apply && value < apply + graphscore::kDynamicCount) {
+    return std::pair{
+        graphscore::MarkingEdit::kApply,
+        graphscore::kAllDynamics[static_cast<std::size_t>(value - apply)]};
+  }
+  if (value >= change && value < change + graphscore::kDynamicCount) {
+    return std::pair{
+        graphscore::MarkingEdit::kChange,
+        graphscore::kAllDynamics[static_cast<std::size_t>(value - change)]};
+  }
+  if (id == PaletteCommandId::kRemoveDynamic) {
+    return std::pair{graphscore::MarkingEdit::kRemove,
+                     graphscore::Dynamic::kMf};
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] std::optional<
+    std::pair<graphscore::MarkingEdit, graphscore::HairpinDirection>>
+palette_hairpin(PaletteCommandId id) {
+  switch (id) {
+    case PaletteCommandId::kApplyCrescendo:
+      return std::pair{graphscore::MarkingEdit::kApply,
+                       graphscore::HairpinDirection::kCrescendo};
+    case PaletteCommandId::kApplyDiminuendo:
+      return std::pair{graphscore::MarkingEdit::kApply,
+                       graphscore::HairpinDirection::kDiminuendo};
+    case PaletteCommandId::kChangeHairpinToCrescendo:
+      return std::pair{graphscore::MarkingEdit::kChange,
+                       graphscore::HairpinDirection::kCrescendo};
+    case PaletteCommandId::kChangeHairpinToDiminuendo:
+      return std::pair{graphscore::MarkingEdit::kChange,
+                       graphscore::HairpinDirection::kDiminuendo};
+    case PaletteCommandId::kRemoveHairpin:
+      return std::pair{graphscore::MarkingEdit::kRemove,
+                       graphscore::HairpinDirection::kCrescendo};
+    default:
+      return std::nullopt;
+  }
+}
+
+[[nodiscard]] std::optional<graphscore::MarkingEdit> palette_pedal(
+    PaletteCommandId id) {
+  switch (id) {
+    case PaletteCommandId::kApplyPedalSpan:
+      return graphscore::MarkingEdit::kApply;
+    case PaletteCommandId::kRemovePedalSpan:
+      return graphscore::MarkingEdit::kRemove;
     default:
       return std::nullopt;
   }
@@ -632,6 +715,51 @@ bool SelectionToolHandler::palette_command_available(
              graphscore::make_stem_edit_command(project_, *selection, *stem)
                  .available();
     }
+    case PaletteCommandId::kApplyDynamicPpp:
+    case PaletteCommandId::kApplyDynamicPp:
+    case PaletteCommandId::kApplyDynamicP:
+    case PaletteCommandId::kApplyDynamicMp:
+    case PaletteCommandId::kApplyDynamicMf:
+    case PaletteCommandId::kApplyDynamicF:
+    case PaletteCommandId::kApplyDynamicFf:
+    case PaletteCommandId::kApplyDynamicFff:
+    case PaletteCommandId::kChangeDynamicToPpp:
+    case PaletteCommandId::kChangeDynamicToPp:
+    case PaletteCommandId::kChangeDynamicToP:
+    case PaletteCommandId::kChangeDynamicToMp:
+    case PaletteCommandId::kChangeDynamicToMf:
+    case PaletteCommandId::kChangeDynamicToF:
+    case PaletteCommandId::kChangeDynamicToFf:
+    case PaletteCommandId::kChangeDynamicToFff:
+    case PaletteCommandId::kRemoveDynamic: {
+      const auto& selection = drag_.committed_selection();
+      const auto  operation = palette_dynamic(id);
+      return selection.has_value() && operation.has_value() &&
+             graphscore::make_dynamic_edit_command(
+                 project_, *selection, operation->first, operation->second)
+                 .available();
+    }
+    case PaletteCommandId::kApplyCrescendo:
+    case PaletteCommandId::kApplyDiminuendo:
+    case PaletteCommandId::kChangeHairpinToCrescendo:
+    case PaletteCommandId::kChangeHairpinToDiminuendo:
+    case PaletteCommandId::kRemoveHairpin: {
+      const auto& selection = drag_.committed_selection();
+      const auto  operation = palette_hairpin(id);
+      return selection.has_value() && operation.has_value() &&
+             graphscore::make_hairpin_edit_command(
+                 project_, *selection, operation->first, operation->second)
+                 .available();
+    }
+    case PaletteCommandId::kApplyPedalSpan:
+    case PaletteCommandId::kRemovePedalSpan: {
+      const auto& selection = drag_.committed_selection();
+      const auto  operation = palette_pedal(id);
+      return selection.has_value() && operation.has_value() &&
+             graphscore::make_pedal_span_edit_command(project_, *selection,
+                                                      *operation)
+                 .available();
+    }
   }
   return false;
 }
@@ -795,6 +923,54 @@ std::string SelectionToolHandler::palette_command_unavailable_reason(
       if (!selection.has_value() || !stem.has_value())
         return "requires one live note or chord event";
       return graphscore::make_stem_edit_command(project_, *selection, *stem)
+          .unavailable_reason;
+    }
+    case PaletteCommandId::kApplyDynamicPpp:
+    case PaletteCommandId::kApplyDynamicPp:
+    case PaletteCommandId::kApplyDynamicP:
+    case PaletteCommandId::kApplyDynamicMp:
+    case PaletteCommandId::kApplyDynamicMf:
+    case PaletteCommandId::kApplyDynamicF:
+    case PaletteCommandId::kApplyDynamicFf:
+    case PaletteCommandId::kApplyDynamicFff:
+    case PaletteCommandId::kChangeDynamicToPpp:
+    case PaletteCommandId::kChangeDynamicToPp:
+    case PaletteCommandId::kChangeDynamicToP:
+    case PaletteCommandId::kChangeDynamicToMp:
+    case PaletteCommandId::kChangeDynamicToMf:
+    case PaletteCommandId::kChangeDynamicToF:
+    case PaletteCommandId::kChangeDynamicToFf:
+    case PaletteCommandId::kChangeDynamicToFff:
+    case PaletteCommandId::kRemoveDynamic: {
+      const auto& selection = drag_.committed_selection();
+      const auto  operation = palette_dynamic(id);
+      if (!selection.has_value() || !operation.has_value())
+        return "requires a note, chord, or dynamic marking";
+      return graphscore::make_dynamic_edit_command(
+                 project_, *selection, operation->first, operation->second)
+          .unavailable_reason;
+    }
+    case PaletteCommandId::kApplyCrescendo:
+    case PaletteCommandId::kApplyDiminuendo:
+    case PaletteCommandId::kChangeHairpinToCrescendo:
+    case PaletteCommandId::kChangeHairpinToDiminuendo:
+    case PaletteCommandId::kRemoveHairpin: {
+      const auto& selection = drag_.committed_selection();
+      const auto  operation = palette_hairpin(id);
+      if (!selection.has_value() || !operation.has_value())
+        return "requires a range or hairpin marking";
+      return graphscore::make_hairpin_edit_command(
+                 project_, *selection, operation->first, operation->second)
+          .unavailable_reason;
+    }
+    case PaletteCommandId::kApplyPedalSpan:
+    case PaletteCommandId::kRemovePedalSpan: {
+      const auto& selection = drag_.committed_selection();
+      const auto  operation = palette_pedal(id);
+      if (!selection.has_value() || !operation.has_value())
+        return "requires a range or pedal span marking";
+      return graphscore::make_pedal_span_edit_command(project_, *selection,
+                                                      *operation)
           .unavailable_reason;
     }
   }
@@ -1056,6 +1232,41 @@ bool SelectionToolHandler::run_palette_command(PaletteCommandId id) {
     case PaletteCommandId::kStemDown: {
       const auto stem = palette_stem(id);
       return stem.has_value() && set_selected_stem(*stem);
+    }
+    case PaletteCommandId::kApplyDynamicPpp:
+    case PaletteCommandId::kApplyDynamicPp:
+    case PaletteCommandId::kApplyDynamicP:
+    case PaletteCommandId::kApplyDynamicMp:
+    case PaletteCommandId::kApplyDynamicMf:
+    case PaletteCommandId::kApplyDynamicF:
+    case PaletteCommandId::kApplyDynamicFf:
+    case PaletteCommandId::kApplyDynamicFff:
+    case PaletteCommandId::kChangeDynamicToPpp:
+    case PaletteCommandId::kChangeDynamicToPp:
+    case PaletteCommandId::kChangeDynamicToP:
+    case PaletteCommandId::kChangeDynamicToMp:
+    case PaletteCommandId::kChangeDynamicToMf:
+    case PaletteCommandId::kChangeDynamicToF:
+    case PaletteCommandId::kChangeDynamicToFf:
+    case PaletteCommandId::kChangeDynamicToFff:
+    case PaletteCommandId::kRemoveDynamic: {
+      const auto operation = palette_dynamic(id);
+      return operation.has_value() &&
+             edit_selected_dynamic(operation->first, operation->second);
+    }
+    case PaletteCommandId::kApplyCrescendo:
+    case PaletteCommandId::kApplyDiminuendo:
+    case PaletteCommandId::kChangeHairpinToCrescendo:
+    case PaletteCommandId::kChangeHairpinToDiminuendo:
+    case PaletteCommandId::kRemoveHairpin: {
+      const auto operation = palette_hairpin(id);
+      return operation.has_value() &&
+             edit_selected_hairpin(operation->first, operation->second);
+    }
+    case PaletteCommandId::kApplyPedalSpan:
+    case PaletteCommandId::kRemovePedalSpan: {
+      const auto operation = palette_pedal(id);
+      return operation.has_value() && edit_selected_pedal_span(*operation);
     }
   }
   return false;

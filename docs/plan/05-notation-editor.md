@@ -89,9 +89,28 @@ and the collision-free interval rule — lives in
 - [x] M5-phase-29 Create and edit arbitrary single-level `N:M` tuplets without allowing nested tuplets.
 - [ ] M5-phase-30 Edit articulations, dynamics, ties, slurs, hairpins, pedal spans, beam breaks/joins, and stem overrides with clear invalid-target feedback.
   - [x] M5-phase-30a Edit articulations and stem overrides.
-  - [ ] M5-phase-30b Edit dynamics, hairpins, and pedal spans.
+  - [x] M5-phase-30b Edit dynamics, hairpins, and pedal spans.
   - [ ] M5-phase-30c Edit ties and slurs.
   - [ ] M5-phase-30d Edit beam breaks and joins.
+
+#### Carried obligations from marking-style editing
+
+Pedal-span editing currently revalidates every voice of every stave in the
+whole track, although it changes one stave's pedal collection. Both pedal
+actions are therefore unavailable unless every voice on the track contains
+complete rhythm. Narrow the domain validation to the addressed stave while
+retaining the notation factory's precise availability check before its dry
+run.
+
+Marking-edit invalidation currently maps a half-open range's exclusive end
+through `measure_index_at`. A range ending exactly on a measure boundary is
+therefore conservatively classified as a cross-measure span instead of local
+content. Clamp the lookup to the final included position so local edits do not
+trigger unnecessary relayout.
+
+The test-only `set_event_style_command_wrapper` seam now names five marking
+families. Rename it to a neutral marking-edit name before adding further
+families in M5-phase-30c or M5-phase-30d.
 - [ ] M5-phase-31 Create the final pickdown through an explicit node-end duration setting and show the transition boundary distinctly.
 - [ ] M5-phase-32 Copy/paste one or more complete selected measures to an explicitly chosen destination measure and staff/track scope.
 - [ ] M5-phase-33 Cut/copy/paste arbitrary non-measure-aligned selections, including partial beats and multi-staff fragments, while preserving valid rhythm.

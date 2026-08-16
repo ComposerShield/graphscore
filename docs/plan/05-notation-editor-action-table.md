@@ -604,6 +604,58 @@ is the greatest power of two strictly below `N` (`3:2`, `5:4`, `7:4`, `9:8`,
 ...). Every other ratio is explicit `N:M`; for example, `10:9` is printed
 `10:9`.
 
+### 10.4 Marking style actions (M5-phase-30)
+
+Articulations, stem overrides, dynamics, hairpins, and pedal spans are
+chord-less command-palette actions. They consume no key at all — neither a
+letter, which `A`–`G` step entry and `N`/`R` already own, nor a digit, which
+the `2`–`8` interval bindings own — so §7's binding table is unchanged by
+them and the reservations in §7.6/§7.7 stand.
+
+- **Apply articulation** (one row per articulation) requires one selected
+  note or chord event and adds that articulation to it. **Change
+  articulation** (one row per articulation) and **remove articulation**
+  require one selected articulation marking. A duplicate articulation, and a
+  duration articulation conflicting with one the event already carries, are
+  rejected with a diagnostic rather than silently normalized.
+- **Stem direction: auto/up/down** requires one selected note or chord event.
+  Auto is the model's explicit representation of clearing a manual override,
+  so it is a normal edit rather than a separate clear action; setting the
+  direction the event already carries is rejected.
+- **Apply dynamic** (one row per dynamic, `ppp` through `fff`) requires one
+  selected note or chord event and anchors a point dynamic to it; a selected
+  chord notehead resolves to its own chord, because a dynamic is anchored to a
+  top-level event. **Change dynamic** (one row per dynamic) and **remove
+  dynamic** require one selected dynamic marking. Change preserves the
+  marking's identity and its anchor, so the selection survives the edit;
+  changing to the value already set is rejected.
+- **Apply crescendo / apply diminuendo** require an exact, non-empty
+  `ArbitraryRangeSet` of complete contiguous events on one staff and one
+  voice, carrying at least two events; the range's first and last events
+  become the hairpin's endpoints. A partial event at either end and a
+  multi-staff or multi-voice range share the diagnostic `requires a range of
+  complete events on one staff and voice`; a single-event range is rejected
+  with `requires a range of at least two events`. **Change hairpin to
+  crescendo/diminuendo** and **remove hairpin** require one selected hairpin
+  marking; change preserves the marking's identity and both endpoints.
+- **Apply pedal span** requires a range on one staff. Pedal is scoped per
+  stave rather than per voice, so a range covering several voices of one
+  stave is a legitimate pedal target even though it is not a legitimate
+  hairpin one, and the span's bounds are the union of the range's own bounds,
+  validated against the node's own timeline before any command is built.
+  **Remove pedal span** requires one selected pedal span marking. Both pedal
+  actions are available only when every voice on the track has complete
+  rhythm; otherwise they report `requires complete rhythm in every voice on
+  the track`. There is no change action: a pedal span carries no style
+  attribute, only endpoints, which a later endpoint-drag gesture owns.
+
+Stale selections, wrong selection arms, grace notes (which carry no
+event-anchored marking of their own), and edits that would change nothing are
+rejected with a diagnostic and no mutation. Every mutation is one undoable
+command, and availability is computed by constructing the same notation-layer
+command execution uses, so a row is enabled exactly when running it would
+succeed.
+
 ## 11. Command palette (complete normative route)
 
 The command palette is the universal keyboard and accessibility route to every
@@ -620,14 +672,19 @@ action in this table, and it is what makes the numpad-only bindings
   accessible range controls of §7.8; the three chord-less structural
   measure-editing actions of M5-phase-28 — insert a measure before the
   selected measure, append a measure at the node's own end, and delete the
-  selected measure; and M5-phase-29's three tuplet rows in §10.3. All six
-  structural rows carry an **empty chord hint**:
-  they are deliberately **not** bound to any key chord (no row in §7 names
-  them), so §7's `(chord, key)` space is unchanged by their addition and
-  §12's claim that this space is exhaustively enumerable still holds. Each
-  row carries a stable **name**, its **chord hint** (empty for the
-  chord-less accessible controls and chord-less structural actions), a
-  one-line description, and a live
+  selected measure; M5-phase-29's three tuplet rows in §10.3; and
+  M5-phase-30's marking style rows in §10.4 — apply/change articulation (one
+  row per articulation), remove articulation, the three stem-direction rows,
+  apply/change dynamic (one row per dynamic), remove dynamic, apply
+  crescendo/diminuendo, change hairpin to crescendo/diminuendo, remove
+  hairpin, apply pedal span, and remove pedal span. Every one of those
+  chord-less rows — the structural, tuplet, and marking style rows alike —
+  carries an **empty chord hint**: they are deliberately **not** bound to any
+  key chord (no row in §7 names them), so §7's `(chord, key)` space is
+  unchanged by their addition and §12's claim that this space is exhaustively
+  enumerable still holds. Each row carries a stable **name**, its **chord
+  hint** (empty for the chord-less accessible controls, structural actions,
+  and marking style actions), a one-line description, and a live
   **availability** state.
 - **Availability.** A row's availability is derived from the same precondition
   and fallback logic as its chord row, for a row that has one: "Cut" is
@@ -645,9 +702,9 @@ action in this table, and it is what makes the numpad-only bindings
   while `kSelection` is active is the same no-op as pressing its chord (the
   palette never switches tools or performs a broader operation than the chord).
   A chord-less row performs its own action under its own precondition; like
-  the clipboard and history rows of §7.3, the structural measure-editing rows
-  are ungated by tool, since their precondition is a committed selection
-  rather than an active tool.
+  the clipboard and history rows of §7.3, the structural measure-editing,
+  tuplet, and marking style rows are ungated by tool, since their
+  precondition is a committed selection rather than an active tool.
 - **Search.** The filter matches the name and description, case-insensitively;
   filtering never changes an action's availability or chord hint.
 

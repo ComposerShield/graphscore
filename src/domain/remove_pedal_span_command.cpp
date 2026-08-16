@@ -67,7 +67,8 @@ Result RemovePedalSpanCommand::undo(Project& project) noexcept {
     return Result(ResultCode::kInvalidArgument);
 
   Result r = internal::lane_restore_snapshot(pre_snapshot_, post_snapshot_,
-                                             node_id_, track_id_, project);
+                                             node_id_, track_id_, project,
+                                             &compensation_snapshot_);
   if (!r.ok())
     return r;
 
@@ -80,11 +81,42 @@ Result RemovePedalSpanCommand::redo(Project& project) noexcept {
     return Result(ResultCode::kInvalidArgument);
 
   Result r = internal::lane_restore_snapshot(post_snapshot_, pre_snapshot_,
-                                             node_id_, track_id_, project);
+                                             node_id_, track_id_, project,
+                                             &compensation_snapshot_);
   if (!r.ok())
     return r;
 
   state_ = State::kDone;
+  return Result();
+}
+
+Result RemovePedalSpanCommand::compensate_undo(Project& project) noexcept {
+  if (state_ != State::kUndone || !compensation_snapshot_.has_value())
+    return Result(ResultCode::kInvalidArgument);
+
+  Node*      node = project.find_node(node_id_);
+  TrackLane* lane = node == nullptr ? nullptr : node->lane(track_id_);
+  if (lane == nullptr)
+    return Result(ResultCode::kInvalidArgument);
+
+  *lane = std::move(*compensation_snapshot_);
+  compensation_snapshot_.reset();
+  state_ = State::kDone;
+  return Result();
+}
+
+Result RemovePedalSpanCommand::compensate_redo(Project& project) noexcept {
+  if (state_ != State::kDone || !compensation_snapshot_.has_value())
+    return Result(ResultCode::kInvalidArgument);
+
+  Node*      node = project.find_node(node_id_);
+  TrackLane* lane = node == nullptr ? nullptr : node->lane(track_id_);
+  if (lane == nullptr)
+    return Result(ResultCode::kInvalidArgument);
+
+  *lane = std::move(*compensation_snapshot_);
+  compensation_snapshot_.reset();
+  state_ = State::kUndone;
   return Result();
 }
 

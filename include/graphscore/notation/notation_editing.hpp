@@ -9,6 +9,7 @@
 
 #include <graphscore/core/note_audition.hpp>
 #include <graphscore/domain/event_style_command.hpp>
+#include <graphscore/domain/marking_style_command.hpp>
 #include <graphscore/domain/selection.hpp>
 #include <graphscore/notation/notation_palette.hpp>
 #include <graphscore/notation/notation_types.hpp>
@@ -42,6 +43,30 @@ struct NotationEditCommandResult {
 // explicit representation of clearing a manual override.
 [[nodiscard]] NotationEditCommandResult make_stem_edit_command(
     const Project& project, const Selection& selection, StemDirection stem);
+
+// Applies a point dynamic to one selected Note/Chord event; change and remove
+// address one selected dynamic marking. A dynamic is anchored to a top-level
+// event, so a selected chord notehead resolves to its own chord.
+[[nodiscard]] NotationEditCommandResult make_dynamic_edit_command(
+    const Project& project, const Selection& selection, MarkingEdit edit,
+    Dynamic value);
+
+// Applies a hairpin across one selected range: an exact, non-empty
+// ArbitraryRangeSet of complete contiguous events on one staff and voice,
+// carrying at least two events, whose first and last become the span's
+// endpoints. Change and remove address one selected hairpin marking.
+[[nodiscard]] NotationEditCommandResult make_hairpin_edit_command(
+    const Project& project, const Selection& selection, MarkingEdit edit,
+    HairpinDirection direction);
+
+// Applies a stave-scoped pedal span across one selected range, or removes one
+// selected pedal span. Pedal is scoped per stave rather than per voice, so a
+// range covering several voices of one stave is accepted and the span's exact
+// musical bounds are the union of the range's own bounds. kChange is rejected:
+// a pedal span carries no style attribute, only endpoints, which a later
+// endpoint-drag gesture owns.
+[[nodiscard]] NotationEditCommandResult make_pedal_span_edit_command(
+    const Project& project, const Selection& selection, MarkingEdit edit);
 
 // A conventional tuplet number omits M when M is the greatest power of two
 // strictly below N (3:2, 5:4, 7:4, 9:8, ...). This is the standard simple

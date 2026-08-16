@@ -433,6 +433,89 @@ TEST(VoiceDeltaFamilyTest, RemoveOneAddTwoHairpins) {
             validate_voice_references(voice));
 }
 
+TEST(VoiceDeltaFamilyTest, ReplaceDynamicEmitsSingleUpdatePreservingPosition) {
+  VoiceContent voice;
+  const auto   e1 = make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  const auto   e2 = make_note(pitch(Letter::kD), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(e1).ok());
+  ASSERT_TRUE(voice.append(e2).ok());
+  const auto first  = make_dynamic_marking(event_id(e1), Dynamic::kP);
+  const auto second = make_dynamic_marking(event_id(e2), Dynamic::kF);
+  ASSERT_TRUE(voice.add_dynamic(first).ok());
+  ASSERT_TRUE(voice.add_dynamic(second).ok());
+  VoiceValidationState state;
+  (void)state.rebuild(voice);
+  const auto rev0 = voice.capture_revision();
+
+  DynamicMarking replacement = first;
+  replacement.value          = Dynamic::kFff;
+  ASSERT_TRUE(voice.replace_dynamic(first.id, replacement).ok());
+
+  // Position and identity are preserved: replacement stays at index 0, the
+  // peer at index 1.
+  ASSERT_EQ(voice.dynamics().size(), 2u);
+  EXPECT_EQ(voice.dynamics()[0], replacement);
+  EXPECT_EQ(voice.dynamics()[1], second);
+
+  // Exactly one kUpdate op carrying the full replacement record.
+  const auto d_opt = voice.delta_since(rev0);
+  ASSERT_TRUE(d_opt.has_value());
+  ASSERT_EQ(d_opt->dynamic_ops.size(), 1u);
+  EXPECT_EQ(d_opt->dynamic_ops[0].kind, RefOpKind::kUpdate);
+  EXPECT_EQ(d_opt->dynamic_ops[0].id, first.id);
+  EXPECT_EQ(d_opt->dynamic_ops[0].record, replacement);
+  EXPECT_EQ(state.apply(voice, *d_opt).diagnostics,
+            validate_voice_references(voice));
+
+  // An unknown id and a replacement carrying a different id both reject,
+  // leaving the collection unchanged.
+  const std::vector<DynamicMarking> before = voice.dynamics();
+  EXPECT_FALSE(
+      voice.replace_dynamic(NotationEntityId::generate(), replacement).ok());
+  EXPECT_FALSE(voice.replace_dynamic(first.id, second).ok());
+  EXPECT_EQ(voice.dynamics(), before);
+}
+
+TEST(VoiceDeltaFamilyTest, ReplaceHairpinEmitsSingleUpdatePreservingPosition) {
+  VoiceContent voice;
+  const auto   e1 = make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));
+  const auto   e2 = make_note(pitch(Letter::kD), duration(NoteValue::kQuarter));
+  ASSERT_TRUE(voice.append(e1).ok());
+  ASSERT_TRUE(voice.append(e2).ok());
+  const auto first =
+      make_hairpin(event_id(e1), event_id(e2), HairpinDirection::kCrescendo);
+  const auto second =
+      make_hairpin(event_id(e1), event_id(e2), HairpinDirection::kCrescendo);
+  ASSERT_TRUE(voice.add_hairpin(first).ok());
+  ASSERT_TRUE(voice.add_hairpin(second).ok());
+  VoiceValidationState state;
+  (void)state.rebuild(voice);
+  const auto rev0 = voice.capture_revision();
+
+  Hairpin replacement   = first;
+  replacement.direction = HairpinDirection::kDiminuendo;
+  ASSERT_TRUE(voice.replace_hairpin(first.id, replacement).ok());
+
+  ASSERT_EQ(voice.hairpins().size(), 2u);
+  EXPECT_EQ(voice.hairpins()[0], replacement);
+  EXPECT_EQ(voice.hairpins()[1], second);
+
+  const auto d_opt = voice.delta_since(rev0);
+  ASSERT_TRUE(d_opt.has_value());
+  ASSERT_EQ(d_opt->hairpin_ops.size(), 1u);
+  EXPECT_EQ(d_opt->hairpin_ops[0].kind, RefOpKind::kUpdate);
+  EXPECT_EQ(d_opt->hairpin_ops[0].id, first.id);
+  EXPECT_EQ(d_opt->hairpin_ops[0].record, replacement);
+  EXPECT_EQ(state.apply(voice, *d_opt).diagnostics,
+            validate_voice_references(voice));
+
+  const std::vector<Hairpin> before = voice.hairpins();
+  EXPECT_FALSE(
+      voice.replace_hairpin(NotationEntityId::generate(), replacement).ok());
+  EXPECT_FALSE(voice.replace_hairpin(first.id, second).ok());
+  EXPECT_EQ(voice.hairpins(), before);
+}
+
 TEST(VoiceDeltaFamilyTest, RemoveOneAddTwoSlurs) {
   VoiceContent voice;
   const auto   e1 = make_note(pitch(Letter::kC), duration(NoteValue::kQuarter));

@@ -195,6 +195,59 @@ const std::vector<PaletteCommand> kInventory = [] {
   add(PaletteCommandId::kStemDown, "Stem direction: down", "",
       "Set the selected note or chord's stem override down");
 
+  // M5-phase-30 dynamic, hairpin, and pedal-span editing: palette-only rows.
+  // These add no key chords to the locked action-table key space.
+  add(PaletteCommandId::kApplyDynamicPpp, "Apply dynamic ppp", "",
+      "Apply a ppp dynamic to the selected note or chord");
+  add(PaletteCommandId::kApplyDynamicPp, "Apply dynamic pp", "",
+      "Apply a pp dynamic to the selected note or chord");
+  add(PaletteCommandId::kApplyDynamicP, "Apply dynamic p", "",
+      "Apply a p dynamic to the selected note or chord");
+  add(PaletteCommandId::kApplyDynamicMp, "Apply dynamic mp", "",
+      "Apply an mp dynamic to the selected note or chord");
+  add(PaletteCommandId::kApplyDynamicMf, "Apply dynamic mf", "",
+      "Apply an mf dynamic to the selected note or chord");
+  add(PaletteCommandId::kApplyDynamicF, "Apply dynamic f", "",
+      "Apply an f dynamic to the selected note or chord");
+  add(PaletteCommandId::kApplyDynamicFf, "Apply dynamic ff", "",
+      "Apply an ff dynamic to the selected note or chord");
+  add(PaletteCommandId::kApplyDynamicFff, "Apply dynamic fff", "",
+      "Apply an fff dynamic to the selected note or chord");
+  add(PaletteCommandId::kChangeDynamicToPpp, "Change dynamic to ppp", "",
+      "Change the selected dynamic marking to ppp");
+  add(PaletteCommandId::kChangeDynamicToPp, "Change dynamic to pp", "",
+      "Change the selected dynamic marking to pp");
+  add(PaletteCommandId::kChangeDynamicToP, "Change dynamic to p", "",
+      "Change the selected dynamic marking to p");
+  add(PaletteCommandId::kChangeDynamicToMp, "Change dynamic to mp", "",
+      "Change the selected dynamic marking to mp");
+  add(PaletteCommandId::kChangeDynamicToMf, "Change dynamic to mf", "",
+      "Change the selected dynamic marking to mf");
+  add(PaletteCommandId::kChangeDynamicToF, "Change dynamic to f", "",
+      "Change the selected dynamic marking to f");
+  add(PaletteCommandId::kChangeDynamicToFf, "Change dynamic to ff", "",
+      "Change the selected dynamic marking to ff");
+  add(PaletteCommandId::kChangeDynamicToFff, "Change dynamic to fff", "",
+      "Change the selected dynamic marking to fff");
+  add(PaletteCommandId::kRemoveDynamic, "Remove dynamic", "",
+      "Remove the selected dynamic marking");
+  add(PaletteCommandId::kApplyCrescendo, "Apply crescendo hairpin", "",
+      "Apply a crescendo hairpin across the selected range");
+  add(PaletteCommandId::kApplyDiminuendo, "Apply diminuendo hairpin", "",
+      "Apply a diminuendo hairpin across the selected range");
+  add(PaletteCommandId::kChangeHairpinToCrescendo,
+      "Change hairpin to crescendo", "",
+      "Change the selected hairpin marking to a crescendo");
+  add(PaletteCommandId::kChangeHairpinToDiminuendo,
+      "Change hairpin to diminuendo", "",
+      "Change the selected hairpin marking to a diminuendo");
+  add(PaletteCommandId::kRemoveHairpin, "Remove hairpin", "",
+      "Remove the selected hairpin marking");
+  add(PaletteCommandId::kApplyPedalSpan, "Apply pedal span", "",
+      "Apply a sustain pedal span across the selected range");
+  add(PaletteCommandId::kRemovePedalSpan, "Remove pedal span", "",
+      "Remove the selected pedal span marking");
+
   return rows;
 }();
 

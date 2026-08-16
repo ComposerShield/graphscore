@@ -337,10 +337,11 @@ int command_palette_test() {
   // --- test 5: the inventory is exhaustive — exactly one row per
   //     PaletteCommandId, Backspace and Delete coalesced into one row, and
   //     the chord-less accessible range controls and M5-phase-28 structural
-  //     measure-editing, tuplet, articulation, and stem rows present. -------
+  //     measure-editing, tuplet, articulation, stem, dynamic, hairpin, and
+  //     pedal-span rows present. ---------------------------------------------
   {
     const auto& inventory = palette_inventory();
-    const int   count     = static_cast<int>(PaletteCommandId::kStemDown) + 1;
+    const int count = static_cast<int>(PaletteCommandId::kRemovePedalSpan) + 1;
     if (inventory.size() != static_cast<std::size_t>(count)) {
       std::fprintf(stderr,
                    "command-palette-test: inventory size %zu != %d "

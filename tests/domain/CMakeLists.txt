@@ -12,6 +12,7 @@ add_executable(graphscore_domain_test
   command/command_history_transaction_test.cpp
   command/command_marking_lifecycle_test.cpp
   command/command_marking_scope_test.cpp
+  command/command_marking_style_test.cpp
   command/command_marking_test.cpp
   command/command_move_notehead_test.cpp
   command/command_property_8b_integration_test.cpp

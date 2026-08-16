@@ -59,6 +59,7 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::kKeyEventsShellTestFlag;
   using graphscore::writer_app::kKeyEventsTestFlag;
   using graphscore::writer_app::kKeySelectionTestFlag;
+  using graphscore::writer_app::kMarkingStyleEditTestFlag;
   using graphscore::writer_app::kMeasureEditTestFlag;
   using graphscore::writer_app::kNoteheadDeleteTestFlag;
   using graphscore::writer_app::kNoteheadMoveTestFlag;
@@ -68,6 +69,7 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::kStaffStepTestFlag;
   using graphscore::writer_app::kStepEntryTestFlag;
   using graphscore::writer_app::kTupletEditTestFlag;
+  using graphscore::writer_app::marking_style_edit_test;
   using graphscore::writer_app::measure_edit_test;
   using graphscore::writer_app::notehead_delete_test;
   using graphscore::writer_app::notehead_move_test;
@@ -98,6 +100,7 @@ int main(int argc, char** argv) {
   bool run_measure_edit_test         = false;
   bool run_tuplet_edit_test          = false;
   bool run_event_style_edit_test     = false;
+  bool run_marking_style_edit_test   = false;
   for (int i = 1; i < argc; ++i) {
     if (kSmokeTestFlag == argv[i]) {
       smoke_test = true;
@@ -159,6 +162,9 @@ int main(int argc, char** argv) {
     if (kEventStyleEditTestFlag == argv[i]) {
       run_event_style_edit_test = true;
     }
+    if (kMarkingStyleEditTestFlag == argv[i]) {
+      run_marking_style_edit_test = true;
+    }
   }
 
   try {
@@ -218,6 +224,9 @@ int main(int argc, char** argv) {
     }
     if (run_event_style_edit_test) {
       return event_style_edit_test();
+    }
+    if (run_marking_style_edit_test) {
+      return marking_style_edit_test();
     }
     return run(smoke_test);
   } catch (const std::exception& error) {

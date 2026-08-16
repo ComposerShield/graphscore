@@ -110,11 +110,17 @@ inline Result validate_lane_candidate(const TrackLane& lane,
 // Validates the restored candidate against current node_end.
 // Returns ok on success, or an error code if context is stale or validation
 // fails. Does not touch command state.
+//
+// `displaced`, when non-null, receives the content this restore replaced, so
+// a caller can publish-compensate a successful undo/redo by putting the exact
+// displaced object back rather than by re-running the inverse operation that
+// already failed downstream (Command::compensate_undo/compensate_redo). It is
+// only written on success.
 inline Result voice_restore_snapshot(
     std::optional<VoiceContent>&       pre_snapshot,
     const std::optional<VoiceContent>& expected_current, const NodeId node_id,
     const TrackId track_id, const StaveId stave_id, const Voice voice,
-    Project& project) {
+    Project& project, std::optional<VoiceContent>* displaced = nullptr) {
   if (!pre_snapshot.has_value())
     return Result(ResultCode::kInternalError);
 
@@ -139,6 +145,8 @@ inline Result voice_restore_snapshot(
     if (!vr.ok())
       return vr;
 
+    if (displaced != nullptr)
+      *displaced = std::move(*vc);
     *vc = std::move(candidate);
   } catch (const std::bad_alloc&) {
     return Result(ResultCode::kOutOfMemory);
@@ -152,10 +160,14 @@ inline Result voice_restore_snapshot(
 // Apply a pre_snapshot lane, verifying the current lane matches
 // `expected_current`. Validates every voice and every pedal span against
 // the current node_end. Returns ok or a stale/validation error.
+//
+// `displaced` carries the same publication-compensation contract as
+// voice_restore_snapshot's, for the whole-lane (pedal) commands.
 inline Result lane_restore_snapshot(
     const std::optional<TrackLane>& pre_snapshot,
     const std::optional<TrackLane>& expected_current, const NodeId node_id,
-    const TrackId track_id, Project& project) {
+    const TrackId track_id, Project& project,
+    std::optional<TrackLane>* displaced = nullptr) {
   if (!pre_snapshot.has_value())
     return Result(ResultCode::kInternalError);
 
@@ -184,6 +196,8 @@ inline Result lane_restore_snapshot(
     if (!vr.ok())
       return vr;
 
+    if (displaced != nullptr)
+      *displaced = std::move(*lane);
     *lane = std::move(candidate);
   } catch (const std::bad_alloc&) {
     return Result(ResultCode::kOutOfMemory);

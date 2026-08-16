@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace graphscore::writer_app {
@@ -100,6 +101,12 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   bool edit_selected_articulation(graphscore::ArticulationEdit edit,
                                   graphscore::Articulation     articulation);
   bool set_selected_stem(graphscore::StemDirection stem);
+
+  bool edit_selected_dynamic(graphscore::MarkingEdit edit,
+                             graphscore::Dynamic     value);
+  bool edit_selected_hairpin(graphscore::MarkingEdit      edit,
+                             graphscore::HairpinDirection direction);
+  bool edit_selected_pedal_span(graphscore::MarkingEdit edit);
 
   // Toolkit-neutral parameter-entry handoff established by the palette row.
   // A platform dialog/AT can observe this and call apply_tuplet_ratio().
@@ -477,6 +484,30 @@ class SelectionToolHandler final : public graphscore::InputHandler {
 
   [[nodiscard]] std::optional<graphscore::NotationInvalidation>
   event_style_invalidation() const;
+
+  // The invalidation scope of a dynamic/hairpin/pedal-span edit, derived from
+  // the PRE-edit committed selection: the measure range the marking occupies
+  // (or, for an apply, the range the new marking will occupy). A dynamic is a
+  // point marking and yields one measure; a hairpin spans its two endpoint
+  // events' measures; a pedal span spans its own musical bounds' measures; an
+  // apply over a range spans that range's own bounds. A multi-measure result
+  // is a kCrossMeasureSpan invalidation, a single-measure one kLocalContent.
+  [[nodiscard]] std::optional<graphscore::NotationInvalidation>
+  marking_style_invalidation() const;
+
+  // The shared tail every dynamic/hairpin/pedal-span edit runs once its own
+  // family's factory has produced `built`: marking_style_invalidation(), the
+  // optional test wrapper, one provisional history transaction around
+  // refresh_layout(), and -- on success -- clearing the committed selection
+  // when `clears_selection`. Every failure path posts
+  // "<label>: <composer-facing reason>" and leaves project, layout, surface,
+  // selection, and history exactly as it found them. `label` is the family's
+  // own diagnostic prefix ("dynamic", "hairpin", "pedal span"); the caller
+  // owns the poisoned-history and empty-selection guards ahead of it, because
+  // their reasons name the selection each family accepts.
+  bool run_marking_edit(std::string_view                      label,
+                        graphscore::NotationEditCommandResult built,
+                        bool                                  clears_selection);
 
   // The start of the node's measure `measure_index`, or nullopt when the
   // node/track/stave is absent, the track is archived, or the index is out

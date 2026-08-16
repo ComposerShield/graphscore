@@ -27,6 +27,11 @@ class AddHairpinCommand : public Command {
   Result execute(Project& project) noexcept override;
   Result undo(Project& project) noexcept override;
   Result redo(Project& project) noexcept override;
+  // Publication-atomic compensation for a successful undo/redo whose
+  // separate publication step failed: restores the exact content that
+  // undo/redo displaced instead of re-running the inverse operation.
+  Result compensate_undo(Project& project) noexcept override;
+  Result compensate_redo(Project& project) noexcept override;
 
  private:
   NodeId  node_id_;
@@ -37,6 +42,7 @@ class AddHairpinCommand : public Command {
 
   std::optional<VoiceContent> pre_snapshot_;
   std::optional<VoiceContent> post_snapshot_;
+  std::optional<VoiceContent> compensation_snapshot_;
   State                       state_ = State::kFresh;
 };
 

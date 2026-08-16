@@ -33,6 +33,7 @@ add_executable(graphscore_writer_app
   writer_app/selftests/selftest_interval_entry_shell.cpp
   writer_app/selftests/selftest_key_events.cpp
   writer_app/selftests/selftest_key_selection.cpp
+  writer_app/selftests/selftest_marking_style_edit.cpp
   writer_app/selftests/selftest_measure_edit.cpp
   writer_app/selftests/selftest_notehead_delete.cpp
   writer_app/selftests/selftest_notehead_move.cpp

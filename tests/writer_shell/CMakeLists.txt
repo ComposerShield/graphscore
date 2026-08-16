@@ -357,11 +357,19 @@ add_test(NAME graphscore_writer_event_style_edit_test
   COMMAND graphscore_writer_app --test-event-style-edit
 )
 
+add_test(NAME graphscore_writer_marking_style_edit_test
+  COMMAND graphscore_writer_app --test-marking-style-edit
+)
+
 set_tests_properties(graphscore_writer_tuplet_edit_test PROPERTIES
   TIMEOUT 30
 )
 
 set_tests_properties(graphscore_writer_event_style_edit_test PROPERTIES
+  TIMEOUT 30
+)
+
+set_tests_properties(graphscore_writer_marking_style_edit_test PROPERTIES
   TIMEOUT 30
 )
 

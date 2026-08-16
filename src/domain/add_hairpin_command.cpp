@@ -60,9 +60,9 @@ Result AddHairpinCommand::undo(Project& project) noexcept {
   if (!pre_snapshot_.has_value())
     return Result(ResultCode::kInternalError);
 
-  Result r =
-      internal::voice_restore_snapshot(pre_snapshot_, post_snapshot_, node_id_,
-                                       track_id_, stave_id_, voice_, project);
+  Result r = internal::voice_restore_snapshot(
+      pre_snapshot_, post_snapshot_, node_id_, track_id_, stave_id_, voice_,
+      project, &compensation_snapshot_);
   if (!r.ok())
     return r;
 
@@ -76,13 +76,43 @@ Result AddHairpinCommand::redo(Project& project) noexcept {
   if (!post_snapshot_.has_value())
     return Result(ResultCode::kInternalError);
 
-  Result r =
-      internal::voice_restore_snapshot(post_snapshot_, pre_snapshot_, node_id_,
-                                       track_id_, stave_id_, voice_, project);
+  Result r = internal::voice_restore_snapshot(
+      post_snapshot_, pre_snapshot_, node_id_, track_id_, stave_id_, voice_,
+      project, &compensation_snapshot_);
   if (!r.ok())
     return r;
 
   state_ = State::kDone;
+  return Result();
+}
+
+Result AddHairpinCommand::compensate_undo(Project& project) noexcept {
+  if (state_ != State::kUndone || !compensation_snapshot_.has_value())
+    return Result(ResultCode::kInvalidArgument);
+
+  VoiceContent* voice =
+      internal::resolve_voice(project, node_id_, track_id_, stave_id_, voice_);
+  if (voice == nullptr)
+    return Result(ResultCode::kInvalidArgument);
+
+  *voice = std::move(*compensation_snapshot_);
+  compensation_snapshot_.reset();
+  state_ = State::kDone;
+  return Result();
+}
+
+Result AddHairpinCommand::compensate_redo(Project& project) noexcept {
+  if (state_ != State::kDone || !compensation_snapshot_.has_value())
+    return Result(ResultCode::kInvalidArgument);
+
+  VoiceContent* voice =
+      internal::resolve_voice(project, node_id_, track_id_, stave_id_, voice_);
+  if (voice == nullptr)
+    return Result(ResultCode::kInvalidArgument);
+
+  *voice = std::move(*compensation_snapshot_);
+  compensation_snapshot_.reset();
+  state_ = State::kUndone;
   return Result();
 }
 

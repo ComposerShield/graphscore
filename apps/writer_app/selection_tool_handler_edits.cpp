@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <variant>
@@ -79,6 +80,153 @@ SelectionToolHandler::event_style_invalidation() const {
     return std::nullopt;
   return graphscore::NotationInvalidation{
       graphscore::NotationInvalidationKind::kLocalContent, *measure, *measure};
+}
+
+std::optional<graphscore::NotationInvalidation>
+SelectionToolHandler::marking_style_invalidation() const {
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value())
+    return std::nullopt;
+
+  // The (node, track, stave) the edit addresses, plus every musical position
+  // the pre-edit and post-edit forms of the marking occupy.
+  graphscore::NodeId                        node_id;
+  graphscore::TrackId                       track_id;
+  graphscore::StaveId                       stave_id;
+  std::optional<graphscore::Voice>          voice;
+  std::vector<graphscore::Rational>         positions;
+  std::vector<graphscore::NotationEntityId> entities;
+
+  if (const auto* notes = std::get_if<graphscore::NoteheadSet>(&*selection);
+      notes != nullptr && notes->items().size() == 1u) {
+    const auto& item = notes->items().front();
+    node_id          = item.node;
+    track_id         = item.track;
+    stave_id         = item.stave;
+    voice            = item.voice;
+    entities.push_back(item.entity);
+  } else if (const auto* chords =
+                 std::get_if<graphscore::ChordSet>(&*selection);
+             chords != nullptr && chords->items().size() == 1u) {
+    const auto& item = chords->items().front();
+    node_id          = item.node;
+    track_id         = item.track;
+    stave_id         = item.stave;
+    voice            = item.voice;
+    entities.push_back(item.entity);
+  } else if (const auto* ranges =
+                 std::get_if<graphscore::ArbitraryRangeSet>(&*selection);
+             ranges != nullptr && !ranges->items().empty()) {
+    const auto& first = ranges->items().front();
+    node_id           = first.node;
+    track_id          = first.track;
+    stave_id          = first.stave;
+    voice             = first.voice;
+    for (const auto& item : ranges->items()) {
+      if (item.node != node_id || item.track != track_id ||
+          item.stave != stave_id)
+        return std::nullopt;
+      positions.push_back(item.span.start);
+      positions.push_back(item.span.end);
+    }
+  } else if (const auto* markings =
+                 std::get_if<graphscore::MarkingSet>(&*selection);
+             markings != nullptr && markings->items().size() == 1u) {
+    const auto& item = markings->items().front();
+    node_id          = item.node;
+    track_id         = item.track;
+    stave_id         = item.stave;
+    voice            = item.voice;
+    switch (item.kind) {
+      case graphscore::MarkingKind::kDynamic:
+      case graphscore::MarkingKind::kHairpin:
+      case graphscore::MarkingKind::kPedalSpan:
+        break;
+      default:
+        return std::nullopt;
+    }
+  } else {
+    return std::nullopt;
+  }
+
+  const graphscore::Node*      node = project_.find_node(node_id);
+  const graphscore::TrackLane* lane =
+      node == nullptr ? nullptr : node->lane(track_id);
+  const graphscore::StaveVoices* stave =
+      lane == nullptr ? nullptr : lane->stave(stave_id);
+  if (node == nullptr || node->timeline() == nullptr || stave == nullptr ||
+      node_id != layout_.node_id)
+    return std::nullopt;
+
+  if (const auto* markings = std::get_if<graphscore::MarkingSet>(&*selection);
+      markings != nullptr && markings->items().size() == 1u) {
+    const auto& item = markings->items().front();
+    if (item.kind == graphscore::MarkingKind::kPedalSpan) {
+      const std::vector<graphscore::PedalSpan>* spans =
+          lane->pedal_spans(stave_id);
+      if (spans == nullptr)
+        return std::nullopt;
+      const auto found =
+          std::ranges::find_if(*spans, [&](const graphscore::PedalSpan& span) {
+            return span.id == item.anchor;
+          });
+      if (found == spans->end())
+        return std::nullopt;
+      positions.push_back(found->start);
+      positions.push_back(found->end);
+    } else if (voice.has_value()) {
+      const graphscore::VoiceContent& content = stave->voice(*voice);
+      if (item.kind == graphscore::MarkingKind::kDynamic) {
+        const auto found = std::ranges::find_if(
+            content.dynamics(), [&](const graphscore::DynamicMarking& record) {
+              return record.id == item.anchor;
+            });
+        if (found == content.dynamics().end())
+          return std::nullopt;
+        entities.push_back(found->at_event);
+      } else {
+        const auto found = std::ranges::find_if(
+            content.hairpins(), [&](const graphscore::Hairpin& record) {
+              return record.id == item.anchor;
+            });
+        if (found == content.hairpins().end())
+          return std::nullopt;
+        entities.push_back(found->start_event);
+        entities.push_back(found->end_event);
+      }
+    } else {
+      return std::nullopt;
+    }
+  }
+
+  for (const graphscore::NotationEntityId& entity : entities) {
+    if (!voice.has_value())
+      return std::nullopt;
+    const auto position = stave->voice(*voice).position_of_event(entity);
+    if (!position.has_value())
+      return std::nullopt;
+    positions.push_back(*position);
+  }
+  if (positions.empty())
+    return std::nullopt;
+
+  const graphscore::MeasureMap& measures = node->timeline()->measures();
+  if (measures.measure_count() == 0)
+    return std::nullopt;
+  std::optional<std::size_t> first;
+  std::optional<std::size_t> last;
+  for (const graphscore::Rational& position : positions) {
+    // A span end sitting exactly on node_end has no measure of its own; it
+    // belongs to the final measure, which is what the clamp names.
+    const auto        index    = measures.measure_index_at(position);
+    const std::size_t resolved = index.value_or(measures.measure_count() - 1u);
+    first = first.has_value() ? std::min(*first, resolved) : resolved;
+    last  = last.has_value() ? std::max(*last, resolved) : resolved;
+  }
+  const graphscore::NotationInvalidationKind kind =
+      *first == *last ? graphscore::NotationInvalidationKind::kLocalContent
+                      : graphscore::NotationInvalidationKind::kCrossMeasureSpan;
+  return graphscore::NotationInvalidation{kind, *first, *last};
 }
 
 // Moves the single selected notehead one diatonic staff step (M5-phase-20).
@@ -883,6 +1031,104 @@ bool SelectionToolHandler::set_selected_stem(graphscore::StemDirection stem) {
     return false;
   }
   return true;
+}
+
+// The one body all three marking families share (M5-phase-30b). Each family
+// differs only in its diagnostic label, the factory that produced `built`, and
+// whether success clears the selection, so the transaction/rollback/publish
+// ordering lives here once rather than three times over.
+bool SelectionToolHandler::run_marking_edit(
+    std::string_view label, graphscore::NotationEditCommandResult built,
+    bool clears_selection) {
+  const std::string prefix(label);
+  if (!built.available()) {
+    post_diagnostic(prefix + ": " + built.unavailable_reason);
+    return false;
+  }
+  const auto invalidation = marking_style_invalidation();
+  if (!invalidation.has_value()) {
+    post_diagnostic(prefix + ": cannot invalidate layout");
+    return false;
+  }
+  if (event_style_command_wrapper_) {
+    built.command = event_style_command_wrapper_(std::move(built.command));
+  }
+  auto transaction =
+      history_.begin_transaction(std::move(built.command), project_);
+  if (!transaction.active()) {
+    post_diagnostic(prefix + ": target changed or edit was rejected");
+    return false;
+  }
+  if (!refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      recover_from_failed_rollback();
+    } else {
+      layout_cache_.reset();
+      warm_layout_cache();
+    }
+    post_diagnostic(prefix + ": layout refresh failed");
+    return false;
+  }
+  if (!transaction.commit().ok()) {
+    post_diagnostic(prefix + ": commit failed");
+    return false;
+  }
+  if (clears_selection) {
+    set_committed_selection(std::nullopt);
+  }
+  return true;
+}
+
+bool SelectionToolHandler::edit_selected_dynamic(graphscore::MarkingEdit edit,
+                                                 graphscore::Dynamic value) {
+  if (history_.poisoned()) {
+    post_diagnostic("dynamic: command history is unavailable");
+    return false;
+  }
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value()) {
+    post_diagnostic("dynamic: requires a note, chord, or dynamic marking");
+    return false;
+  }
+  return run_marking_edit(
+      "dynamic",
+      graphscore::make_dynamic_edit_command(project_, *selection, edit, value),
+      edit == graphscore::MarkingEdit::kRemove);
+}
+
+bool SelectionToolHandler::edit_selected_hairpin(
+    graphscore::MarkingEdit edit, graphscore::HairpinDirection direction) {
+  if (history_.poisoned()) {
+    post_diagnostic("hairpin: command history is unavailable");
+    return false;
+  }
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value()) {
+    post_diagnostic("hairpin: requires a range or hairpin marking");
+    return false;
+  }
+  return run_marking_edit("hairpin",
+                          graphscore::make_hairpin_edit_command(
+                              project_, *selection, edit, direction),
+                          edit == graphscore::MarkingEdit::kRemove);
+}
+
+bool SelectionToolHandler::edit_selected_pedal_span(
+    graphscore::MarkingEdit edit) {
+  if (history_.poisoned()) {
+    post_diagnostic("pedal span: command history is unavailable");
+    return false;
+  }
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value()) {
+    post_diagnostic("pedal span: requires a range or pedal span marking");
+    return false;
+  }
+  return run_marking_edit(
+      "pedal span",
+      graphscore::make_pedal_span_edit_command(project_, *selection, edit),
+      edit == graphscore::MarkingEdit::kRemove);
 }
 
 void SelectionToolHandler::request_tuplet_ratio_entry() {

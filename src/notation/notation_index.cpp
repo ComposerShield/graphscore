@@ -490,6 +490,39 @@ void refresh_voice_range(const VoiceContent& content, const MeasureMap& map,
       family.entries.emplace(record.id, std::move(new_entry));
     };  // NOLINT(readability/braces)
 
+    // Targeted in-place update: replace the retained record while preserving
+    // its order key and collection identity, so order-sensitive overlapping
+    // references (beam join/break precedence, the lane allocation of
+    // horizontally overlapping dynamics and hairpins) keep their precedence.
+    // Reverse refs and bucket membership are rebuilt from the new record.
+    const auto update_ref = [&]<typename T>(
+                                ReferenceFamily<T>& family, NotationEntityId id,
+                                const T& record, const auto& rev_events,
+                                const auto& compute_membership_fn) {
+      auto it = family.entries.find(id);
+      if (it == family.entries.end())
+        return;
+      for (const NotationEntityId& ev_id : rev_events(it->second.record)) {
+        auto rev_it = indexed.reverse_refs.find(ev_id);
+        if (rev_it != indexed.reverse_refs.end()) {
+          rev_it->second.erase(id);
+          if (rev_it->second.empty()) {
+            indexed.reverse_refs.erase(rev_it);
+          }
+        }
+      }
+      for (const std::size_t m : it->second.measure_membership) {
+        family.by_measure[m].erase(id);
+      }
+      it->second.record = record;
+      it->second.measure_membership.clear();
+      compute_membership_fn(indexed, family.by_measure, it->second.record,
+                            it->second.measure_membership);
+      for (const NotationEntityId& ev_id : rev_events(it->second.record)) {
+        indexed.reverse_refs[ev_id].insert(id);
+      }
+    };  // NOLINT(readability/braces)
+
     // Recompute a span reference's bucket membership from scratch.
     const auto recompute_span = [&](auto& entry, NotationEntityId start_event,
                                     NotationEntityId end_event, auto& family) {
@@ -578,6 +611,10 @@ void refresh_voice_range(const VoiceContent& content, const MeasureMap& map,
         remove_ref(indexed.dynamics, op.id, dyn_rev);
       } else if (op.kind == RefOpKind::kAdd) {
         add_ref(indexed.dynamics, op.record, dyn_rev, dyn_membership);
+      } else if (op.kind == RefOpKind::kUpdate) {
+        // VoiceContent::replace_dynamic: a value change keeps the marking's
+        // order key, so overlapping dynamics keep their lane stacking.
+        update_ref(indexed.dynamics, op.id, op.record, dyn_rev, dyn_membership);
       }
     }
     // Apply hairpin ops.
@@ -586,6 +623,10 @@ void refresh_voice_range(const VoiceContent& content, const MeasureMap& map,
         remove_ref(indexed.hairpins, op.id, hp_rev);
       } else if (op.kind == RefOpKind::kAdd) {
         add_ref(indexed.hairpins, op.record, hp_rev, hp_membership);
+      } else if (op.kind == RefOpKind::kUpdate) {
+        // VoiceContent::replace_hairpin: a direction change keeps the
+        // hairpin's order key, so overlapping spans keep their lane stacking.
+        update_ref(indexed.hairpins, op.id, op.record, hp_rev, hp_membership);
       }
     }
     // Apply slur ops.
@@ -603,33 +644,11 @@ void refresh_voice_range(const VoiceContent& content, const MeasureMap& map,
       } else if (op.kind == RefOpKind::kAdd) {
         add_ref(indexed.beam_overrides, op.record, beam_rev, beam_membership);
       } else if (op.kind == RefOpKind::kUpdate) {
-        // In-place update (VoiceContent::replace_beam_override): replace the
-        // retained record while preserving its order key and collection
-        // identity, so overlapping order-sensitive join/break overrides keep
-        // their precedence. Reverse refs and bucket membership are rebuilt
-        // from the new event run.
-        auto it = indexed.beam_overrides.entries.find(op.id);
-        if (it == indexed.beam_overrides.entries.end())
-          continue;
-        for (const NotationEntityId& ev_id : beam_rev(it->second.record)) {
-          auto rev_it = indexed.reverse_refs.find(ev_id);
-          if (rev_it != indexed.reverse_refs.end()) {
-            rev_it->second.erase(op.id);
-            if (rev_it->second.empty()) {
-              indexed.reverse_refs.erase(rev_it);
-            }
-          }
-        }
-        for (const std::size_t m : it->second.measure_membership) {
-          indexed.beam_overrides.by_measure[m].erase(op.id);
-        }
-        it->second.record = op.record;
-        it->second.measure_membership.clear();
-        beam_membership(indexed, indexed.beam_overrides.by_measure, op.record,
-                        it->second.measure_membership);
-        for (const NotationEntityId& ev_id : beam_rev(it->second.record)) {
-          indexed.reverse_refs[ev_id].insert(op.id);
-        }
+        // VoiceContent::replace_beam_override: an in-place replacement keeps
+        // the override's order key, so overlapping order-sensitive join/break
+        // overrides keep their precedence.
+        update_ref(indexed.beam_overrides, op.id, op.record, beam_rev,
+                   beam_membership);
       }
     }
     // Apply grace group ops.

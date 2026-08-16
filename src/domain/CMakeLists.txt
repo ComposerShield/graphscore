@@ -35,6 +35,7 @@ add_library(graphscore_domain STATIC
   event_style_command.cpp
   graph.cpp
   insert_measure_command.cpp
+  marking_style_command.cpp
   measure_map.cpp
   midi_ownership.cpp
   move_clef_change_command.cpp
