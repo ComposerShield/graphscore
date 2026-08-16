@@ -9,6 +9,7 @@ add_executable(graphscore_domain_test
   clipboard/clipboard_lifecycle_cut_test.cpp
   clipboard/clipboard_mapping_test.cpp
   clipboard/clipboard_measure_meter_test.cpp
+  clipboard/clipboard_paste_scope_test.cpp
   clipboard/clipboard_pedal_span_test.cpp
   clipboard/clipboard_test_support.cpp
   command/command_basic_history_test.cpp
