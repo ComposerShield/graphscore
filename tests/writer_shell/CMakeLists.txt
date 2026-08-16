@@ -466,6 +466,16 @@ if (GRAPHSCORE_BUILD_WRITER)
     PASS_REGULAR_EXPRESSION "renderer-zoom-test: ok|no display available"
     TIMEOUT 60
   )
+
+  if (APPLE AND DEFINED ENV{CI})
+    # Hosted macOS runners do not provide a reliable display-backed Metal
+    # framebuffer for SDL_RenderReadPixels. Keep this proof active for local
+    # builds, where it exercises the real renderer, but do not report an
+    # environment limitation as a CI regression.
+    set_tests_properties(graphscore_writer_renderer_zoom_test PROPERTIES
+      DISABLED TRUE
+    )
+  endif()
 endif()
 
 # M6-phase-5: the render-destination float-corner validation — a double
