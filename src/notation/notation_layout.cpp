@@ -120,6 +120,70 @@ namespace {
 
 }  // namespace
 
+namespace {
+
+// Horizontal overhang the pickdown region's emitted geometry needs at each end
+// of the content span, in layout pixels, measured from the preflight engraver's
+// actual commands and hit regions rather than a parallel mirror of placement
+// constants.
+struct PickdownContentPadding {
+  double left  = 0.0;
+  double right = 0.0;
+};
+
+// Measures how far the preflight engraver's emitted geometry hangs past each
+// end of the trial content span [boundary_x + inset,
+// boundary_x + pickdown_width - inset]. Every glyph re-derives its box from
+// the injected metrics at its own emitted staff_space; lines add their stroke
+// half-width; paths add their stroke half-width over every endpoint and control
+// point (a cubic's x-extent lies within its control points' convex hull); hit
+// regions contribute their own bounds. ClipCommands carry the deliberately
+// oversized preflight system bounds rather than content, so they are skipped.
+[[nodiscard]] PickdownContentPadding measure_pickdown_padding(
+    const NotationLayout& output, const GlyphMetrics& metrics,
+    double boundary_x, double pickdown_width, double inset) {
+  PickdownContentPadding padding;
+  const double           content_left  = boundary_x + inset;
+  const double           content_right = boundary_x + pickdown_width - inset;
+  const auto             update        = [&](double left, double right) {
+    padding.left  = std::max(padding.left, content_left - left);
+    padding.right = std::max(padding.right, right - content_right);
+  };
+  for (const NotationCommand& command : output.commands) {
+    std::visit(
+        [&](const auto& concrete) {
+          using Command = std::decay_t<decltype(concrete)>;
+          if constexpr (std::is_same_v<Command, GlyphCommand>) {
+            const GlyphMetricsValue value = metrics.glyph_metrics(
+                concrete.code_point, concrete.staff_space);
+            update(concrete.origin.x + value.bounds.x,
+                   concrete.origin.x + value.bounds.x + value.bounds.width);
+          } else if constexpr (std::is_same_v<Command, LineCommand>) {
+            const double half = concrete.width * 0.5;
+            update(std::min(concrete.from.x, concrete.to.x) - half,
+                   std::max(concrete.from.x, concrete.to.x) + half);
+          } else if constexpr (std::is_same_v<Command, PathCommand>) {
+            const double half = concrete.stroke_width * 0.5;
+            for (const PathElement& element : concrete.elements) {
+              if (element.verb != PathVerb::kMove) {
+                update(element.control1.x - half, element.control1.x + half);
+                update(element.control2.x - half, element.control2.x + half);
+              }
+              update(element.end.x - half, element.end.x + half);
+            }
+          }
+          // ClipCommand: its bounds are the preflight system, not content.
+        },
+        command);
+  }
+  for (const HitRegion& hit : output.hit_regions) {
+    update(hit.bounds.x, hit.bounds.x + hit.bounds.width);
+  }
+  return padding;
+}
+
+}  // namespace
+
 NotationLayoutResult layout_internal(
     const Project& project, NodeId node_id, const GlyphMetrics& metrics,
     const NotationLayoutOptions& options, const LayoutIndex& layout_index,
@@ -144,7 +208,87 @@ NotationLayoutResult layout_internal(
   const MeasureMap& measures = timeline->measures();
   const double      content_width =
       options.system_width - options.left_margin - options.right_margin;
-  const auto ranges = system_ranges(widths, content_width);
+  const auto        ranges         = system_ranges(widths, content_width);
+  const std::size_t measure_count  = measures.measure_count();
+  double            pickdown_width = pickdown_region_width(
+      *timeline, widths.empty() ? 0.0 : widths.back(), options.staff_space);
+  // Content-aware pickdown sizing (M5-phase-31): the fixed one-space inset
+  // only contains a bare notehead column. Boundary accidentals/grace/stems and
+  // node-end dots/dynamics need a wider inset, so engrave the pickdown content
+  // once into a throwaway builder through the same emission path the final
+  // pass uses, measure every emitted glyph/line/path/hit extent, and grow both
+  // the inset and the region width so all of it stays inside the
+  // transition-to-node-end area. Measuring the real emitted geometry keeps the
+  // inset single-sourced in the engraver, so an omitted family can no longer
+  // drift out of a parallel list of placement constants.
+  double pickdown_content_inset_value =
+      pickdown_content_inset(options.staff_space);
+  if (pickdown_width > 0.0) {
+    double total_used_width = 0.0;
+    for (const double width : widths) {
+      total_used_width += width;
+    }
+    const double boundary_x  = options.left_margin + total_used_width;
+    const double trial_inset = pickdown_content_inset_value;
+    const double trial_width = pickdown_width;
+
+    LayoutBuilder preflight{*timeline, metrics, options, NotationLayout{},
+                            NotationLayoutError::kNone};
+    SystemLayout  preflight_system;
+    preflight_system.id            = make_id(node_id, "pickdown-preflight");
+    preflight_system.first_measure = measure_count - 1;
+    // Oversized so the preflight never clips span/tie hit regions, keeping the
+    // measurement a conservative superset of the final pass's geometry.
+    preflight_system.bounds = NotationRect{-1.0e9, 0.0, 2.0e9, 2.0e9};
+
+    static const StaveVoices kEmptyVoices;
+    for (const Track& track : project.active_tracks()) {
+      const TrackLane* lane = node->lane(track.id());
+      if (lane == nullptr) {
+        continue;
+      }
+      for (const StaveDefinition& stave_definition : track.layout().staves()) {
+        const StaveVoices* voices = lane->stave(stave_definition.id);
+        if (voices == nullptr) {
+          voices = &kEmptyVoices;
+        }
+        const IndexedStaff* staff_index =
+            indexed_staff(layout_index, stave_definition.id);
+        if (staff_index == nullptr) {
+          continue;
+        }
+        StaffSystemLayout preflight_staff;
+        preflight_staff.track_id = track.id();
+        preflight_staff.stave_id = stave_definition.id;
+        preflight_staff.id       = make_id(stave_definition.id, "preflight");
+        preflight_staff.bounds =
+            NotationRect{options.left_margin, 0.0,
+                         boundary_x + trial_width - options.left_margin,
+                         options.staff_space * 4.0};
+        if (!add_pickdown_content(preflight, preflight_system, preflight_staff,
+                                  *voices, *staff_index, boundary_x,
+                                  trial_width, trial_inset)) {
+          return fail(preflight.error);
+        }
+      }
+    }
+
+    const PickdownContentPadding padding = measure_pickdown_padding(
+        preflight.output, metrics, boundary_x, trial_width, trial_inset);
+    pickdown_content_inset_value =
+        options.staff_space *
+        std::max({1.0, padding.left / options.staff_space + 0.35,
+                  padding.right / options.staff_space});
+    // Preserve the exact trial content-span width (trial_width - 2*S) when the
+    // final inset grows to I > S: grow the region width by 2*(I - S) before any
+    // other conservative minimum. Without this, the content span shrinks from
+    // W0-2S to W0-2I and every later/interior onset shifts left by (I - S),
+    // letting geometry the preflight had already measured escape the transition
+    // boundary under valid metrics.
+    pickdown_width = std::max(
+        pickdown_width + 2.0 * (pickdown_content_inset_value - trial_inset),
+        2.0 * pickdown_content_inset_value + options.staff_space);
+  }
 
   std::size_t stave_count = 0;
   for (const Track& track : project.active_tracks()) {
@@ -174,13 +318,16 @@ NotationLayoutResult layout_internal(
   double system_y      = options.top_margin;
   double maximum_width = options.system_width;
   for (const auto [first, end] : ranges) {
-    double used_width = 0.0;
+    const bool   is_final_system = end == measure_count;
+    const double pickdown_extra  = is_final_system ? pickdown_width : 0.0;
+    double       used_width      = 0.0;
     for (std::size_t index = first; index < end; ++index) {
       used_width += widths[index];
     }
     const double actual_width =
         std::max(options.system_width,
-                 options.left_margin + used_width + options.right_margin);
+                 options.left_margin + used_width + options.right_margin) +
+        pickdown_extra;
     maximum_width = std::max(maximum_width, actual_width);
     const auto old =
         previous == nullptr
@@ -256,9 +403,10 @@ NotationLayoutResult layout_internal(
         const double staff_y = system_y + system_top_padding +
                                static_cast<double>(stave_ordinal) *
                                    (staff_slot_height + options.stave_gap);
+        const double staff_right_x = measure_x + pickdown_extra;
         staff.bounds =
             NotationRect{options.left_margin, staff_y,
-                         measure_x - options.left_margin, staff_height};
+                         staff_right_x - options.left_margin, staff_height};
         for (const MeasureLayout& measure : system.measures) {
           const NotationRect measure_staff_bounds{
               measure.bounds.x, staff_y, measure.bounds.width, staff_height};
@@ -286,6 +434,9 @@ NotationLayoutResult layout_internal(
           for (std::size_t ordinal = first; ordinal < end; ++ordinal) {
             event_count += indexed_voice.measures[ordinal].size();
           }
+          if (is_final_system) {
+            event_count += indexed_voice.pickdown.size();
+          }
           staff.voices.push_back(VoiceLayout{voice, voice_id, event_count});
           builder.output.hit_regions.push_back(
               HitRegion{make_id(voice_id.value,
@@ -299,7 +450,7 @@ NotationLayoutResult layout_internal(
           builder.add_line(
               make_id(staff.id.value, "line/" + std::to_string(line)),
               NotationPoint{options.left_margin, y},
-              NotationPoint{measure_x, y}, options.staff_space * 0.1);
+              NotationPoint{staff_right_x, y}, options.staff_space * 0.1);
         }
         for (const MeasureLayout& measure : system.measures) {
           builder.add_line(
@@ -370,14 +521,35 @@ NotationLayoutResult layout_internal(
             }
           }
         }
-        const MeasureLayout& last = system.measures.back();
-        builder.add_line(
-            make_id(staff.id.value,
-                    "measure/" + std::to_string(last.ordinal) + "/end-barline"),
-            NotationPoint{last.bounds.x + last.bounds.width, staff_y},
-            NotationPoint{last.bounds.x + last.bounds.width,
-                          staff_y + staff_height},
-            options.staff_space * 0.15);
+        const MeasureLayout& last       = system.measures.back();
+        const double         right_edge = last.bounds.x + last.bounds.width;
+        if (is_final_system && pickdown_width > 0.0) {
+          // A distinct double-barline transition boundary at the main-region
+          // end, explicitly test-identifiable rather than reusing the ordinary
+          // final barline that already sits there.
+          builder.add_line(make_id(staff.id.value, "pickdown-boundary/first"),
+                           NotationPoint{right_edge, staff_y},
+                           NotationPoint{right_edge, staff_y + staff_height},
+                           options.staff_space * 0.1);
+          builder.add_line(
+              make_id(staff.id.value, "pickdown-boundary/second"),
+              NotationPoint{right_edge + options.staff_space * 0.35, staff_y},
+              NotationPoint{right_edge + options.staff_space * 0.35,
+                            staff_y + staff_height},
+              options.staff_space * 0.1);
+          const double node_end_x = right_edge + pickdown_width;
+          builder.add_line(make_id(staff.id.value, "pickdown-end-barline"),
+                           NotationPoint{node_end_x, staff_y},
+                           NotationPoint{node_end_x, staff_y + staff_height},
+                           options.staff_space * 0.15);
+        } else {
+          builder.add_line(make_id(staff.id.value,
+                                   "measure/" + std::to_string(last.ordinal) +
+                                       "/end-barline"),
+                           NotationPoint{right_edge, staff_y},
+                           NotationPoint{right_edge, staff_y + staff_height},
+                           options.staff_space * 0.15);
+        }
         if (!add_rhythm(builder, system, staff, *voices,
                         *indexed_staff(layout_index, stave_definition.id),
                         widths, system.measures)) {
@@ -390,8 +562,42 @@ NotationLayoutResult layout_internal(
              system_reference_ids(staff_index->pedals, system.measures)) {
           system_pedals.push_back(staff_index->pedals.entries.at(id).record);
         }
-        if (!add_pedal_spans(builder, system, staff, system_pedals)) {
-          return fail(builder.error);
+        {
+          const MeasureMap& pedal_map = measures;
+          const Rational    pedal_start =
+              pedal_map.measure_start(system.measures.front().ordinal);
+          const MeasureLayout& pedal_last = system.measures.back();
+          const Rational       pedal_end =
+              pedal_map.measure_start(pedal_last.ordinal) +
+              pedal_map.measure_length(pedal_last.ordinal);
+          const double pedal_left_x =
+              system.measures.front().bounds.x + options.staff_space * 0.5;
+          const double pedal_right_x = pedal_last.bounds.x +
+                                       pedal_last.bounds.width -
+                                       options.staff_space * 0.5;
+          const auto pedal_x_at = [&](Rational position) {
+            const std::size_t measure = *pedal_map.measure_index_at(position);
+            const MeasureLayout& layout =
+                system.measures[measure - system.first_measure];
+            const double fraction =
+                ((position - pedal_map.measure_start(measure)).to_double() /
+                 pedal_map.measure_length(measure).to_double());
+            return layout.bounds.x + layout.bounds.width * fraction;
+          };
+          if (!add_pedal_spans(
+                  builder, system, staff, system_pedals, pedal_start, pedal_end,
+                  pedal_left_x, pedal_right_x, pedal_x_at,
+                  system.first_measure == 0,
+                  "system-" + std::to_string(system.first_measure))) {
+            return fail(builder.error);
+          }
+        }
+        if (is_final_system && pickdown_width > 0.0) {
+          if (!add_pickdown_content(builder, system, staff, *voices,
+                                    *staff_index, measure_x, pickdown_width,
+                                    pickdown_content_inset_value)) {
+            return fail(builder.error);
+          }
         }
         system.staves.push_back(std::move(staff));
         ++stave_ordinal;

@@ -282,6 +282,12 @@ bool SelectionToolHandler::measure_delete_available() const {
          nullptr;
 }
 
+bool SelectionToolHandler::pickdown_clear_available() const {
+  const graphscore::Node* node = project_.find_node(layout_.node_id);
+  return node != nullptr && node->timeline() != nullptr &&
+         node->timeline()->pickdown_duration().has_value();
+}
+
 bool SelectionToolHandler::step_entry_cursor_live() const {
   if (!step_entry_cursor_.has_value()) {
     return false;
@@ -439,6 +445,7 @@ palette_interval(PaletteCommandId id) {
     case PaletteCommandId::kApplyBeamBreak:
     case PaletteCommandId::kApplyBeamJoin:
     case PaletteCommandId::kRemoveBeamOverride:
+    case PaletteCommandId::kClearPickdown:
       return true;
     default:
       return false;
@@ -798,6 +805,10 @@ bool SelectionToolHandler::palette_command_available(
                                                       *operation)
                  .available();
     }
+    case PaletteCommandId::kSetPickdownDuration:
+      return true;
+    case PaletteCommandId::kClearPickdown:
+      return pickdown_clear_available();
   }
   return false;
 }
@@ -1051,6 +1062,10 @@ std::string SelectionToolHandler::palette_command_unavailable_reason(
                                                       *operation)
           .unavailable_reason;
     }
+    case PaletteCommandId::kSetPickdownDuration:
+      return "";
+    case PaletteCommandId::kClearPickdown:
+      return "no pickdown to clear";
   }
   return "";
 }
@@ -1365,6 +1380,11 @@ bool SelectionToolHandler::run_palette_command(PaletteCommandId id) {
       return edit_selected_beam_override(
           graphscore::MarkingEdit::kRemove,
           graphscore::BeamOverride::Kind::kBreak);
+    case PaletteCommandId::kSetPickdownDuration:
+      request_pickdown_duration_entry();
+      return true;
+    case PaletteCommandId::kClearPickdown:
+      return clear_pickdown();
   }
   return false;
 }

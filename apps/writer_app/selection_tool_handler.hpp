@@ -112,6 +112,24 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   bool edit_selected_beam_override(graphscore::MarkingEdit        edit,
                                    graphscore::BeamOverride::Kind kind);
 
+  // ---- pickdown (M5-phase-31, palette-only) --------------------------------
+
+  // Toolkit-neutral parameter-entry handoff, exactly like the tuplet-ratio
+  // row: a platform dialog/AT observes this and calls apply_pickdown_duration.
+  void               request_pickdown_duration_entry();
+  [[nodiscard]] bool pickdown_duration_entry_requested() const noexcept;
+
+  // Sets the current editor node's (layout_.node_id) pickdown duration as one
+  // reversible SetPickdownCommand, refreshing layout transactionally. Requires
+  // a duration strictly greater than zero and strictly shorter than the final
+  // main measure; an invalid duration, a missing timeline, or a failed refresh
+  // is a no-op with a diagnostic and leaves project/history/layout atomic.
+  bool apply_pickdown_duration(graphscore::Rational duration);
+
+  // Clears the current editor node's pickdown as one reversible
+  // ClearPickdownCommand. A no-op with a diagnostic when no pickdown exists.
+  bool clear_pickdown();
+
   // Toolkit-neutral parameter-entry handoff established by the palette row.
   // A platform dialog/AT can observe this and call apply_tuplet_ratio().
   void               request_tuplet_ratio_entry();
@@ -587,6 +605,16 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // selection, including the sole-measure guard.
   [[nodiscard]] bool measure_delete_available() const;
 
+  // Exact clear-pickdown eligibility: the current editor node still owns a
+  // timeline carrying a pickdown (M5-phase-31).
+  [[nodiscard]] bool pickdown_clear_available() const;
+
+  // The kMeasureStructure invalidation for a pickdown set/clear: the final
+  // measure ordinal as both first_measure and last_measure, which invalidates
+  // only the final system(s) whose geometry the pickdown region extends.
+  [[nodiscard]] std::optional<graphscore::NotationInvalidation>
+  pickdown_invalidation() const;
+
   [[nodiscard]] bool tuplet_ratio_available(
       graphscore::TupletRatio ratio) const;
   [[nodiscard]] bool tuplet_remove_available() const;
@@ -707,8 +735,9 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // The nonvisual command-palette model (§11).
   bool        palette_open_ = false;
   std::string palette_filter_;
-  std::size_t palette_selected_index_       = 0;
-  bool        tuplet_ratio_entry_requested_ = false;
+  std::size_t palette_selected_index_            = 0;
+  bool        tuplet_ratio_entry_requested_      = false;
+  bool        pickdown_duration_entry_requested_ = false;
 
   // The app-owned composer diagnostic sink (§1, §8.5, §10): appended by
   // every rejected action's fallback, observable and resettable by tests.

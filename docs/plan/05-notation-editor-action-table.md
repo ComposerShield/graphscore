@@ -680,6 +680,34 @@ command, and availability is computed by constructing the same notation-layer
 command execution uses, so a row is enabled exactly when running it would
 succeed.
 
+### 10.5 Pickdown actions (M5-phase-31)
+
+The pickdown actions are chord-less command-palette rows. They consume no key
+and leave §7's binding table unchanged.
+
+- **Pickdown duration (node end)...**
+  (`PaletteCommandId::kSetPickdownDuration`) has an empty chord hint and is
+  always available as a request for parameter input. Running it calls
+  `request_pickdown_duration_entry()`; the platform presentation or
+  assistive-technology client then supplies a `Rational` duration to
+  `apply_pickdown_duration`. A valid duration is greater than zero and strictly
+  shorter than the final main-region measure. Applying it executes one
+  reversible `SetPickdownCommand` and refreshes the final measure/system through
+  one transactional measure-structure invalidation. The request row's
+  availability does not promise that applying the supplied value will succeed:
+  unusable history, a missing current-node timeline, an invalid duration or
+  tempo-lane result, and refresh or commit failure each reject the apply with a
+  diagnostic and no partial edit.
+- **Clear pickdown** (`PaletteCommandId::kClearPickdown`) has an empty chord
+  hint and executes one reversible `ClearPickdownCommand`. It is available only
+  when command history is usable and the current editor node has a timeline
+  carrying a pickdown. Otherwise it is disabled with `command history is
+  unavailable` or `no pickdown to clear`, as applicable.
+
+Both actions address the current editor node (`layout_.node_id`) rather than
+the committed `Selection`; neither requires a musical selection. They add no
+key binding.
+
 ## 11. Command palette (complete normative route)
 
 The command palette is the universal keyboard and accessibility route to every
@@ -703,15 +731,16 @@ action in this table, and it is what makes the numpad-only bindings
   crescendo/diminuendo, change hairpin to crescendo/diminuendo, remove
   hairpin, apply pedal span, remove pedal span, apply/remove tie,
   apply/remove slur, apply beam break, apply beam join, and remove beam
-  override. Every one of those
-  chord-less rows — the structural, tuplet, and marking style rows alike —
-  carries an **empty chord hint**: they are deliberately **not** bound to any
-  key chord (no row in §7 names them), so §7's `(chord, key)` space is
+  override; and M5-phase-31's two pickdown rows in §10.5 — request a node-end
+  pickdown duration and clear the current pickdown. Every one of those
+  chord-less rows — the structural, tuplet, marking-style, and pickdown rows
+  alike — carries an **empty chord hint**: they are deliberately **not** bound
+  to any key chord (no row in §7 names them), so §7's `(chord, key)` space is
   unchanged by their addition and §12's claim that this space is exhaustively
   enumerable still holds. Each row carries a stable **name**, its **chord
   hint** (empty for the chord-less accessible controls, structural actions,
-  and marking style actions), a one-line description, and a live
-  **availability** state.
+  tuplet actions, marking-style actions, and pickdown actions), a one-line
+  description, and a live **availability** state.
 - **Availability.** A row's availability is derived from the same precondition
   and fallback logic as its chord row, for a row that has one: "Cut" is
   available exactly when a valid `FullMeasureSet` or `ArbitraryRangeSet` is
@@ -729,8 +758,8 @@ action in this table, and it is what makes the numpad-only bindings
   palette never switches tools or performs a broader operation than the chord).
   A chord-less row performs its own action under its own precondition; like
   the clipboard and history rows of §7.3, the structural measure-editing,
-  tuplet, and marking style rows are ungated by tool, since their
-  precondition is a committed selection rather than an active tool.
+  tuplet, marking-style, and pickdown rows are ungated by tool. Their own
+  selection or current-node preconditions apply rather than the active tool.
 - **Search.** The filter matches the name and description, case-insensitively;
   filtering never changes an action's availability or chord hint.
 

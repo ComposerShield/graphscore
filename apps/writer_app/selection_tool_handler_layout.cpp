@@ -303,4 +303,24 @@ SelectionToolHandler::measure_structure_invalidation(
       first_measure};
 }
 
+// The kMeasureStructure invalidation for a pickdown set/clear (M5-phase-31):
+// the final measure ordinal as both first_measure and last_measure. The
+// pickdown region appends to the final system's geometry without changing any
+// main-region measure width, so invalidating from the last measure onward
+// rebuilds exactly the affected system(s) and nothing earlier.
+std::optional<graphscore::NotationInvalidation>
+SelectionToolHandler::pickdown_invalidation() const {
+  const graphscore::Node* node = project_.find_node(layout_.node_id);
+  if (node == nullptr || node->timeline() == nullptr) {
+    return std::nullopt;
+  }
+  const std::size_t count = node->timeline()->measures().measure_count();
+  if (count == 0) {
+    return std::nullopt;
+  }
+  return graphscore::NotationInvalidation{
+      graphscore::NotationInvalidationKind::kMeasureStructure, count - 1,
+      count - 1};
+}
+
 }  // namespace graphscore::writer_app

@@ -440,10 +440,11 @@ namespace {
 void add_span_segment(LayoutBuilder& builder, const NotationEntityId& id,
                       const NotationId& semantic, const SystemLayout& system,
                       NotationPoint from, NotationPoint to, double lane,
-                      const std::string& role, bool wedge, bool reverse) {
-  const std::string segment_role =
-      role + "/segment/system-" + std::to_string(system.first_measure);
-  const NotationId segment = make_id(id, segment_role);
+                      const std::string& role,
+                      const std::string& segment_suffix, bool wedge,
+                      bool reverse) {
+  const std::string segment_role = role + "/segment/" + segment_suffix;
+  const NotationId  segment      = make_id(id, segment_role);
   builder.output.commands.emplace_back(
       ClipCommand{make_id(segment.value, "clip/begin"), system.bounds, true});
   if (wedge) {
@@ -544,32 +545,23 @@ void add_span_segment(LayoutBuilder& builder, const NotationEntityId& id,
   }
 }
 
-[[nodiscard]] bool add_pedal_spans(LayoutBuilder&                builder,
-                                   const SystemLayout&           system,
-                                   const StaffSystemLayout&      staff,
-                                   const std::vector<PedalSpan>& spans) {
-  const MeasureMap& map   = builder.timeline.measures();
-  const Rational    start = map.measure_start(system.measures.front().ordinal);
-  const MeasureLayout& last = system.measures.back();
-  const Rational       end =
-      map.measure_start(last.ordinal) + map.measure_length(last.ordinal);
+[[nodiscard]] bool add_pedal_spans(
+    LayoutBuilder& builder, const SystemLayout& system,
+    const StaffSystemLayout& staff, const std::vector<PedalSpan>& spans,
+    Rational start, Rational end, double left_x, double right_x,
+    const std::function<double(Rational)>& x_at, bool emit_diagnostics,
+    const std::string& segment_suffix) {
   const double space = builder.options.staff_space;
   const auto   x_for = [&](Rational position) {
     if (position <= start) {
-      return system.measures.front().bounds.x + space * 0.5;
+      return left_x;
     }
     if (position >= end) {
-      return last.bounds.x + last.bounds.width - space * 0.5;
+      return right_x;
     }
-    const std::size_t    measure = *map.measure_index_at(position);
-    const MeasureLayout& layout =
-        system.measures[measure - system.first_measure];
-    const double fraction =
-        ((position - map.measure_start(measure)).to_double() /
-         map.measure_length(measure).to_double());
-    return layout.bounds.x + layout.bounds.width * fraction;
+    return x_at(position);
   };
-  if (system.first_measure == 0) {
+  if (emit_diagnostics) {
     for (const NotationDiagnostic& diagnostic :
          validate_pedal_spans(spans, builder.timeline.node_end())) {
       builder.output.diagnostics.push_back(
@@ -598,9 +590,8 @@ void add_span_segment(LayoutBuilder& builder, const NotationEntityId& id,
     const double y = staff.bounds.y + staff.bounds.height +
                      space * (7.0 + static_cast<double>(lane) * 1.6);
     const NotationId  semantic{span.id.to_string()};
-    const std::string role =
-        "pedal/segment/system-" + std::to_string(system.first_measure);
-    const NotationId segment = make_id(span.id, role);
+    const std::string role    = "pedal/segment/" + segment_suffix;
+    const NotationId  segment = make_id(span.id, role);
     builder.output.commands.emplace_back(
         ClipCommand{make_id(segment.value, "clip/begin"), system.bounds, true});
     if (span.start >= start) {

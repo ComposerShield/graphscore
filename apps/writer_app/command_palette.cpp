@@ -262,6 +262,13 @@ const std::vector<PaletteCommand> kInventory = [] {
   add(PaletteCommandId::kRemoveBeamOverride, "Remove beam override", "",
       "Remove the manual beam override on the selected exact event range");
 
+  // M5-phase-31 pickdown: a parameterized set route and a clear route,
+  // both chord-less and palette-only.
+  add(PaletteCommandId::kSetPickdownDuration, "Pickdown duration (node end)...",
+      "", "Request a node-end pickdown duration, then apply it to the node");
+  add(PaletteCommandId::kClearPickdown, "Clear pickdown", "",
+      "Clear the node's trailing pickdown region");
+
   return rows;
 }();
 

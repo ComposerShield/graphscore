@@ -78,13 +78,45 @@ void assign_single_measure_membership(
   }
 }
 
+// Assigns a stave-scoped pedal span's bucket membership (main measures and,
+// when the span starts or extends past the boundary, the pickdown bucket).
+// Shared by build_index and refresh_index_range so the two can never disagree.
+void assign_pedal_membership(
+    const MeasureMap& map, const PedalSpan& pedal,
+    std::vector<std::unordered_set<NotationEntityId>>& by_measure,
+    std::unordered_set<std::size_t>&                   membership_out) {
+  membership_out.clear();
+  const Rational boundary = map.total_length();
+  const auto     first    = map.measure_index_at(pedal.start);
+  if (!first.has_value()) {
+    if (pedal.start >= boundary) {
+      by_measure[map.measure_count()].insert(pedal.id);
+      membership_out.insert(map.measure_count());
+    }
+    return;
+  }
+  const std::size_t last =
+      map.measure_index_at(pedal.end).value_or(map.measure_count() - 1);
+  for (std::size_t measure = *first; measure <= last; ++measure) {
+    by_measure[measure].insert(pedal.id);
+    membership_out.insert(measure);
+  }
+  if (pedal.end > boundary) {
+    by_measure[map.measure_count()].insert(pedal.id);
+    membership_out.insert(map.measure_count());
+  }
+}
+
 void rebuild_voice_reference_index(IndexedVoice& indexed,
                                    std::size_t   measure_count) {
-  indexed.dynamics.by_measure.assign(measure_count, {});
-  indexed.hairpins.by_measure.assign(measure_count, {});
-  indexed.slurs.by_measure.assign(measure_count, {});
-  indexed.beam_overrides.by_measure.assign(measure_count, {});
-  indexed.grace_groups.by_measure.assign(measure_count, {});
+  // One bucket per real measure plus the trailing pickdown bucket (index
+  // measure_count); tail-anchored references land there via
+  // assign_single_measure_membership / assign_span_membership.
+  indexed.dynamics.by_measure.assign(measure_count + 1, {});
+  indexed.hairpins.by_measure.assign(measure_count + 1, {});
+  indexed.slurs.by_measure.assign(measure_count + 1, {});
+  indexed.beam_overrides.by_measure.assign(measure_count + 1, {});
+  indexed.grace_groups.by_measure.assign(measure_count + 1, {});
   for (auto& [id, entry] : indexed.dynamics.entries) {
     assign_single_measure_membership(indexed, entry.record.at_event, id,
                                      indexed.dynamics.by_measure,
@@ -119,22 +151,33 @@ void rebuild_voice_reference_index(IndexedVoice& indexed,
 }
 
 void index_voice(const VoiceContent& content, const MeasureMap& map,
-                 const GlyphMetrics&          metrics,
+                 Rational node_end, const GlyphMetrics& metrics,
                  const NotationLayoutOptions& options, IndexedVoice& indexed,
                  NotationLayoutWork* work) {
   indexed.measures.assign(map.measure_count(), {});
+  indexed.pickdown.clear();
   indexed.by_id.clear();
-  Rational onset;
+  const Rational boundary = map.total_length();
+  Rational       onset;
   for (std::size_t event_index = 0; event_index < content.events().size();
        ++event_index) {
     const VoiceEvent& event = content.events()[event_index];
     if (work != nullptr) {
       ++work->event_visits;
     }
+    const auto spacing = event_spacing(event, metrics, options);
     if (const auto measure = map.measure_index_at(onset)) {
       const IndexedEvent record{event_index, onset, *measure, event_id(event),
-                                event_spacing(event, metrics, options)};
+                                spacing};
       indexed.measures[*measure].push_back(record);
+      indexed.by_id.emplace(record.id, record);
+    } else if (onset >= boundary && onset < node_end) {
+      // Pickdown tail: a non-MeasureMap region bucket under the pickdown
+      // ordinal (one past the last measure), so the pickdown engraving pass
+      // reuses the same indexed-event machinery as the main region.
+      const IndexedEvent record{event_index, onset, map.measure_count(),
+                                event_id(event), spacing};
+      indexed.pickdown.push_back(record);
       indexed.by_id.emplace(record.id, record);
     }
     onset = onset + event_duration(event).resolved();
@@ -207,7 +250,10 @@ void index_voice(const VoiceContent& content, const MeasureMap& map,
                                       const GlyphMetrics&          metrics,
                                       const NotationLayoutOptions& options,
                                       NotationLayoutWork*          work) {
-  LayoutIndex result;
+  LayoutIndex    result;
+  const Rational node_end = node.timeline() == nullptr
+                                ? map.total_length()
+                                : node.timeline()->node_end();
   for (const Track& track : project.active_tracks()) {
     const TrackLane* lane = node.lane(track.id());
     if (lane == nullptr) {
@@ -220,8 +266,9 @@ void index_voice(const VoiceContent& content, const MeasureMap& map,
       for (std::uint8_t voice_index = Voice::kMin; voice_index <= Voice::kMax;
            ++voice_index) {
         if (voices != nullptr) {
-          index_voice(voices->voice(*Voice::create(voice_index)), map, metrics,
-                      options, staff.voices[voice_index - Voice::kMin], work);
+          index_voice(voices->voice(*Voice::create(voice_index)), map, node_end,
+                      metrics, options, staff.voices[voice_index - Voice::kMin],
+                      work);
         } else {
           staff.voices[voice_index - Voice::kMin].measures.resize(
               map.measure_count());
@@ -240,20 +287,10 @@ void index_voice(const VoiceContent& content, const MeasureMap& map,
           work->reference_visits += source.size();
         }
       }
-      staff.pedals.by_measure.assign(map.measure_count(), {});
+      staff.pedals.by_measure.assign(map.measure_count() + 1, {});
       for (auto& [id, entry] : staff.pedals.entries) {
-        const PedalSpan& pedal  = entry.record;
-        const auto       first  = map.measure_index_at(pedal.start);
-        const auto       at_end = map.measure_index_at(pedal.end);
-        if (!first.has_value()) {
-          continue;
-        }
-        const std::size_t last = at_end.value_or(map.measure_count() - 1);
-        entry.measure_membership.clear();
-        for (std::size_t measure = *first; measure <= last; ++measure) {
-          staff.pedals.by_measure[measure].insert(id);
-          entry.measure_membership.insert(measure);
-        }
+        assign_pedal_membership(map, entry.record, staff.pedals.by_measure,
+                                entry.measure_membership);
       }
       staff.last_pedal_revision = lane->capture_revision();
       result.staves.push_back(std::move(staff));
@@ -265,7 +302,7 @@ void index_voice(const VoiceContent& content, const MeasureMap& map,
 namespace {
 
 void refresh_voice_range(const VoiceContent& content, const MeasureMap& map,
-                         std::size_t first, std::size_t last,
+                         std::size_t first, std::size_t last, Rational node_end,
                          const GlyphMetrics&          metrics,
                          const NotationLayoutOptions& options,
                          IndexedVoice& indexed, NotationLayoutWork& work) {
@@ -302,6 +339,10 @@ void refresh_voice_range(const VoiceContent& content, const MeasureMap& map,
     }
     indexed.measures[measure].clear();
   }
+  // The pickdown bucket is retained unless the refreshed suffix reaches the
+  // final measure (handled below): an earlier-measure edit must not drop tail
+  // events, references, or event_count from a retained final system, and a
+  // non-final event-count change only shifts their event indices.
   Rational       onset = begin_onset;
   const Rational end   = map.measure_start(last) + map.measure_length(last);
   std::size_t    event_index = begin_index;
@@ -329,6 +370,41 @@ void refresh_voice_range(const VoiceContent& content, const MeasureMap& map,
             static_cast<std::ptrdiff_t>(event.event_index) + delta);
         indexed.by_id.insert_or_assign(event.id, event);
       }
+    }
+  }
+
+  const bool boundary_touched = (last + 1 == indexed.measures.size());
+  if (boundary_touched) {
+    // Rebuild the pickdown bucket by continuing the walk past the last main
+    // measure. Only needed when the refreshed suffix reaches the final
+    // measure, since that is the only case a context change or a final-measure
+    // content change can move an event across the main-region boundary.
+    for (const IndexedEvent& event : indexed.pickdown) {
+      indexed.by_id.erase(event.id);
+    }
+    indexed.pickdown.clear();
+    const Rational boundary = map.total_length();
+    while (event_index < content.events().size() && onset < node_end) {
+      const VoiceEvent& event = content.events()[event_index];
+      if (onset >= boundary) {
+        const IndexedEvent record{event_index, onset, map.measure_count(),
+                                  event_id(event),
+                                  event_spacing(event, metrics, options)};
+        indexed.pickdown.push_back(record);
+        indexed.by_id.insert_or_assign(record.id, record);
+      }
+      onset = onset + event_duration(event).resolved();
+      ++event_index;
+    }
+  } else if (new_count != old_count) {
+    // A non-final measure changed its event count: the retained tail onsets
+    // are unchanged (rhythm is preserved), only their event indices shift.
+    const auto delta = static_cast<std::ptrdiff_t>(new_count) -
+                       static_cast<std::ptrdiff_t>(old_count);
+    for (IndexedEvent& event : indexed.pickdown) {
+      event.event_index = static_cast<std::size_t>(
+          static_cast<std::ptrdiff_t>(event.event_index) + delta);
+      indexed.by_id.insert_or_assign(event.id, event);
     }
   }
 
@@ -774,6 +850,9 @@ void refresh_index_range(const Project& project, const Node& node,
                          std::size_t last, const GlyphMetrics& metrics,
                          const NotationLayoutOptions& options,
                          LayoutIndex& index, NotationLayoutWork& work) {
+  const Rational node_end = node.timeline() == nullptr
+                                ? map.total_length()
+                                : node.timeline()->node_end();
   for (const Track& track : project.active_tracks()) {
     const TrackLane* lane = node.lane(track.id());
     if (lane == nullptr) {
@@ -788,7 +867,7 @@ void refresh_index_range(const Project& project, const Node& node,
       for (std::uint8_t voice_index = Voice::kMin; voice_index <= Voice::kMax;
            ++voice_index) {
         refresh_voice_range(voices->voice(*Voice::create(voice_index)), map,
-                            first, last, metrics, options,
+                            first, last, node_end, metrics, options,
                             staff->voices[voice_index - Voice::kMin], work);
       }
       // Defect 4: for context-sensitive changes that shift measure boundaries,
@@ -801,18 +880,8 @@ void refresh_index_range(const Project& project, const Node& node,
           for (const std::size_t m : entry.measure_membership) {
             staff->pedals.by_measure[m].erase(id);
           }
-          entry.measure_membership.clear();
-          // Recompute new membership.
-          const PedalSpan& pedal = entry.record;
-          const auto       pf    = map.measure_index_at(pedal.start);
-          if (!pf.has_value())
-            continue;
-          const std::size_t pe =
-              map.measure_index_at(pedal.end).value_or(map.measure_count() - 1);
-          for (std::size_t m = *pf; m <= pe; ++m) {
-            staff->pedals.by_measure[m].insert(id);
-            entry.measure_membership.insert(m);
-          }
+          assign_pedal_membership(map, entry.record, staff->pedals.by_measure,
+                                  entry.measure_membership);
           ++work.reference_visits;
         }
       }
@@ -832,19 +901,10 @@ void refresh_index_range(const Project& project, const Node& node,
                              record, staff->pedals.next_order_key++, {}});
         }
         work.reference_visits += source.size();
-        staff->pedals.by_measure.assign(map.measure_count(), {});
+        staff->pedals.by_measure.assign(map.measure_count() + 1, {});
         for (auto& [id, entry] : staff->pedals.entries) {
-          const PedalSpan& pedal       = entry.record;
-          const auto       pedal_first = map.measure_index_at(pedal.start);
-          if (!pedal_first.has_value())
-            continue;
-          const std::size_t pedal_end_m =
-              map.measure_index_at(pedal.end).value_or(map.measure_count() - 1);
-          entry.measure_membership.clear();
-          for (std::size_t m = *pedal_first; m <= pedal_end_m; ++m) {
-            staff->pedals.by_measure[m].insert(id);
-            entry.measure_membership.insert(m);
-          }
+          assign_pedal_membership(map, entry.record, staff->pedals.by_measure,
+                                  entry.measure_membership);
         }
       } else {
         const auto& ops = *pedal_delta_opt;
@@ -863,17 +923,10 @@ void refresh_index_range(const Project& project, const Node& node,
                 staff->pedals.entries.erase(it);
               }
             } else if (d_op.op.kind == RefOpKind::kAdd) {
-              const auto& record = d_op.op.record;
-              const auto  pf     = map.measure_index_at(record.start);
+              const auto&                     record = d_op.op.record;
               std::unordered_set<std::size_t> membership;
-              if (pf.has_value()) {
-                const std::size_t pe = map.measure_index_at(record.end)
-                                           .value_or(map.measure_count() - 1);
-                for (std::size_t m = *pf; m <= pe; ++m) {
-                  staff->pedals.by_measure[m].insert(record.id);
-                  membership.insert(m);
-                }
-              }
+              assign_pedal_membership(map, record, staff->pedals.by_measure,
+                                      membership);
               staff->pedals.entries.emplace(
                   record.id, ReferenceFamily<PedalSpan>::Entry{
                                  record, staff->pedals.next_order_key++,

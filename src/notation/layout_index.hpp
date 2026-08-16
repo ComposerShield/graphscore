@@ -52,7 +52,13 @@ struct ReferenceFamily {
 };
 
 struct IndexedVoice {
-  std::vector<std::vector<IndexedEvent>>             measures;
+  std::vector<std::vector<IndexedEvent>> measures;
+  // Tail events whose onset falls inside the node's pickdown region
+  // ([boundary, node_end)), a non-MeasureMap layout region. Their
+  // IndexedEvent::measure is the pickdown ordinal: exactly one past the last
+  // real measure (== map.measure_count()), so it never names a MeasureMap
+  // measure. See pickdown_reference_ids / the pickdown engraving region.
+  std::vector<IndexedEvent>                          pickdown;
   std::unordered_map<NotationEntityId, IndexedEvent> by_id;
   ReferenceFamily<DynamicMarking>                    dynamics;
   ReferenceFamily<Hairpin>                           hairpins;
@@ -66,6 +72,34 @@ struct IndexedVoice {
   VoiceRevision                                                last_revision;
   VoiceValidationState                                         validation_state;
 };
+
+// The pickdown region's pseudo-measure ordinal: one past the last real
+// measure. ReferenceFamily::by_measure and IndexedEvent::measure use it to
+// bucket tail material without inventing a MeasureMap entry.
+[[nodiscard]] inline std::size_t pickdown_ordinal(std::size_t measure_count) {
+  return measure_count;
+}
+
+// The ids of a reference family whose membership includes the pickdown
+// bucket, in deterministic order-key order -- the pickdown counterpart of
+// system_reference_ids().
+template <typename Record>
+[[nodiscard]] std::vector<NotationEntityId> pickdown_reference_ids(
+    const ReferenceFamily<Record>& family, std::size_t measure_count) {
+  const std::size_t             ordinal = pickdown_ordinal(measure_count);
+  std::vector<NotationEntityId> result;
+  if (ordinal >= family.by_measure.size()) {
+    return result;
+  }
+  for (const NotationEntityId& id : family.by_measure[ordinal]) {
+    result.push_back(id);
+  }
+  std::ranges::sort(
+      result, [&](const NotationEntityId& a, const NotationEntityId& b) {
+        return family.entries.at(a).order_key < family.entries.at(b).order_key;
+      });
+  return result;
+}
 
 struct IndexedStaff {
   StaveId                     stave_id;

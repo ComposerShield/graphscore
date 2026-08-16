@@ -133,6 +133,12 @@ enum class PaletteCommandId : std::uint8_t {
   kApplyBeamBreak,
   kApplyBeamJoin,
   kRemoveBeamOverride,
+  // M5-phase-31: the chord-less pickdown rows. kSetPickdownDuration requests
+  // a parameterized node-end duration (handed off exactly like the tuplet
+  // ratio row), and kClearPickdown removes an existing pickdown. Neither is
+  // bound to a key chord.
+  kSetPickdownDuration,
+  kClearPickdown,
 };
 
 // One palette row: a stable name, its chord hint (empty for the chord-less

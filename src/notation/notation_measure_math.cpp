@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <graphscore/domain/measure_map.hpp>
+#include <graphscore/domain/node_timeline.hpp>
 #include <graphscore/notation/notation_layout.hpp>
 
 #include "layout_index.hpp"
@@ -198,6 +199,54 @@ namespace {
           : 0.0;
   return measures.measure_start(measure_index).to_double() +
          fraction * measures.measure_length(measure_index).to_double();
+}
+
+[[nodiscard]] double pickdown_content_inset(double staff_space) noexcept {
+  // One staff-space at each end matches the main region's own right-edge
+  // rhythmic inset and keeps a boundary-onset notehead (glyph extent 0.25 and
+  // hit-region half-width 0.6 staff-spaces) clear of the double boundary.
+  return staff_space;
+}
+
+[[nodiscard]] double pickdown_minimum_width(double staff_space) noexcept {
+  // Strictly wider than the double transition boundary (0.35 staff-spaces) and
+  // wide enough for a notehead column between the two content insets.
+  return staff_space * 3.0;
+}
+
+[[nodiscard]] double pickdown_region_width(const NodeTimeline& timeline,
+                                           double final_measure_width,
+                                           double staff_space) {
+  const std::optional<Rational> pickdown = timeline.pickdown_duration();
+  if (!pickdown.has_value() || !(final_measure_width > 0.0)) {
+    return 0.0;
+  }
+  const std::size_t count = timeline.measures().measure_count();
+  if (count == 0) {
+    return 0.0;
+  }
+  const Rational final_length = timeline.measures().measure_length(count - 1);
+  const double   proportional =
+      final_measure_width * pickdown->to_double() / final_length.to_double();
+  return std::max(proportional, pickdown_minimum_width(staff_space));
+}
+
+[[nodiscard]] double pickdown_position_x(const NodeTimeline& timeline,
+                                         Rational position, double boundary_x,
+                                         double pickdown_width,
+                                         double inset) noexcept {
+  const std::optional<Rational> pickdown = timeline.pickdown_duration();
+  if (!pickdown.has_value() || pickdown_width <= 0.0) {
+    return boundary_x;
+  }
+  const Rational boundary      = timeline.boundary_position();
+  const Rational offset        = position - boundary;
+  const double   fraction      = offset.to_double() / pickdown->to_double();
+  const double   content_width = pickdown_width - 2.0 * inset;
+  if (content_width <= 0.0) {
+    return boundary_x + pickdown_width * 0.5;
+  }
+  return boundary_x + inset + fraction * content_width;
 }
 
 }  // namespace graphscore

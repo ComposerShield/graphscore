@@ -354,6 +354,55 @@ target_compile_definitions(thorvg INTERFACE TVG_STATIC)
 target_include_directories(thorvg SYSTEM INTERFACE
   "${GRAPHSCORE_THORVG_INSTALL_DIR}/include/thorvg-1")
 
+# ADR 0002 §A2.1 step 4: the sanitizer presets pass -Db_sanitize=none to
+# ThorVG's Meson build (above), which makes the archive -fno-rtti and
+# -fno-exceptions. GraphScore's own ASan+UBSan preset instruments the
+# consuming translation unit with -fsanitize=undefined, whose vptr check
+# emits typeinfo references for every tvg::* type the consumer uses
+# virtually; a -fno-rtti archive defines none of those typeinfo symbols, so
+# the sanitized consumer link fails with undefined-symbol errors. Disable
+# only the vptr check for the translation units that consume this archive
+# (graphscore_rendering, its sole consumer under ADR 0003 §2.2), leaving ASan
+# and the rest of UBSan fully instrumented. This is the narrow
+# ABI-compatible consumer-side exception the no-RTTI boundary requires: it
+# changes nothing about what the archive itself contains, so the accepted ADR
+# (uninstrumented, no-RTTI/no-exception ThorVG) is preserved unchanged.
+#
+# TSan deliberately gets no such exception: thread sanitization makes no
+# RTTI/typeinfo demands, and -Db_sanitize=none already keeps ThorVG's
+# scheduler uninstrumented third-party code per §A2.1 step 2, so weakening it
+# here would be a regression with no cause.
+if (GRAPHSCORE_SANITIZER STREQUAL "ASAN_UBSAN")
+  target_compile_options(thorvg INTERFACE -fno-sanitize=vptr)
+endif()
+
+# Enforceable invariant, in the same target-property readback spirit as
+# ADR 0002 §4's HarfBuzz get_target_property check: the vptr-sanitizer
+# exception above is scoped to the ASan+UBSan preset only. It must be absent
+# from the interface under TSAN and NONE, so TSan or normal builds are never
+# silently weakened.
+get_target_property(GRAPHSCORE_THORVG_INTERFACE_COMPILE_OPTIONS
+  thorvg INTERFACE_COMPILE_OPTIONS)
+set(GRAPHSCORE_THORVG_VPTR_EXCEPTION FALSE)
+if ("-fno-sanitize=vptr" IN_LIST
+    GRAPHSCORE_THORVG_INTERFACE_COMPILE_OPTIONS)
+  set(GRAPHSCORE_THORVG_VPTR_EXCEPTION TRUE)
+endif()
+if (GRAPHSCORE_SANITIZER STREQUAL "ASAN_UBSAN")
+  if (NOT GRAPHSCORE_THORVG_VPTR_EXCEPTION)
+    message(FATAL_ERROR
+      "graphscore_rendering consumes a -fno-rtti ThorVG archive "
+      "(ADR 0002 §A2.1 step 4), so thorvg's interface must carry "
+      "-fno-sanitize=vptr under GRAPHSCORE_SANITIZER=ASAN_UBSAN; it does not.")
+  endif()
+elseif (GRAPHSCORE_THORVG_VPTR_EXCEPTION)
+  message(FATAL_ERROR
+    "thorvg's interface carries -fno-sanitize=vptr outside the ASAN_UBSAN "
+    "preset (GRAPHSCORE_SANITIZER='${GRAPHSCORE_SANITIZER}'); that would "
+    "weaken TSan or normal builds with no RTTI/typeinfo cause "
+    "(ADR 0002 §A2.1 step 4).")
+endif()
+
 add_dependencies(thorvg ThorVGBuild ThorVGBuild-verify_options)
 
 message(STATUS

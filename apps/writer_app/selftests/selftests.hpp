@@ -34,6 +34,7 @@ constexpr std::string_view kTupletEditTestFlag     = "--test-tuplet-edit";
 constexpr std::string_view kEventStyleEditTestFlag = "--test-event-style-edit";
 constexpr std::string_view kMarkingStyleEditTestFlag =
     "--test-marking-style-edit";
+constexpr std::string_view kPickdownEditTestFlag = "--test-pickdown-edit";
 
 [[nodiscard]] int selection_tool_test();
 [[nodiscard]] int selection_tool_shell_test();
@@ -55,6 +56,8 @@ constexpr std::string_view kMarkingStyleEditTestFlag =
 [[nodiscard]] int tuplet_edit_test();
 [[nodiscard]] int event_style_edit_test();
 [[nodiscard]] int marking_style_edit_test();
+
+[[nodiscard]] int pickdown_edit_test();
 
 // notehead_move_test is split across two translation units (its local-move
 // checks and its rollback-failure checks), so the four rollback checks below

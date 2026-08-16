@@ -341,8 +341,7 @@ int command_palette_test() {
   //     tie, slur, and beam-override rows present. ---------------------------
   {
     const auto& inventory = palette_inventory();
-    const int   count =
-        static_cast<int>(PaletteCommandId::kRemoveBeamOverride) + 1;
+    const int   count = static_cast<int>(PaletteCommandId::kClearPickdown) + 1;
     if (inventory.size() != static_cast<std::size_t>(count)) {
       std::fprintf(stderr,
                    "command-palette-test: inventory size %zu != %d "
@@ -376,6 +375,8 @@ int command_palette_test() {
           row.id == PaletteCommandId::kCreateTriplet ||
           row.id == PaletteCommandId::kTupletRatioEntry ||
           row.id == PaletteCommandId::kRemoveTuplet ||
+          row.id == PaletteCommandId::kSetPickdownDuration ||
+          row.id == PaletteCommandId::kClearPickdown ||
           row.id >= PaletteCommandId::kApplyAccent;
       if ((is_accessible || is_structural) != row.chord_hint.empty()) {
         std::fprintf(stderr,
