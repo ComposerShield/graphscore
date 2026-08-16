@@ -3,7 +3,14 @@
 add_executable(graphscore_domain_test
   articulation_test.cpp
   clef_lane_test.cpp
-  clipboard_command_test.cpp
+  clipboard/clipboard_clef_test.cpp
+  clipboard/clipboard_event_range_test.cpp
+  clipboard/clipboard_identity_marking_test.cpp
+  clipboard/clipboard_lifecycle_cut_test.cpp
+  clipboard/clipboard_mapping_test.cpp
+  clipboard/clipboard_measure_meter_test.cpp
+  clipboard/clipboard_pedal_span_test.cpp
+  clipboard/clipboard_test_support.cpp
   command/command_basic_history_test.cpp
   command/command_connector_event_8d_test.cpp
   command/command_connector_name_8c_test.cpp
