@@ -988,3 +988,23 @@ matching machine-readable additions are one
 `GRAPHSCORE_TEST_TARGETS` entry and
 `GRAPHSCORE_PUBLIC_EDGES_graphscore_notation_test = graphscore_notation`;
 the shared test-framework loop supplies `GTest::gtest_main`.
+
+---
+
+## Amendment (2026-08-16): Canvas Test Target
+
+This amendment is purely additive. It names the Layer 8 canvas unit-test
+target required by Milestone 06's viewport-transform implementation. It does
+not add or change any production dependency edge.
+
+| Test target | Internal edge | External edge |
+|---|---|---|
+| `graphscore_canvas_test` | `graphscore_canvas` | `GTest::gtest_main` |
+
+`graphscore_canvas_test` follows §2.3's existing rule: it links exactly the
+one production target under test plus the test framework, inherits
+`graphscore_canvas`'s permitted production edges only transitively, and adds
+no third-party or writer-backend edge. The matching machine-readable
+additions are one `GRAPHSCORE_TEST_TARGETS` entry and
+`GRAPHSCORE_PUBLIC_EDGES_graphscore_canvas_test = graphscore_canvas`; the
+shared test-framework loop supplies `GTest::gtest_main`.
