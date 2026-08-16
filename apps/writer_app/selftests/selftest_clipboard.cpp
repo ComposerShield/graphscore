@@ -11,7 +11,9 @@
 #include <graphscore/notation/graphscore_notation.hpp>
 #include <graphscore/writer_shell/graphscore_writer_shell.hpp>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
@@ -33,6 +35,112 @@ struct ClipboardFixture {
   graphscore::StaveId        stave_id;
   graphscore::NotationLayout layout;
 };
+
+struct ArbitraryClipboardFixture {
+  graphscore::Project        project;
+  graphscore::NodeId         node_id;
+  graphscore::TrackId        track_id;
+  graphscore::StaveId        treble_stave;
+  graphscore::StaveId        bass_stave;
+  graphscore::NotationLayout layout;
+};
+
+// A two-measure grand staff with eighth-note material in voice 1 on both
+// staves. The distinct second-measure material makes a partial-range paste at
+// its start directly observable.
+[[nodiscard]] std::optional<ArbitraryClipboardFixture>
+build_arbitrary_clipboard_fixture(const graphscore::GlyphMetrics& metrics) {
+  graphscore::Project project{graphscore::ProjectId::generate(),
+                              "Arbitrary Clipboard"};
+  const auto          midi_channel = graphscore::MidiChannel::create(0);
+  if (!midi_channel.has_value()) {
+    return std::nullopt;
+  }
+  const auto track_added = project.add_track(
+      "Piano", graphscore::StaffLayout::grand_staff(), *midi_channel);
+  if (!track_added.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::TrackId track_id = *track_added;
+  const graphscore::Track*  track    = project.find_active_track(track_id);
+  if (track == nullptr || track->layout().staves().size() != 2u) {
+    return std::nullopt;
+  }
+  const graphscore::StaveId treble_stave = track->layout().staves()[0].id;
+  const graphscore::StaveId bass_stave   = track->layout().staves()[1].id;
+
+  const graphscore::NodeId node_id = project.add_node("Node");
+  graphscore::Node*        node    = project.find_node(node_id);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  graphscore::TrackLane* lane = node->lane(track_id);
+  if (lane == nullptr) {
+    return std::nullopt;
+  }
+  lane->ensure_stave(treble_stave);
+  lane->ensure_stave(bass_stave);
+
+  const auto time_sig = graphscore::TimeSignature::create(4, 4);
+  if (!time_sig.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<graphscore::Measure> measures(
+      2, graphscore::Measure{*time_sig, graphscore::KeySignature{}});
+  auto timeline = graphscore::NodeTimeline::create(std::move(measures),
+                                                   track->layout().staves());
+  if (!timeline.has_value()) {
+    return std::nullopt;
+  }
+  node->set_timeline(std::move(*timeline));
+
+  const auto eighth =
+      graphscore::Duration::create(graphscore::NoteValue::kEighth, 0);
+  const auto voice = graphscore::Voice::create(1);
+  if (!eighth.has_value() || !voice.has_value()) {
+    return std::nullopt;
+  }
+  constexpr std::array<graphscore::Letter, 16> kTrebleLetters{
+      graphscore::Letter::kC, graphscore::Letter::kD, graphscore::Letter::kE,
+      graphscore::Letter::kF, graphscore::Letter::kG, graphscore::Letter::kA,
+      graphscore::Letter::kB, graphscore::Letter::kC, graphscore::Letter::kB,
+      graphscore::Letter::kB, graphscore::Letter::kB, graphscore::Letter::kB,
+      graphscore::Letter::kB, graphscore::Letter::kB, graphscore::Letter::kB,
+      graphscore::Letter::kB};
+  constexpr std::array<graphscore::Letter, 16> kBassLetters{
+      graphscore::Letter::kG, graphscore::Letter::kA, graphscore::Letter::kB,
+      graphscore::Letter::kC, graphscore::Letter::kD, graphscore::Letter::kE,
+      graphscore::Letter::kF, graphscore::Letter::kG, graphscore::Letter::kF,
+      graphscore::Letter::kF, graphscore::Letter::kF, graphscore::Letter::kF,
+      graphscore::Letter::kF, graphscore::Letter::kF, graphscore::Letter::kF,
+      graphscore::Letter::kF};
+  graphscore::VoiceContent& treble = lane->stave(treble_stave)->voice(*voice);
+  graphscore::VoiceContent& bass   = lane->stave(bass_stave)->voice(*voice);
+  for (std::size_t i = 0; i < kTrebleLetters.size(); ++i) {
+    const auto treble_pitch =
+        graphscore::SpelledPitch::create(kTrebleLetters[i], 4);
+    const auto bass_pitch =
+        graphscore::SpelledPitch::create(kBassLetters[i], 3);
+    if (!treble_pitch.has_value() || !bass_pitch.has_value() ||
+        !treble.append(graphscore::make_note(*treble_pitch, *eighth)).ok() ||
+        !bass.append(graphscore::make_note(*bass_pitch, *eighth)).ok()) {
+      return std::nullopt;
+    }
+  }
+  if (!treble.check_complete(node->timeline()->node_end()).ok() ||
+      !bass.check_complete(node->timeline()->node_end()).ok()) {
+    return std::nullopt;
+  }
+
+  graphscore::NotationLayoutResult layout_result =
+      graphscore::layout_notation(project, node_id, metrics);
+  if (!layout_result || !layout_result.layout.has_value()) {
+    return std::nullopt;
+  }
+  return ArbitraryClipboardFixture{
+      std::move(project), node_id,    track_id,
+      treble_stave,       bass_stave, std::move(*layout_result.layout)};
+}
 
 // A single-staff, two-measure node: voice 1 carries a whole C4 in measure 0
 // and a whole D4 in measure 1, normalized.
@@ -167,6 +275,62 @@ struct ClipboardFixture {
                                       chord->notes.front().pitch);
   }
   return std::nullopt;
+}
+
+[[nodiscard]] const graphscore::VoiceContent& arbitrary_voice_of(
+    const SelectionToolHandler&      handler,
+    const ArbitraryClipboardFixture& fixture, graphscore::StaveId stave) {
+  return handler.project()
+      .find_node(fixture.node_id)
+      ->lane(fixture.track_id)
+      ->stave(stave)
+      ->voice(voice_one());
+}
+
+[[nodiscard]] std::optional<graphscore::SpelledPitch> arbitrary_pitch_at(
+    const SelectionToolHandler&      handler,
+    const ArbitraryClipboardFixture& fixture, graphscore::StaveId stave,
+    graphscore::Rational position) {
+  const graphscore::VoiceContent& content =
+      arbitrary_voice_of(handler, fixture, stave);
+  const auto index = content.find_event_index_at(position);
+  if (!index.has_value()) {
+    return std::nullopt;
+  }
+  const graphscore::VoiceEvent& event = content.events()[*index];
+  if (const auto* note = std::get_if<graphscore::Note>(&event)) {
+    return note->pitch;
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] bool arbitrary_event_is_rest(
+    const SelectionToolHandler&      handler,
+    const ArbitraryClipboardFixture& fixture, graphscore::StaveId stave,
+    graphscore::Rational position) {
+  const graphscore::VoiceContent& content =
+      arbitrary_voice_of(handler, fixture, stave);
+  const auto index = content.find_event_index_at(position);
+  return index.has_value() &&
+         std::holds_alternative<graphscore::Rest>(content.events()[*index]);
+}
+
+// Returns the distinct notehead-column centers in score-time order. With one
+// voice on each aligned staff, equal-onset noteheads share an x coordinate.
+[[nodiscard]] std::vector<double> notehead_x_positions(
+    const graphscore::NotationLayout& layout) {
+  std::vector<double> positions;
+  for (const graphscore::HitRegion& region : layout.hit_regions) {
+    if (region.role == graphscore::HitRole::kNotehead) {
+      positions.push_back(region.bounds.x + region.bounds.width * 0.5);
+    }
+  }
+  std::ranges::sort(positions);
+  const auto unique_end = std::ranges::unique(
+      positions,
+      [](double lhs, double rhs) { return std::abs(lhs - rhs) < 1e-6; });
+  positions.erase(unique_end.begin(), unique_end.end());
+  return positions;
 }
 
 [[nodiscard]] bool select_range(SelectionToolHandler&   handler,
@@ -1432,6 +1596,185 @@ int clipboard_test() {
         handler.test_undo_stack_size() != undo_before ||
         handler.diagnostics().size() != diagnostics_before + 1u) {
       std::fprintf(stderr, "clipboard-test: stale end not atomic (19)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 20: a pointer drag across both staves creates a half-beat-
+  //     aligned arbitrary range. Copy is non-mutating; cut normalizes both
+  //     staves and has a deterministic caret; paste at an explicit caret maps
+  //     both staves and participates in undo/redo. ---------------------------
+  {
+    auto fixture = build_arbitrary_clipboard_fixture(metrics);
+    if (!fixture.has_value()) {
+      std::fprintf(stderr, "clipboard-test: fixture build failed (20)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler    handler(std::move(fixture->project),
+                                    std::move(fixture->layout), &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+
+    const std::vector<double> notehead_x =
+        notehead_x_positions(handler.layout());
+    const auto& staves = handler.layout().systems[0].staves;
+    if (notehead_x.size() < 6u || staves.size() != 2u) {
+      std::fprintf(stderr, "clipboard-test: drag geometry failed (20)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    graphscore::PointerEvent press{
+        notehead_x[1], staves[0].bounds.y + staves[0].bounds.height * 0.5,
+        graphscore::PointerButton::kPrimary, false};
+    graphscore::PointerEvent release{
+        notehead_x[5], staves[1].bounds.y + staves[1].bounds.height * 0.5,
+        graphscore::PointerButton::kPrimary, false};
+    shell.dispatch_test_pointer_event(0, press);
+    shell.dispatch_test_pointer_event(1, release);
+    shell.dispatch_test_pointer_event(2, release);
+
+    const auto& committed = handler.drag_state().committed_selection();
+    const auto* range =
+        committed.has_value()
+            ? std::get_if<graphscore::ArbitraryRangeSet>(&*committed)
+            : nullptr;
+    const graphscore::MusicalSpan expected_span{
+        graphscore::Rational(1) / graphscore::Rational(8),
+        graphscore::Rational(5) / graphscore::Rational(8)};
+    if (range == nullptr || range->items().size() != 2u ||
+        range->items()[0].span != expected_span ||
+        range->items()[1].span != expected_span ||
+        range->items()[0].stave != fixture->treble_stave ||
+        range->items()[1].stave != fixture->bass_stave) {
+      std::fprintf(stderr, "clipboard-test: pointer range wrong (20)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const graphscore::VoiceContent treble_before =
+        arbitrary_voice_of(handler, *fixture, fixture->treble_stave);
+    const graphscore::VoiceContent bass_before =
+        arbitrary_voice_of(handler, *fixture, fixture->bass_stave);
+    shell.dispatch_test_key_event(
+        primary_logical(graphscore::LogicalKey::kC, kPlatformPrimaryModifier));
+    if (!handler.clipboard_has_fragment() ||
+        handler.clipboard()->span_length() !=
+            graphscore::Rational(1) / graphscore::Rational(2) ||
+        handler.clipboard()->parts().size() != 2u ||
+        arbitrary_voice_of(handler, *fixture, fixture->treble_stave) !=
+            treble_before ||
+        arbitrary_voice_of(handler, *fixture, fixture->bass_stave) !=
+            bass_before) {
+      std::fprintf(stderr, "clipboard-test: partial copy failed (20)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    shell.dispatch_test_key_event(
+        primary_logical(graphscore::LogicalKey::kX, kPlatformPrimaryModifier));
+    const auto& cut_selection = handler.drag_state().committed_selection();
+    const auto* cut_caret =
+        cut_selection.has_value()
+            ? std::get_if<graphscore::InsertionCaretSet>(&*cut_selection)
+            : nullptr;
+    const graphscore::Rational node_end(2);
+    if (cut_caret == nullptr || cut_caret->items().size() != 1u ||
+        cut_caret->items()[0].stave != fixture->treble_stave ||
+        cut_caret->items()[0].voice != voice_one() ||
+        cut_caret->items()[0].position != expected_span.start ||
+        !arbitrary_event_is_rest(handler, *fixture, fixture->treble_stave,
+                                 expected_span.start) ||
+        !arbitrary_event_is_rest(handler, *fixture, fixture->bass_stave,
+                                 expected_span.start) ||
+        !arbitrary_voice_of(handler, *fixture, fixture->treble_stave)
+             .check_complete(node_end)
+             .ok() ||
+        !arbitrary_voice_of(handler, *fixture, fixture->bass_stave)
+             .check_complete(node_end)
+             .ok()) {
+      std::fprintf(stderr, "clipboard-test: partial cut failed (20)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto clipboard_after_cut = *handler.clipboard();
+    shell.dispatch_test_key_event(
+        primary_logical(graphscore::LogicalKey::kZ, kPlatformPrimaryModifier));
+    if (arbitrary_voice_of(handler, *fixture, fixture->treble_stave) !=
+            treble_before ||
+        arbitrary_voice_of(handler, *fixture, fixture->bass_stave) !=
+            bass_before ||
+        !handler.clipboard()->operator==(clipboard_after_cut)) {
+      std::fprintf(stderr, "clipboard-test: partial cut undo failed (20)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    graphscore::KeyEvent redo =
+        primary_logical(graphscore::LogicalKey::kZ, kPlatformPrimaryModifier);
+    redo.modifiers.shift = true;
+    shell.dispatch_test_key_event(redo);
+    if (!arbitrary_event_is_rest(handler, *fixture, fixture->treble_stave,
+                                 expected_span.start) ||
+        !arbitrary_event_is_rest(handler, *fixture, fixture->bass_stave,
+                                 expected_span.start)) {
+      std::fprintf(stderr, "clipboard-test: partial cut redo failed (20)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const auto paste_caret =
+        graphscore::InsertionCaretSet::create({graphscore::InsertionCaretItem{
+            fixture->node_id, fixture->track_id, fixture->treble_stave,
+            voice_one(), graphscore::Rational(1)}});
+    if (!paste_caret.has_value()) {
+      std::fprintf(stderr, "clipboard-test: paste caret failed (20)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.set_committed_selection(graphscore::Selection{*paste_caret});
+    const graphscore::VoiceContent treble_before_paste =
+        arbitrary_voice_of(handler, *fixture, fixture->treble_stave);
+    const graphscore::VoiceContent bass_before_paste =
+        arbitrary_voice_of(handler, *fixture, fixture->bass_stave);
+    shell.dispatch_test_key_event(
+        primary_logical(graphscore::LogicalKey::kV, kPlatformPrimaryModifier));
+    if (arbitrary_pitch_at(handler, *fixture, fixture->treble_stave,
+                           graphscore::Rational(1)) !=
+            spelled(graphscore::Letter::kD, 4) ||
+        arbitrary_pitch_at(handler, *fixture, fixture->bass_stave,
+                           graphscore::Rational(1)) !=
+            spelled(graphscore::Letter::kA, 3) ||
+        !arbitrary_voice_of(handler, *fixture, fixture->treble_stave)
+             .check_complete(node_end)
+             .ok() ||
+        !arbitrary_voice_of(handler, *fixture, fixture->bass_stave)
+             .check_complete(node_end)
+             .ok() ||
+        !handler.clipboard()->operator==(clipboard_after_cut)) {
+      std::fprintf(stderr, "clipboard-test: multi-staff paste failed (20)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_test_key_event(
+        primary_logical(graphscore::LogicalKey::kZ, kPlatformPrimaryModifier));
+    if (arbitrary_voice_of(handler, *fixture, fixture->treble_stave) !=
+            treble_before_paste ||
+        arbitrary_voice_of(handler, *fixture, fixture->bass_stave) !=
+            bass_before_paste) {
+      std::fprintf(stderr, "clipboard-test: partial paste undo failed (20)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_test_key_event(redo);
+    if (arbitrary_pitch_at(handler, *fixture, fixture->treble_stave,
+                           graphscore::Rational(1)) !=
+            spelled(graphscore::Letter::kD, 4) ||
+        arbitrary_pitch_at(handler, *fixture, fixture->bass_stave,
+                           graphscore::Rational(1)) !=
+            spelled(graphscore::Letter::kA, 3)) {
+      std::fprintf(stderr, "clipboard-test: partial paste redo failed (20)\n");
       shell.set_input_handler(nullptr);
       return 1;
     }
