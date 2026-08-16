@@ -42,6 +42,8 @@ struct PointerEvent {
   double        x      = 0.0;
   double        y      = 0.0;
   PointerButton button = PointerButton::kPrimary;
+  // True while Shift requests a complete-measure selection gesture.
+  bool measure_selection = false;
 };
 
 // Platform-neutral physical key identity. M5-phase-27's action table

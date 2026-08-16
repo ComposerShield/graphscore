@@ -80,6 +80,16 @@ struct NotationEditCommandResult {
 [[nodiscard]] NotationEditCommandResult make_slur_edit_command(
     const Project& project, const Selection& selection, MarkingEdit edit);
 
+// Applies a manual break/join to, or removes the manual override from, an
+// exact range of at least two complete contiguous beamable events on one live
+// staff and voice. Applying the opposite kind replaces the exact-range
+// override in one reversible command while preserving its identity. Removal
+// is range-based as well; beam overrides deliberately have no marking
+// selection or hit geometry.
+[[nodiscard]] NotationEditCommandResult make_beam_override_edit_command(
+    const Project& project, const Selection& selection, MarkingEdit edit,
+    BeamOverride::Kind kind);
+
 // A conventional tuplet number omits M when M is the greatest power of two
 // strictly below N (3:2, 5:4, 7:4, 9:8, ...). This is the standard simple
 // subdivision family; every other ratio is printed explicitly as N:M.

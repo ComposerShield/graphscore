@@ -88,7 +88,9 @@ class FailingStyleInverseCommand final : public graphscore::Command {
 // stave is normalized because stave-scoped pedal commands require complete
 // rhythm in every voice of the addressed stave.
 [[nodiscard]] std::optional<MarkingFixture> build_fixture(
-    const graphscore::GlyphMetrics& metrics) {
+    const graphscore::GlyphMetrics& metrics,
+    graphscore::NoteValue           value = graphscore::NoteValue::kQuarter,
+    int                             event_count = 8) {
   graphscore::Project project{graphscore::ProjectId::generate(), "Markings"};
   const auto          channel = graphscore::MidiChannel::create(0);
   if (!channel.has_value())
@@ -113,9 +115,8 @@ class FailingStyleInverseCommand final : public graphscore::Command {
   if (!timeline.has_value())
     return std::nullopt;
   project.find_node(node)->set_timeline(std::move(*timeline));
-  const auto voice = graphscore::Voice::create(1);
-  const auto duration =
-      graphscore::Duration::create(graphscore::NoteValue::kQuarter, 0);
+  const auto voice    = graphscore::Voice::create(1);
+  const auto duration = graphscore::Duration::create(value, 0);
   const auto pitch =
       graphscore::SpelledPitch::create(graphscore::Letter::kC, 4);
   if (!voice.has_value() || !duration.has_value() || !pitch.has_value())
@@ -124,7 +125,7 @@ class FailingStyleInverseCommand final : public graphscore::Command {
       project.find_node(node)->timeline()->node_end();
   std::vector<graphscore::NotationEntityId> events;
   auto& content = lane->stave(stave)->voice(*voice);
-  for (int index = 0; index < 8; ++index) {
+  for (int index = 0; index < event_count; ++index) {
     graphscore::Note note = graphscore::make_note(*pitch, *duration);
     events.push_back(note.id);
     if (!content.append(std::move(note)).ok())
@@ -222,7 +223,8 @@ enum class ApplyRoute {
   kHairpin,
   kPedalSpan,
   kTie,
-  kSlur
+  kSlur,
+  kBeam
 };
 
 [[nodiscard]] bool run_apply_route(SelectionToolHandler& handler,
@@ -262,6 +264,10 @@ enum class ApplyRoute {
       handler.set_committed_selection(
           range_selection(fixture, q(0, 1), q(1, 2)));
       return handler.run_palette_command(PaletteCommandId::kApplySlur);
+    case ApplyRoute::kBeam:
+      handler.set_committed_selection(
+          range_selection(fixture, q(0, 1), q(1, 4)));
+      return handler.run_palette_command(PaletteCommandId::kApplyBeamBreak);
   }
   return false;
 }
@@ -280,6 +286,8 @@ enum class ApplyRoute {
     state += "h" + std::to_string(static_cast<int>(hairpin.direction));
   for (const auto& slur : voice->slurs())
     state += "s" + slur.id.to_string();
+  for (const auto& beam : voice->beam_overrides())
+    state += "b" + std::to_string(static_cast<int>(beam.kind));
   if (const auto* note =
           std::get_if<graphscore::Note>(&voice->events().front());
       note != nullptr && note->tied_to_next) {
@@ -295,7 +303,10 @@ enum class ApplyRoute {
     const graphscore::GlyphMetrics& metrics, graphscore::WriterShell& shell,
     ApplyRoute route) {
   {
-    auto undo_fixture = build_fixture(metrics);
+    auto undo_fixture =
+        route == ApplyRoute::kBeam
+            ? build_fixture(metrics, graphscore::NoteValue::kEighth, 16)
+            : build_fixture(metrics);
     if (!undo_fixture.has_value())
       return 1;
     SelectionToolHandler undo(std::move(undo_fixture->project),
@@ -335,7 +346,10 @@ enum class ApplyRoute {
     }
   }
   {
-    auto redo_fixture = build_fixture(metrics);
+    auto redo_fixture =
+        route == ApplyRoute::kBeam
+            ? build_fixture(metrics, graphscore::NoteValue::kEighth, 16)
+            : build_fixture(metrics);
     if (!redo_fixture.has_value())
       return 1;
     SelectionToolHandler redo(std::move(redo_fixture->project),
@@ -662,11 +676,200 @@ int marking_style_edit_test() {
     }
   }
 
+  // Beam overrides are range-only: apply break/join replaces in place with a
+  // stable identity, removal matches the same exact range, and every operation
+  // preserves that range through one-step undo/redo.
+  {
+    auto fixture = build_fixture(metrics, graphscore::NoteValue::kEighth, 16);
+    if (!fixture.has_value())
+      return 1;
+    SelectionToolHandler handler(std::move(fixture->project),
+                                 std::move(fixture->layout), &shell);
+    prepare(handler, metrics);
+    const auto selected = range_selection(*fixture, q(0, 1), q(1, 4));
+    handler.set_committed_selection(selected);
+    const std::size_t initial_depth = handler.test_undo_stack_size();
+    if (!handler.palette_command_available(PaletteCommandId::kApplyBeamBreak) ||
+        !handler.run_palette_command(PaletteCommandId::kApplyBeamBreak) ||
+        content(handler, *fixture)->beam_overrides().size() != 1u ||
+        content(handler, *fixture)->beam_overrides().front().events !=
+            std::vector<graphscore::NotationEntityId>{fixture->events[0],
+                                                      fixture->events[1]} ||
+        handler.drag_state().committed_selection() != selected ||
+        handler.test_undo_stack_size() != initial_depth + 1u ||
+        !layout_matches_fresh(handler, *fixture, metrics)) {
+      std::fprintf(stderr,
+                   "marking-style-edit-test: apply beam break failed\n");
+      return 1;
+    }
+    const auto stable_id =
+        content(handler, *fixture)->beam_overrides().front().id;
+    if (handler.palette_command_available(PaletteCommandId::kApplyBeamBreak) ||
+        handler.palette_command_unavailable_reason(
+            PaletteCommandId::kApplyBeamBreak) !=
+            "beam break is already applied to this exact range" ||
+        !handler.palette_command_available(PaletteCommandId::kApplyBeamJoin) ||
+        !handler.run_palette_command(PaletteCommandId::kApplyBeamJoin) ||
+        handler.test_undo_stack_size() != initial_depth + 2u ||
+        content(handler, *fixture)->beam_overrides().size() != 1u ||
+        content(handler, *fixture)->beam_overrides().front().id != stable_id ||
+        content(handler, *fixture)->beam_overrides().front().kind !=
+            graphscore::BeamOverride::Kind::kJoin ||
+        handler.drag_state().committed_selection() != selected ||
+        !handler.test_undo() ||
+        content(handler, *fixture)->beam_overrides().front().kind !=
+            graphscore::BeamOverride::Kind::kBreak ||
+        handler.drag_state().committed_selection() != selected ||
+        !handler.test_redo() ||
+        content(handler, *fixture)->beam_overrides().front().kind !=
+            graphscore::BeamOverride::Kind::kJoin ||
+        handler.drag_state().committed_selection() != selected) {
+      std::fprintf(stderr, "marking-style-edit-test: replace beam failed\n");
+      return 1;
+    }
+    if (!handler.palette_command_available(
+            PaletteCommandId::kRemoveBeamOverride) ||
+        !handler.run_palette_command(PaletteCommandId::kRemoveBeamOverride) ||
+        !content(handler, *fixture)->beam_overrides().empty() ||
+        handler.drag_state().committed_selection() != selected ||
+        !handler.test_undo() ||
+        content(handler, *fixture)->beam_overrides().front().id != stable_id ||
+        handler.drag_state().committed_selection() != selected ||
+        !handler.test_redo() ||
+        !content(handler, *fixture)->beam_overrides().empty() ||
+        handler.drag_state().committed_selection() != selected ||
+        handler.palette_command_available(
+            PaletteCommandId::kRemoveBeamOverride) ||
+        handler.palette_command_unavailable_reason(
+            PaletteCommandId::kRemoveBeamOverride) !=
+            "no beam override exists on this exact range") {
+      std::fprintf(stderr, "marking-style-edit-test: remove beam failed\n");
+      return 1;
+    }
+  }
+
+  // Palette inventory/search exposes exactly the three chord-less beam rows,
+  // and their selection precondition is ungated by the active tool.
+  {
+    auto fixture = build_fixture(metrics, graphscore::NoteValue::kEighth, 16);
+    if (!fixture.has_value())
+      return 1;
+    SelectionToolHandler handler(std::move(fixture->project),
+                                 std::move(fixture->layout), &shell);
+    prepare(handler, metrics);
+    const auto selected = range_selection(*fixture, q(0, 1), q(1, 4));
+    handler.set_active_tool(graphscore::ActiveTool::kNoteEntry);
+    handler.set_committed_selection(selected);
+    handler.command_palette_set_filter("BEAM");
+    const auto rows = handler.command_palette_filtered();
+    if (rows.size() != 3u ||
+        std::ranges::any_of(rows,
+                            [](const PaletteCommand& row) {
+                              return !row.chord_hint.empty();
+                            }) ||
+        !handler.palette_command_available(PaletteCommandId::kApplyBeamBreak) ||
+        !handler.run_palette_command(PaletteCommandId::kApplyBeamBreak)) {
+      std::fprintf(stderr, "marking-style-edit-test: beam palette inventory\n");
+      return 1;
+    }
+  }
+
+  // A failed beam-edit publication rolls the provisional command back and
+  // preserves project, retained geometry, range selection, and history.
+  {
+    auto fixture = build_fixture(metrics, graphscore::NoteValue::kEighth, 16);
+    if (!fixture.has_value())
+      return 1;
+    const auto exact = graphscore::make_beam_override(
+        graphscore::BeamOverride::Kind::kJoin,
+        {fixture->events[0], fixture->events[1]});
+    const auto overlapping = graphscore::make_beam_override(
+        graphscore::BeamOverride::Kind::kJoin,
+        {fixture->events[0], fixture->events[1], fixture->events[2]});
+    auto* initial_stave = fixture->project.find_node(fixture->node)
+                              ->lane(fixture->track)
+                              ->stave(fixture->stave);
+    if (!initial_stave->voice(fixture->voice).add_beam_override(exact).ok() ||
+        !initial_stave->voice(fixture->voice)
+             .add_beam_override(overlapping)
+             .ok()) {
+      std::fprintf(stderr, "marking-style-edit-test: beam rollback setup\n");
+      return 1;
+    }
+    auto initial_layout =
+        graphscore::layout_notation(fixture->project, fixture->node, metrics);
+    if (!initial_layout.layout.has_value())
+      return 1;
+    fixture->layout = std::move(*initial_layout.layout);
+    SelectionToolHandler handler(std::move(fixture->project),
+                                 std::move(fixture->layout), &shell);
+    handler.set_metrics(&metrics);
+    handler.warm_layout_cache();
+    handler.set_surface_publisher([](const graphscore::NotationLayout&) {
+      return graphscore::ShellResult{
+          graphscore::ShellError::kRenderingSetupFailed,
+          "injected beam publication failure"};
+    });
+    const auto selected = range_selection(*fixture, q(0, 1), q(1, 4));
+    handler.set_committed_selection(selected);
+    const auto original_layout  = handler.layout();
+    const auto original_surface = shell.test_snapshot_notation_surface();
+    if (handler.run_palette_command(PaletteCommandId::kApplyBeamBreak) ||
+        content(handler, *fixture)->beam_overrides() !=
+            std::vector<graphscore::BeamOverride>{exact, overlapping} ||
+        handler.layout() != original_layout ||
+        shell.test_snapshot_notation_surface() != original_surface ||
+        handler.drag_state().committed_selection() != selected ||
+        handler.test_undo_stack_size() != 0u ||
+        handler.test_redo_stack_size() != 0u ||
+        handler.take_diagnostics() !=
+            std::vector<std::string>{"beam override: layout refresh failed"}) {
+      std::fprintf(stderr, "marking-style-edit-test: beam rollback failed\n");
+      return 1;
+    }
+  }
+
+  // Non-beamable and absent targets report the same stable reason through
+  // availability and execution, with no history or selection mutation.
+  {
+    auto fixture = build_fixture(metrics);
+    if (!fixture.has_value())
+      return 1;
+    SelectionToolHandler handler(std::move(fixture->project),
+                                 std::move(fixture->layout), &shell);
+    prepare(handler, metrics);
+    const auto selected = range_selection(*fixture, q(0, 1), q(1, 2));
+    handler.set_committed_selection(selected);
+    if (handler.palette_command_available(PaletteCommandId::kApplyBeamJoin) ||
+        handler.palette_command_unavailable_reason(
+            PaletteCommandId::kApplyBeamJoin) !=
+            "every selected event must be beamable" ||
+        handler.run_palette_command(PaletteCommandId::kApplyBeamJoin) ||
+        handler.take_diagnostics() !=
+            std::vector<std::string>{
+                "beam override: every selected event must be beamable"} ||
+        handler.test_undo_stack_size() != 0u ||
+        handler.drag_state().committed_selection() != selected) {
+      std::fprintf(stderr, "marking-style-edit-test: beam invalid feedback\n");
+      return 1;
+    }
+    handler.set_committed_selection(std::nullopt);
+    if (handler.run_palette_command(PaletteCommandId::kApplyBeamBreak) ||
+        handler.take_diagnostics() !=
+            std::vector<std::string>{
+                "beam override: requires an exact range of complete events on "
+                "one live staff and voice"}) {
+      std::fprintf(stderr, "marking-style-edit-test: absent beam target\n");
+      return 1;
+    }
+  }
+
   // Undo and redo publication compensation bypasses a failing normal inverse
   // on every marking command this phase routes through the palette.
   for (const ApplyRoute route :
        {ApplyRoute::kDynamic, ApplyRoute::kChangeDynamic, ApplyRoute::kHairpin,
-        ApplyRoute::kPedalSpan, ApplyRoute::kTie, ApplyRoute::kSlur}) {
+        ApplyRoute::kPedalSpan, ApplyRoute::kTie, ApplyRoute::kSlur,
+        ApplyRoute::kBeam}) {
     if (check_publication_compensation(metrics, shell, route) != 0)
       return 1;
   }

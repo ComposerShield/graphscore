@@ -510,6 +510,43 @@ TEST(CommandTest, AddBeamOverrideNonAdjacentRejected) {
   EXPECT_EQ(voice->beam_overrides().size(), 0u);
 }
 
+TEST(CommandTest, ReplaceBeamOverridePreservesOrderAndRoundTrips) {
+  auto          fx   = make_notation_setup();
+  Node*         node = fx.project.find_node(fx.node_id);
+  VoiceContent* voice =
+      &node->lane(fx.track_id)->stave(fx.stave_id)->voice(*Voice::create(1));
+
+  ASSERT_TRUE(voice->append(make_note(pitch_c4(), eighth())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_d4(), eighth())).ok());
+  ASSERT_TRUE(voice->append(make_note(pitch_e4(), eighth())).ok());
+  ASSERT_TRUE(voice->normalize(fx.node_end).ok());
+  const std::vector<NotationEntityId> events = {event_id(voice->events()[0]),
+                                                event_id(voice->events()[1]),
+                                                event_id(voice->events()[2])};
+  const BeamOverride                  first =
+      make_beam_override(BeamOverride::Kind::kJoin, {events[0], events[1]});
+  const BeamOverride second =
+      make_beam_override(BeamOverride::Kind::kJoin, events);
+  ASSERT_TRUE(voice->add_beam_override(first).ok());
+  ASSERT_TRUE(voice->add_beam_override(second).ok());
+
+  const BeamOverride replacement{
+      first.id, BeamOverride::Kind::kBreak, {events[0], events[1]}};
+  auto cmd = std::make_unique<ReplaceBeamOverrideCommand>(
+      fx.node_id, fx.track_id, fx.stave_id, *Voice::create(1), first.id,
+      replacement);
+
+  ASSERT_TRUE(cmd->execute(fx.project).ok());
+  EXPECT_EQ(voice->beam_overrides(),
+            (std::vector<BeamOverride>{replacement, second}));
+  ASSERT_TRUE(cmd->undo(fx.project).ok());
+  EXPECT_EQ(voice->beam_overrides(),
+            (std::vector<BeamOverride>{first, second}));
+  ASSERT_TRUE(cmd->redo(fx.project).ok());
+  EXPECT_EQ(voice->beam_overrides(),
+            (std::vector<BeamOverride>{replacement, second}));
+}
+
 TEST(CommandTest, RemoveBeamOverrideMissingIdRejected) {
   auto          fx   = make_notation_setup();
   Node*         node = fx.project.find_node(fx.node_id);

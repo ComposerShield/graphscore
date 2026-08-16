@@ -247,6 +247,13 @@ class Project;
 [[nodiscard]] std::optional<Selection> resolve_measure_selection_at(
     const Project& project, const NotationLayout& layout, NotationPoint point);
 
+// Resolves two staff-measure hit points on the same staff to the inclusive,
+// contiguous measure range between them. This is measure-aligned selection
+// only: neither endpoint is interpreted as an arbitrary musical position.
+[[nodiscard]] std::optional<Selection> resolve_measure_range_selection(
+    const Project& project, const NotationLayout& layout, NotationPoint anchor,
+    NotationPoint focus);
+
 // One (track, stave) scope a caller chooses to extend a measure selection
 // onto.  Both fields name GraphScore-owned types; no platform or
 // third-party type crosses this boundary.

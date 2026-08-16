@@ -60,6 +60,7 @@ using graphscore::Note;
 using graphscore::NoteValue;
 using graphscore::PasteAnchor;
 using graphscore::PasteFragmentCommand;
+using graphscore::PasteScope;
 using graphscore::PedalSpan;
 using graphscore::Project;
 using graphscore::ProjectId;
@@ -3185,6 +3186,165 @@ TEST(ClipboardCommandTest, CompleteMeasureExtractPasteAllVoicesExactLifecycle) {
   ASSERT_TRUE(command.redo(fx.project).ok());
   EXPECT_TRUE(fx.lane_of(fx.track_a) == source_before);
   EXPECT_TRUE(fx.lane_of(fx.track_b) == destination_after);
+}
+
+TEST(ClipboardCommandTest,
+     ContiguousMeasuresPasteToExactExplicitScopesAndUndoRedo) {
+  Fixture fx;
+  fx.assign(fx.track_a, fx.stave_a_treble, kVoice1,
+            build_voice({make_note(pitch(Letter::kC), whole()),
+                         make_note(pitch(Letter::kD), whole()),
+                         make_note(pitch(Letter::kE), whole()),
+                         make_note(pitch(Letter::kF), whole())}));
+  fx.assign(fx.track_b, fx.stave_b, kVoice1,
+            build_voice({make_note(pitch(Letter::kG), whole()),
+                         make_note(pitch(Letter::kA), whole()),
+                         make_note(pitch(Letter::kB), whole()),
+                         make_note(pitch(Letter::kC, 5), whole())}));
+  fx.assign(fx.track_a, fx.stave_a_bass, kVoice1,
+            build_voice({make_note(pitch(Letter::kF, 3), whole()),
+                         make_note(pitch(Letter::kF, 3), whole()),
+                         make_note(pitch(Letter::kF, 3), whole()),
+                         make_note(pitch(Letter::kF, 3), whole())}));
+  for (const Voice voice : {kVoice2, kVoice3, kVoice4}) {
+    fx.assign(fx.track_a, fx.stave_a_treble, voice, rest_filled(fx.node_end()));
+    fx.assign(fx.track_a, fx.stave_a_bass, voice, rest_filled(fx.node_end()));
+    fx.assign(fx.track_b, fx.stave_b, voice, rest_filled(fx.node_end()));
+  }
+
+  const Selection source = *FullMeasureSet::create(
+      {FullMeasureItem{fx.node_id, fx.track_a, fx.stave_a_treble, 0, 2},
+       FullMeasureItem{fx.node_id, fx.track_b, fx.stave_b, 0, 2}});
+  const FragmentExtraction extraction = extract_fragment(fx.project, source);
+  ASSERT_TRUE(extraction.status.ok());
+  ASSERT_TRUE(extraction.fragment.has_value());
+  const TrackLane before_a = fx.lane_of(fx.track_a);
+  const TrackLane before_b = fx.lane_of(fx.track_b);
+
+  const PasteAnchor    destination{fx.node_id,
+                                fx.track_b,
+                                fx.stave_b,
+                                Rational(2),
+                                   {PasteScope{fx.track_b, fx.stave_b},
+                                    PasteScope{fx.track_a, fx.stave_a_bass}}};
+  PasteFragmentCommand command(*extraction.fragment, destination);
+  ASSERT_TRUE(command.execute(fx.project).ok());
+  const TrackLane after_a  = fx.lane_of(fx.track_a);
+  const TrackLane after_b  = fx.lane_of(fx.track_b);
+  const auto&     b_events = after_b.stave(fx.stave_b)->voice(kVoice1).events();
+  const auto&     bass_events =
+      after_a.stave(fx.stave_a_bass)->voice(kVoice1).events();
+  EXPECT_EQ(std::get<Note>(b_events[2]).pitch, pitch(Letter::kC));
+  EXPECT_EQ(std::get<Note>(b_events[3]).pitch, pitch(Letter::kD));
+  EXPECT_EQ(std::get<Note>(bass_events[2]).pitch, pitch(Letter::kG));
+  EXPECT_EQ(std::get<Note>(bass_events[3]).pitch, pitch(Letter::kA));
+
+  ASSERT_TRUE(command.undo(fx.project).ok());
+  EXPECT_TRUE(fx.lane_of(fx.track_a) == before_a);
+  EXPECT_TRUE(fx.lane_of(fx.track_b) == before_b);
+  ASSERT_TRUE(command.redo(fx.project).ok());
+  EXPECT_TRUE(fx.lane_of(fx.track_a) == after_a);
+  EXPECT_TRUE(fx.lane_of(fx.track_b) == after_b);
+}
+
+TEST(ClipboardCommandTest,
+     ExplicitScopeMismatchStaleScopeAndOverflowRejectAtomically) {
+  Fixture fx;
+  fx.assign_and_complete(fx.track_a, fx.stave_a_treble, kVoice1,
+                         {make_note(pitch(Letter::kC), whole()),
+                          make_note(pitch(Letter::kD), whole())});
+  const Selection source = *FullMeasureSet::create(
+      {FullMeasureItem{fx.node_id, fx.track_a, fx.stave_a_treble, 0, 2}});
+  const FragmentExtraction extraction = extract_fragment(fx.project, source);
+  ASSERT_TRUE(extraction.status.ok());
+  ASSERT_TRUE(extraction.fragment.has_value());
+  const TrackLane before_a = fx.lane_of(fx.track_a);
+  const TrackLane before_b = fx.lane_of(fx.track_b);
+
+  const std::vector<PasteAnchor> rejected = {
+      PasteAnchor{fx.node_id,
+                  fx.track_b,
+                  fx.stave_b,
+                  Rational(0),
+                  {PasteScope{fx.track_b, fx.stave_b},
+                   PasteScope{fx.track_a, fx.stave_a_bass}}},
+      PasteAnchor{fx.node_id,
+                  fx.track_b,
+                  fx.stave_b,
+                  Rational(0),
+                  {PasteScope{fx.track_b, StaveId::generate()}}},
+      PasteAnchor{fx.node_id,
+                  fx.track_b,
+                  fx.stave_b,
+                  Rational(3),
+                  {PasteScope{fx.track_b, fx.stave_b}}}};
+  for (const PasteAnchor& anchor : rejected) {
+    PasteFragmentCommand command(*extraction.fragment, anchor);
+    EXPECT_EQ(command.execute(fx.project).code(), ResultCode::kInvalidArgument);
+    EXPECT_TRUE(fx.lane_of(fx.track_a) == before_a);
+    EXPECT_TRUE(fx.lane_of(fx.track_b) == before_b);
+  }
+}
+
+TEST(ClipboardCommandTest, MultiMeasureFullSelectionCutIsRejectedAtomically) {
+  Fixture fx;
+  fx.assign_and_complete(fx.track_a, fx.stave_a_treble, kVoice1,
+                         {make_note(pitch(Letter::kC), whole()),
+                          make_note(pitch(Letter::kD), whole())});
+  const TrackLane before    = fx.lane_of(fx.track_a);
+  const Selection selection = *FullMeasureSet::create(
+      {FullMeasureItem{fx.node_id, fx.track_a, fx.stave_a_treble, 0, 2}});
+  CutFragmentCommand command(selection);
+  EXPECT_EQ(command.execute(fx.project).code(), ResultCode::kInvalidArgument);
+  EXPECT_FALSE(command.fragment().has_value());
+  EXPECT_TRUE(fx.lane_of(fx.track_a) == before);
+}
+
+TEST(ClipboardCommandTest, ContiguousMeasurePasteSupportsMatchingMeterChanges) {
+  Project    project{ProjectId::generate(), "Changing meter"};
+  const auto track_id = project.add_track("Track", StaffLayout::single_staff(),
+                                          *MidiChannel::create(0));
+  ASSERT_TRUE(track_id.has_value());
+  const StaveId stave_id =
+      project.find_active_track(*track_id)->layout().staves()[0].id;
+  const NodeId node_id = project.add_node("Node");
+  Node*        node    = project.find_node(node_id);
+  ASSERT_NE(node, nullptr);
+  const TimeSignature        three_four = *TimeSignature::create(3, 4);
+  const TimeSignature        four_four  = *TimeSignature::create(4, 4);
+  const std::vector<Measure> measures   = {
+      Measure{three_four, KeySignature{}}, Measure{four_four, KeySignature{}},
+      Measure{three_four, KeySignature{}}, Measure{four_four, KeySignature{}}};
+  auto timeline = NodeTimeline::create(
+      measures, {StaveDefinition{stave_id, Clef::kTreble}});
+  ASSERT_TRUE(timeline.has_value());
+  node->set_timeline(std::move(*timeline));
+  node->lane(*track_id)->ensure_stave(stave_id);
+  VoiceContent& voice = node->lane(*track_id)->stave(stave_id)->voice(kVoice1);
+  for (const Letter letter : {Letter::kC, Letter::kD, Letter::kE})
+    ASSERT_TRUE(voice.append(make_note(pitch(letter), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch(Letter::kF), whole())).ok());
+  for (const Letter letter : {Letter::kG, Letter::kA, Letter::kB})
+    ASSERT_TRUE(voice.append(make_note(pitch(letter), quarter())).ok());
+  ASSERT_TRUE(voice.append(make_note(pitch(Letter::kC, 5), whole())).ok());
+  for (const Voice other : {kVoice2, kVoice3, kVoice4}) {
+    node->lane(*track_id)->stave(stave_id)->voice(other) =
+        rest_filled(node->timeline()->node_end());
+  }
+
+  const Selection source = *FullMeasureSet::create(
+      {FullMeasureItem{node_id, *track_id, stave_id, 0, 2}});
+  const FragmentExtraction extraction = extract_fragment(project, source);
+  ASSERT_TRUE(extraction.status.ok());
+  ASSERT_TRUE(extraction.fragment.has_value());
+  EXPECT_EQ(extraction.fragment->span_length(), rat(7, 4));
+  const PasteAnchor    destination{node_id,
+                                *track_id,
+                                stave_id,
+                                rat(7, 4),
+                                   {PasteScope{*track_id, stave_id}}};
+  PasteFragmentCommand command(*extraction.fragment, destination);
+  EXPECT_TRUE(command.execute(project).ok());
 }
 
 TEST(ClipboardCommandTest,

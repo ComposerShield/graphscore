@@ -34,6 +34,7 @@ constexpr std::string_view kTupletEditTestFlag     = "--test-tuplet-edit";
 constexpr std::string_view kEventStyleEditTestFlag = "--test-event-style-edit";
 constexpr std::string_view kMarkingStyleEditTestFlag =
     "--test-marking-style-edit";
+constexpr std::string_view kPickdownEditTestFlag    = "--test-pickdown-edit";
 constexpr std::string_view kTrackpadGestureTestFlag = "--test-trackpad-gesture";
 constexpr std::string_view kRendererBackendTestFlag = "--test-renderer-backend";
 constexpr std::string_view kRendererZoomTestFlag    = "--test-renderer-zoom";
@@ -60,6 +61,7 @@ constexpr std::string_view kRenderGeometryTestFlag  = "--test-render-geometry";
 [[nodiscard]] int tuplet_edit_test();
 [[nodiscard]] int event_style_edit_test();
 [[nodiscard]] int marking_style_edit_test();
+[[nodiscard]] int pickdown_edit_test();
 [[nodiscard]] int trackpad_gesture_test();
 [[nodiscard]] int renderer_backend_test();
 [[nodiscard]] int renderer_zoom_test();

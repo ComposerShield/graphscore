@@ -87,13 +87,13 @@ and the collision-free interval rule — lives in
   - [x] M5-phase-28a Resolve an aligned measure selection to the domain insert/append/delete command and remap the selection the edit invalidates.
   - [x] M5-phase-28b Route the structural measure actions through the command palette and record them in the action table.
 - [x] M5-phase-29 Create and edit arbitrary single-level `N:M` tuplets without allowing nested tuplets.
-- [ ] M5-phase-30 Edit articulations, dynamics, ties, slurs, hairpins, pedal spans, beam breaks/joins, and stem overrides with clear invalid-target feedback.
+- [x] M5-phase-30 Edit articulations, dynamics, ties, slurs, hairpins, pedal spans, beam breaks/joins, and stem overrides with clear invalid-target feedback.
   - [x] M5-phase-30a Edit articulations and stem overrides.
   - [x] M5-phase-30b Edit dynamics, hairpins, and pedal spans.
   - [x] M5-phase-30c Edit ties and slurs.
-  - [ ] M5-phase-30d Edit beam breaks and joins.
-- [ ] M5-phase-31 Create the final pickdown through an explicit node-end duration setting and show the transition boundary distinctly.
-- [ ] M5-phase-32 Copy/paste one or more complete selected measures to an explicitly chosen destination measure and staff/track scope.
+  - [x] M5-phase-30d Edit beam breaks and joins.
+- [x] M5-phase-31 Create the final pickdown through an explicit node-end duration setting and show the transition boundary distinctly.
+- [x] M5-phase-32 Copy/paste one or more complete selected measures to an explicitly chosen destination measure and staff/track scope.
 - [ ] M5-phase-33 Cut/copy/paste arbitrary non-measure-aligned selections, including partial beats and multi-staff fragments, while preserving valid rhythm.
 - [ ] M5-phase-34 Show a translucent paste preview at the destination caret/range before commit, including affected staves and duration.
 - [ ] M5-phase-35 Default paste replaces only the corresponding destination time/staff/voice range, preserves all material outside it, fills uncovered time with normalized rests, and commits as one undoable transaction.

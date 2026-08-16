@@ -89,6 +89,45 @@ std::optional<Selection> resolve_measure_selection_at(
   return selection;
 }
 
+std::optional<Selection> resolve_measure_range_selection(
+    const Project& project, const NotationLayout& layout, NotationPoint anchor,
+    NotationPoint focus) {
+  if (!finite_point(anchor) || !finite_point(focus)) {
+    return std::nullopt;
+  }
+  const std::optional<HitResult> anchor_hit = layout.hit_test(anchor);
+  const std::optional<HitResult> focus_hit  = layout.hit_test(focus);
+  if (!anchor_hit.has_value() || !focus_hit.has_value() ||
+      anchor_hit->role != HitRole::kStaffMeasure ||
+      focus_hit->role != HitRole::kStaffMeasure) {
+    return std::nullopt;
+  }
+  const std::optional<ResolvedStaffMeasure> anchor_measure =
+      resolve_staff_measure_hit(layout, anchor_hit->semantic_id);
+  const std::optional<ResolvedStaffMeasure> focus_measure =
+      resolve_staff_measure_hit(layout, focus_hit->semantic_id);
+  if (!anchor_measure.has_value() || !focus_measure.has_value() ||
+      anchor_measure->staff->track_id != focus_measure->staff->track_id ||
+      anchor_measure->staff->stave_id != focus_measure->staff->stave_id) {
+    return std::nullopt;
+  }
+  const std::size_t first =
+      std::min(anchor_measure->ordinal, focus_measure->ordinal);
+  const std::size_t last =
+      std::max(anchor_measure->ordinal, focus_measure->ordinal);
+  std::optional<FullMeasureSet> set = FullMeasureSet::create({FullMeasureItem{
+      layout.node_id, anchor_measure->staff->track_id,
+      anchor_measure->staff->stave_id, first, last - first + 1}});
+  if (!set.has_value()) {
+    return std::nullopt;
+  }
+  Selection selection{*std::move(set)};
+  if (!validate_selection(project, selection).empty()) {
+    return std::nullopt;
+  }
+  return selection;
+}
+
 std::optional<Selection> extend_measure_selection(
     const Project& project, const FullMeasureSet& existing,
     const std::vector<MeasureScope>& additional) {
@@ -99,8 +138,10 @@ std::optional<Selection> extend_measure_selection(
   // Verify alignment: every item must share one node and one measure_index.
   const NodeId      anchor_node    = existing.items().front().node;
   const std::size_t anchor_measure = existing.items().front().measure_index;
+  const std::size_t measure_count  = existing.items().front().measure_count;
   for (const FullMeasureItem& item : existing.items()) {
-    if (item.node != anchor_node || item.measure_index != anchor_measure) {
+    if (item.node != anchor_node || item.measure_index != anchor_measure ||
+        item.measure_count != measure_count) {
       return std::nullopt;
     }
   }
@@ -161,8 +202,8 @@ std::optional<Selection> extend_measure_selection(
     for (const StaveDefinition& sd : track.layout().staves()) {
       for (const auto& scope : scopes) {
         if (scope.first == track.id() && scope.second == sd.id) {
-          items.push_back(
-              FullMeasureItem{anchor_node, track.id(), sd.id, anchor_measure});
+          items.push_back(FullMeasureItem{anchor_node, track.id(), sd.id,
+                                          anchor_measure, measure_count});
           break;
         }
       }

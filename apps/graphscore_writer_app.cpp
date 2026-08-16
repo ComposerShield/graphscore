@@ -63,6 +63,7 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::kMeasureEditTestFlag;
   using graphscore::writer_app::kNoteheadDeleteTestFlag;
   using graphscore::writer_app::kNoteheadMoveTestFlag;
+  using graphscore::writer_app::kPickdownEditTestFlag;
   using graphscore::writer_app::kRendererBackendTestFlag;
   using graphscore::writer_app::kRendererPresentTestFlag;
   using graphscore::writer_app::kRendererZoomTestFlag;
@@ -78,6 +79,7 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::measure_edit_test;
   using graphscore::writer_app::notehead_delete_test;
   using graphscore::writer_app::notehead_move_test;
+  using graphscore::writer_app::pickdown_edit_test;
   using graphscore::writer_app::render_geometry_test;
   using graphscore::writer_app::renderer_backend_test;
   using graphscore::writer_app::renderer_present_test;
@@ -111,6 +113,7 @@ int main(int argc, char** argv) {
   bool run_tuplet_edit_test          = false;
   bool run_event_style_edit_test     = false;
   bool run_marking_style_edit_test   = false;
+  bool run_pickdown_edit_test        = false;
   bool run_trackpad_gesture_test     = false;
   bool run_renderer_backend_test     = false;
   bool run_renderer_zoom_test        = false;
@@ -179,6 +182,9 @@ int main(int argc, char** argv) {
     }
     if (kMarkingStyleEditTestFlag == argv[i]) {
       run_marking_style_edit_test = true;
+    }
+    if (kPickdownEditTestFlag == argv[i]) {
+      run_pickdown_edit_test = true;
     }
     if (kTrackpadGestureTestFlag == argv[i]) {
       run_trackpad_gesture_test = true;
@@ -257,6 +263,9 @@ int main(int argc, char** argv) {
     }
     if (run_marking_style_edit_test) {
       return marking_style_edit_test();
+    }
+    if (run_pickdown_edit_test) {
+      return pickdown_edit_test();
     }
     if (run_trackpad_gesture_test) {
       return trackpad_gesture_test();

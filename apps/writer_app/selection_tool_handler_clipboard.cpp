@@ -12,6 +12,7 @@
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace graphscore::writer_app {
 
@@ -161,6 +162,9 @@ SelectionToolHandler::derive_paste_anchor() const {
     if (set->items().empty()) {
       return std::nullopt;
     }
+    if (!graphscore::validate_selection(project_, *committed).empty()) {
+      return std::nullopt;
+    }
     const auto& first = set->items().front();
     for (const auto& item : set->items()) {
       if (item.node != first.node) {
@@ -168,6 +172,9 @@ SelectionToolHandler::derive_paste_anchor() const {
       }
       if (item.measure_index != first.measure_index) {
         return std::nullopt;  // items must share one measure index.
+      }
+      if (item.measure_count != first.measure_count) {
+        return std::nullopt;
       }
       // Every item, not merely the first anchor source, must remain live and
       // within the common measure map. Otherwise a deterministic first item
@@ -183,8 +190,13 @@ SelectionToolHandler::derive_paste_anchor() const {
     if (!start.has_value()) {
       return std::nullopt;
     }
-    return graphscore::PasteAnchor{first.node, first.track, first.stave,
-                                   *start};
+    std::vector<graphscore::PasteScope> scopes;
+    scopes.reserve(set->items().size());
+    for (const auto& item : set->items()) {
+      scopes.push_back(graphscore::PasteScope{item.track, item.stave});
+    }
+    return graphscore::PasteAnchor{first.node, first.track, first.stave, *start,
+                                   std::move(scopes)};
   }
   // MarkingSet / NodeSet / ConnectorSet name no musical-time position to
   // anchor a paste.
@@ -248,6 +260,13 @@ bool SelectionToolHandler::cut_selection() {
       std::holds_alternative<graphscore::ArbitraryRangeSet>(*committed);
   if (!is_measure && !is_range) {
     post_diagnostic("cut: requires a full-measure or range selection");
+    return false;
+  }
+  if (is_measure && std::get<graphscore::FullMeasureSet>(*committed)
+                            .items()
+                            .front()
+                            .measure_count != 1u) {
+    post_diagnostic("cut: multiple measures are not supported");
     return false;
   }
 

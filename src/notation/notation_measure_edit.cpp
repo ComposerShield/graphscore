@@ -29,8 +29,11 @@ namespace {
 
   const NodeId      anchor_node    = set->items().front().node;
   const std::size_t anchor_measure = set->items().front().measure_index;
+  if (set->items().front().measure_count != 1u)
+    return nullptr;
   for (const FullMeasureItem& item : set->items()) {
-    if (item.node != anchor_node || item.measure_index != anchor_measure)
+    if (item.node != anchor_node || item.measure_index != anchor_measure ||
+        item.measure_count != 1u)
       return nullptr;
   }
 

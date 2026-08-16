@@ -147,6 +147,10 @@ void SelectionToolHandler::initialize_step_entry_cursor() {
     } else if (const auto* measure_set =
                    std::get_if<graphscore::FullMeasureSet>(&*committed)) {
       if (!measure_set->items().empty()) {
+        if (!graphscore::validate_selection(project_, *committed).empty()) {
+          post_diagnostic("step entry: stale full-measure selection");
+          return;
+        }
         const auto& item          = measure_set->items().front();
         const auto  measure_start = measure_start_at(
             item.node, item.track, item.stave, item.measure_index);

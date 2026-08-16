@@ -60,55 +60,83 @@ template std::vector<NotationEntityId> system_reference_ids(
 template std::vector<NotationEntityId> system_reference_ids(
     const ReferenceFamily<PedalSpan>&, const std::vector<MeasureLayout>&);
 
-[[nodiscard]] bool add_rhythm(LayoutBuilder&                    builder,
-                              const SystemLayout&               system,
-                              const StaffSystemLayout&          staff,
-                              const StaveVoices&                voices,
-                              const IndexedStaff&               indexed,
-                              const std::vector<double>&        widths,
-                              const std::vector<MeasureLayout>& measures) {
-  const double      space       = builder.options.staff_space;
-  const MeasureMap& measure_map = builder.timeline.measures();
-  auto              placements =
-      placements_for_system(builder.timeline, staff.stave_id, voices, indexed,
-                            staff, widths, measures);
-  std::unordered_map<NotationEntityId, EventPlacement> all_events;
-  for (const EventPlacement& placement : placements) {
-    all_events.emplace(event_id(*placement.event), placement);
-  }
-  const auto resolve_event = [&](Voice            voice,
-                                 NotationEntityId id) -> const EventPlacement* {
-    if (const auto found = all_events.find(id); found != all_events.end()) {
-      return &found->second;
-    }
-    const IndexedVoice& indexed_voice =
-        indexed.voices[voice.index() - Voice::kMin];
-    const auto record = indexed_voice.by_id.find(id);
-    if (record == indexed_voice.by_id.end()) {
-      return nullptr;
-    }
-    const VoiceEvent& event =
-        voices.voice(voice).events()[record->second.event_index];
-    const ClefLane* lane = builder.timeline.clef_lane(staff.stave_id);
-    const Clef      clef =
-        lane == nullptr ? Clef::kTreble : lane->clef_at(record->second.onset);
-    const auto [inserted, unused] = all_events.emplace(
-        id, EventPlacement{
-                &event, voice, record->second.onset, record->second.measure,
-                0.0, event_anchor_y(event, voice, clef, staff.bounds.y, space),
-                stem_up_for(voice, event_stem(event))});
-    (void)unused;
-    return &inserted->second;
-  };
+namespace {
 
-  // Automatic beams remain inside a beat and measure. Manual joins/breaks
-  // deterministically override that decision for each adjacent listed pair.
-  std::vector<std::pair<NotationEntityId, NotationEntityId>> beam_pairs;
-  const auto insert_beam = [&beam_pairs](const auto& pair) {
-    if (std::ranges::find(beam_pairs, pair) == beam_pairs.end()) {
-      beam_pairs.push_back(pair);
+// Horizontal overhang of a glyph's injected metrics relative to its origin, in
+// staff spaces. `left` is never positive (bounds may begin right of the
+// origin); `right` covers the drawn box's far edge. Both derive from the
+// GlyphMetrics for the exact SMuFL codepoint, never a FixedMetrics constant.
+[[nodiscard]] double glyph_left(const GlyphMetrics& metrics, char32_t code,
+                                double staff_space) {
+  return std::min(0.0, metrics.glyph_metrics(code, staff_space).bounds.x) /
+         staff_space;
+}
+
+[[nodiscard]] double glyph_right(const GlyphMetrics& metrics, char32_t code,
+                                 double staff_space) {
+  const GlyphMetricsValue value = metrics.glyph_metrics(code, staff_space);
+  return std::max(0.0, value.bounds.x + value.bounds.width) / staff_space;
+}
+
+[[nodiscard]] int beat_index(Rational onset, Rational origin,
+                             TimeSignature meter) {
+  const bool compound = meter.numerator() > 3 && meter.numerator() % 3 == 0 &&
+                        meter.denominator() == 8;
+  const Rational beat = compound ? *Rational::create(3, 8)
+                                 : *Rational::create(1, meter.denominator());
+  return static_cast<int>(((onset - origin) / beat).to_double());
+}
+
+void insert_beam(
+    std::vector<std::pair<NotationEntityId, NotationEntityId>>& beam_pairs,
+    const std::pair<NotationEntityId, NotationEntityId>&        pair) {
+  if (std::ranges::find(beam_pairs, pair) == beam_pairs.end()) {
+    beam_pairs.push_back(pair);
+  }
+}
+
+// Manual joins/breaks deterministically override the automatic decision for
+// each adjacent listed pair.
+void apply_manual_beam_overrides(
+    const IndexedVoice&                                         voice_indexed,
+    const std::vector<NotationEntityId>&                        override_ids,
+    std::vector<std::pair<NotationEntityId, NotationEntityId>>& beam_pairs) {
+  for (const NotationEntityId& id : override_ids) {
+    const BeamOverride& override =
+        voice_indexed.beam_overrides.entries.at(id).record;
+    if (std::ranges::any_of(
+            voice_indexed.diagnostics, [&](const auto& diagnostic) {
+              return diagnostic.entity_id == override.id &&
+                     diagnostic.code ==
+                         NotationDiagnosticCode::kInvalidBeamOverride;
+            })) {
+      continue;
     }
-  };
+    for (std::size_t index = 1; index < override.events.size(); ++index) {
+      const auto pair =
+          std::pair{override.events[index - 1], override.events[index]};
+      if (override.kind == BeamOverride::Kind::kJoin) {
+        insert_beam(beam_pairs, pair);
+      } else {
+        const auto found = std::ranges::find(beam_pairs, pair);
+        if (found != beam_pairs.end()) {
+          beam_pairs.erase(found);
+        }
+      }
+    }
+  }
+}
+
+// Automatic + manual beam pairs for a main-region system. Automatic beams
+// remain inside a beat and measure; the `previous` seed carries a beam across
+// a system break within the same measure/beat.
+[[nodiscard]] std::vector<std::pair<NotationEntityId, NotationEntityId>>
+compute_main_beam_pairs(
+    const NodeTimeline& timeline, const StaveVoices& voices,
+    const IndexedStaff& indexed, const std::vector<MeasureLayout>& measures,
+    const std::array<std::vector<NotationEntityId>, 4>& override_ids) {
+  std::vector<std::pair<NotationEntityId, NotationEntityId>> beam_pairs;
+  const MeasureMap& measure_map = timeline.measures();
   for (std::uint8_t voice_index = Voice::kMin; voice_index <= Voice::kMax;
        ++voice_index) {
     const Voice         voice   = *Voice::create(voice_index);
@@ -142,21 +170,11 @@ template std::vector<NotationEntityId> system_reference_ids(
           if (left_measure == right_measure && left_measure.has_value()) {
             const TimeSignature meter =
                 measure_map.measure(*left_measure).time_signature;
-            const bool compound = meter.numerator() > 3 &&
-                                  meter.numerator() % 3 == 0 &&
-                                  meter.denominator() == 8;
-            const Rational beat =
-                compound ? *Rational::create(3, 8)
-                         : *Rational::create(1, meter.denominator());
-            const int left_beat = static_cast<int>(
-                ((previous_onset - measure_map.measure_start(*left_measure)) /
-                 beat)
-                    .to_double());
-            const int right_beat = static_cast<int>(
-                ((onset - measure_map.measure_start(*right_measure)) / beat)
-                    .to_double());
-            if (left_beat == right_beat) {
-              insert_beam(std::pair{event_id(*previous), event_id(event)});
+            const Rational origin = measure_map.measure_start(*left_measure);
+            if (beat_index(previous_onset, origin, meter) ==
+                beat_index(onset, origin, meter)) {
+              insert_beam(beam_pairs,
+                          std::pair{event_id(*previous), event_id(event)});
             }
           }
         }
@@ -164,32 +182,133 @@ template std::vector<NotationEntityId> system_reference_ids(
         previous_onset = onset;
       }
     }
-    for (const NotationEntityId& id :
-         system_reference_ids(voice_indexed.beam_overrides, measures)) {
-      const BeamOverride& override =
-          voice_indexed.beam_overrides.entries.at(id).record;
-      if (std::ranges::any_of(
-              voice_indexed.diagnostics, [&](const auto& diagnostic) {
-                return diagnostic.entity_id == override.id &&
-                       diagnostic.code ==
-                           NotationDiagnosticCode::kInvalidBeamOverride;
-              })) {
-        continue;
+    apply_manual_beam_overrides(
+        voice_indexed, override_ids[voice_index - Voice::kMin], beam_pairs);
+  }
+  return beam_pairs;
+}
+
+// Automatic + manual beam pairs for the pickdown region. The pickdown inherits
+// the final main measure's meter; its beat origin is the boundary, and there
+// is no automatic beam continuation across the boundary (a barline).
+[[nodiscard]] std::vector<std::pair<NotationEntityId, NotationEntityId>>
+compute_pickdown_beam_pairs(
+    const NodeTimeline& timeline, const StaveVoices& voices,
+    const IndexedStaff&                                 indexed,
+    const std::array<std::vector<NotationEntityId>, 4>& override_ids) {
+  std::vector<std::pair<NotationEntityId, NotationEntityId>> beam_pairs;
+  const MeasureMap&   measure_map = timeline.measures();
+  const Rational      boundary    = measure_map.total_length();
+  const TimeSignature meter =
+      measure_map.measure(measure_map.measure_count() - 1).time_signature;
+  for (std::uint8_t voice_index = Voice::kMin; voice_index <= Voice::kMax;
+       ++voice_index) {
+    const Voice         voice   = *Voice::create(voice_index);
+    const VoiceContent& content = voices.voice(voice);
+    const IndexedVoice& voice_indexed =
+        indexed.voices[voice_index - Voice::kMin];
+    const VoiceEvent* previous = nullptr;
+    Rational          previous_onset;
+    for (const IndexedEvent& record : voice_indexed.pickdown) {
+      const VoiceEvent& event = content.events()[record.event_index];
+      const Rational    onset = record.onset;
+      if (previous != nullptr && event_is_beamable(*previous) &&
+          event_is_beamable(event) &&
+          beat_index(previous_onset, boundary, meter) ==
+              beat_index(onset, boundary, meter)) {
+        insert_beam(beam_pairs,
+                    std::pair{event_id(*previous), event_id(event)});
       }
-      for (std::size_t index = 1; index < override.events.size(); ++index) {
-        const auto pair =
-            std::pair{override.events[index - 1], override.events[index]};
-        if (override.kind == BeamOverride::Kind::kJoin) {
-          insert_beam(pair);
-        } else {
-          const auto found = std::ranges::find(beam_pairs, pair);
-          if (found != beam_pairs.end()) {
-            beam_pairs.erase(found);
-          }
-        }
-      }
+      previous       = &event;
+      previous_onset = onset;
+    }
+    apply_manual_beam_overrides(
+        voice_indexed, override_ids[voice_index - Voice::kMin], beam_pairs);
+  }
+  return beam_pairs;
+}
+
+// Placements for events whose onset falls inside the pickdown region, in the
+// same node-local coordinate system the main region uses, linearly across
+// [boundary_x, boundary_x + pickdown_width]. The measure ordinal is the
+// pickdown ordinal (one past the last measure).
+[[nodiscard]] std::vector<EventPlacement> placements_for_pickdown(
+    const NodeTimeline& timeline, const StaveVoices& voices,
+    const IndexedStaff& indexed, const StaffSystemLayout& staff,
+    double boundary_x, double pickdown_width, double inset) {
+  std::vector<EventPlacement> placements;
+  const ClefLane*             clefs = timeline.clef_lane(staff.stave_id);
+  for (std::uint8_t index = Voice::kMin; index <= Voice::kMax; ++index) {
+    const auto voice_value = Voice::create(index);
+    if (!voice_value.has_value()) {
+      continue;
+    }
+    const Voice voice  = *voice_value;
+    const auto& events = voices.voice(voice).events();
+    for (const IndexedEvent& record :
+         indexed.voices[index - Voice::kMin].pickdown) {
+      const VoiceEvent& event = events[record.event_index];
+      const Clef        clef =
+          clefs == nullptr ? Clef::kTreble : clefs->clef_at(record.onset);
+      const double staff_space = staff.bounds.height / 4.0;
+      const double y =
+          event_anchor_y(event, voice, clef, staff.bounds.y, staff_space);
+      placements.push_back(
+          EventPlacement{&event, voice, record.onset, record.measure,
+                         pickdown_position_x(timeline, record.onset, boundary_x,
+                                             pickdown_width, inset),
+                         y, stem_up_for(voice, event_stem(event))});
     }
   }
+  std::ranges::sort(placements, [](const auto& left, const auto& right) {
+    if (left.onset != right.onset) {
+      return left.onset < right.onset;
+    }
+    return left.voice.index() < right.voice.index();
+  });
+  return placements;
+}
+
+}  // namespace
+
+[[nodiscard]] bool add_region_rhythm(LayoutBuilder&           builder,
+                                     const SystemLayout&      system,
+                                     const StaffSystemLayout& staff,
+                                     const StaveVoices&       voices,
+                                     const IndexedStaff&      indexed,
+                                     RhythmRegion             region) {
+  const double space      = builder.options.staff_space;
+  auto         placements = std::move(region.placements);
+  std::vector<std::pair<NotationEntityId, NotationEntityId>> beam_pairs =
+      std::move(region.beam_pairs);
+  std::unordered_map<NotationEntityId, EventPlacement> all_events;
+  for (const EventPlacement& placement : placements) {
+    all_events.emplace(event_id(*placement.event), placement);
+  }
+  const auto resolve_event = [&](Voice            voice,
+                                 NotationEntityId id) -> const EventPlacement* {
+    if (const auto found = all_events.find(id); found != all_events.end()) {
+      return &found->second;
+    }
+    const IndexedVoice& indexed_voice =
+        indexed.voices[voice.index() - Voice::kMin];
+    const auto record = indexed_voice.by_id.find(id);
+    if (record == indexed_voice.by_id.end()) {
+      return nullptr;
+    }
+    const VoiceEvent& event =
+        voices.voice(voice).events()[record->second.event_index];
+    const ClefLane* lane = builder.timeline.clef_lane(staff.stave_id);
+    const Clef      clef =
+        lane == nullptr ? Clef::kTreble : lane->clef_at(record->second.onset);
+    const auto [inserted, unused] = all_events.emplace(
+        id, EventPlacement{
+                &event, voice, record->second.onset, record->second.measure,
+                0.0, event_anchor_y(event, voice, clef, staff.bounds.y, space),
+                stem_up_for(voice, event_stem(event))});
+    (void)unused;
+    return &inserted->second;
+  };
 
   std::size_t group_begin        = 0;
   std::size_t accidental_measure = std::numeric_limits<std::size_t>::max();
@@ -307,9 +426,8 @@ template std::vector<NotationEntityId> system_reference_ids(
           const auto       state     = accidental_state.find(pitch_key);
           const Accidental prevailing =
               state == accidental_state.end()
-                  ? key_accidental(
-                        measure_map.measure(placed.measure).key_signature,
-                        pitch.letter())
+                  ? key_accidental(region.key_at(placed.measure),
+                                   pitch.letter())
                   : state->second;
           if (pitch.accidental() != prevailing) {
             const auto overlaps_accidental = [&](double occupied_y) {
@@ -508,12 +626,7 @@ template std::vector<NotationEntityId> system_reference_ids(
     if (left == nullptr || right == nullptr) {
       continue;
     }
-    const Rational beam_system_start =
-        measure_map.measure_start(measures.front().ordinal);
-    const Rational beam_system_end =
-        measure_map.measure_start(measures.back().ordinal) +
-        measure_map.measure_length(measures.back().ordinal);
-    if (right->onset < beam_system_start || left->onset >= beam_system_end) {
+    if (right->onset < region.start || left->onset >= region.end) {
       continue;
     }
     const bool   up     = left->stem_up;
@@ -523,9 +636,8 @@ template std::vector<NotationEntityId> system_reference_ids(
     const double right_y =
         left_y + std::clamp(natural_right_y - left_y, -space, space);
     const double right_stem_x =
-        (right->onset >= beam_system_end
-             ? measures.back().bounds.x + measures.back().bounds.width -
-                   space * 0.5
+        (right->onset >= region.end
+             ? region.right_x - space * 0.5
              : right->x + (right->stem_up ? 0.65 : -0.65) * space);
     if (natural_right_y != right_y) {
       builder.add_line(
@@ -541,35 +653,24 @@ template std::vector<NotationEntityId> system_reference_ids(
     for (std::size_t level = 0; level < levels; ++level) {
       const double offset =
           (up ? 1.0 : -1.0) * static_cast<double>(level) * space * 0.65;
-      builder.add_line(make_id(left_id, "beam/to/" + right_id.to_string() +
-                                            "/level/" + std::to_string(level)),
-                       {left->onset < beam_system_start
-                            ? measures.front().bounds.x + space * 0.5
-                            : left->x + (up ? 0.65 : -0.65) * space,
-                        left_y + offset},
-                       {right_stem_x, right_y + offset}, space * 0.5);
+      builder.add_line(
+          make_id(left_id, "beam/to/" + right_id.to_string() + "/level/" +
+                               std::to_string(level)),
+          {left->onset < region.start ? region.left_x + space * 0.5
+                                      : left->x + (up ? 0.65 : -0.65) * space,
+           left_y + offset},
+          {right_stem_x, right_y + offset}, space * 0.5);
     }
   }
 
-  const Rational system_start =
-      measure_map.measure_start(measures.front().ordinal);
-  const auto&    last_measure = measures.back();
-  const Rational system_end = measure_map.measure_start(last_measure.ordinal) +
-                              measure_map.measure_length(last_measure.ordinal);
-  const double left_x = measures.front().bounds.x + space * 0.5;
-  const double right_x =
-      last_measure.bounds.x + last_measure.bounds.width - space * 0.5;
   const auto span_x = [&](Rational position) {
-    if (position <= system_start) {
-      return left_x;
+    if (position <= region.start) {
+      return region.left_x + region.span_inset;
     }
-    if (position >= system_end) {
-      return right_x;
+    if (position >= region.end) {
+      return region.right_x - region.span_inset;
     }
-    const auto measure = measure_map.measure_index_at(position);
-    const auto local   = *measure - measures.front().ordinal;
-    return position_x(measure_map, widths, *measure, position,
-                      measures[local].bounds.x, space);
+    return region.x_at(position);
   };
 
   struct LaneUse {
@@ -598,7 +699,7 @@ template std::vector<NotationEntityId> system_reference_ids(
     const VoiceContent& content = voices.voice(voice);
     const IndexedVoice& voice_indexed =
         indexed.voices[voice_index - Voice::kMin];
-    if (measures.front().ordinal == 0) {
+    if (region.emit_diagnostics) {
       for (const NotationDiagnostic& diagnostic : voice_indexed.diagnostics) {
         builder.output.diagnostics.push_back(
             {diagnostic.entity_id,
@@ -607,12 +708,12 @@ template std::vector<NotationEntityId> system_reference_ids(
       }
     }
     for (const NotationEntityId& id :
-         system_reference_ids(voice_indexed.dynamics, measures)) {
+         region.dynamics[voice_index - Voice::kMin]) {
       const DynamicMarking& dynamic =
           voice_indexed.dynamics.entries.at(id).record;
       const EventPlacement* at = resolve_event(voice, dynamic.at_event);
-      if (at == nullptr || at->onset < system_start ||
-          at->onset >= system_end) {
+      if (at == nullptr || at->onset < region.start ||
+          at->onset >= region.end) {
         continue;
       }
       double            x          = span_x(at->onset);
@@ -641,7 +742,7 @@ template std::vector<NotationEntityId> system_reference_ids(
       const EventPlacement* start = resolve_event(voice, span.start_event);
       const EventPlacement* end   = resolve_event(voice, span.end_event);
       if (start == nullptr || end == nullptr || !(start->onset < end->onset) ||
-          end->onset < system_start || start->onset >= system_end) {
+          end->onset < region.start || start->onset >= region.end) {
         return;
       }
       if (role == "slur" && (std::holds_alternative<Rest>(*start->event) ||
@@ -660,34 +761,23 @@ template std::vector<NotationEntityId> system_reference_ids(
                     space * (4.0 + static_cast<double>(local_lane) * 1.6);
       (void)stack;
       add_span_segment(builder, span.id, NotationId{span.id.to_string()},
-                       system, {from_x, lane}, {to_x, lane}, lane, role, wedge,
-                       reverse);
+                       system, {from_x, lane}, {to_x, lane}, lane, role,
+                       region.segment_suffix, wedge, reverse);
     };
     for (const NotationEntityId& id :
-         system_reference_ids(voice_indexed.hairpins, measures)) {
+         region.hairpins[voice_index - Voice::kMin]) {
       const Hairpin& hairpin = voice_indexed.hairpins.entries.at(id).record;
       add_event_span(hairpin, "hairpin", 0, true,
                      hairpin.direction == HairpinDirection::kDiminuendo);
     }
-    for (const NotationEntityId& id :
-         system_reference_ids(voice_indexed.slurs, measures)) {
+    for (const NotationEntityId& id : region.slurs[voice_index - Voice::kMin]) {
       const Slur& slur = voice_indexed.slurs.entries.at(id).record;
       add_event_span(slur, "slur", 0, false, false);
     }
 
-    const auto&               events = content.events();
-    std::vector<IndexedEvent> local_events;
-    if (measures.front().ordinal > 0 &&
-        !voice_indexed.measures[measures.front().ordinal - 1].empty()) {
-      local_events.push_back(
-          voice_indexed.measures[measures.front().ordinal - 1].back());
-    }
-    for (std::size_t ordinal = measures.front().ordinal;
-         ordinal <= measures.back().ordinal; ++ordinal) {
-      local_events.insert(local_events.end(),
-                          voice_indexed.measures[ordinal].begin(),
-                          voice_indexed.measures[ordinal].end());
-    }
+    const auto&                      events = content.events();
+    const std::vector<IndexedEvent>& local_events =
+        region.local_events[voice_index - Voice::kMin];
     for (const IndexedEvent& record : local_events) {
       const VoiceEvent& event = events[record.event_index];
       if (record.event_index + 1 < events.size()) {
@@ -715,29 +805,29 @@ template std::vector<NotationEntityId> system_reference_ids(
           }
           const Rational end_onset =
               record.onset + event_duration(event).resolved();
-          if (end_onset >= system_start && record.onset < system_end) {
+          if (end_onset >= region.start && record.onset < region.end) {
             const ClefLane* lane = builder.timeline.clef_lane(staff.stave_id);
             const Clef      clef =
                 lane == nullptr ? Clef::kTreble : lane->clef_at(record.onset);
             const double y =
                 pitch_y(pitch, clef, staff.bounds.y, space) + space;
-            add_span_segment(builder, note_id, NotationId{note_id.to_string()},
-                             system, {span_x(record.onset), y},
-                             {span_x(end_onset), y}, y,
-                             std::string(kHitRoleTie), false, false);
+            add_span_segment(
+                builder, note_id, NotationId{note_id.to_string()}, system,
+                {span_x(record.onset), y}, {span_x(end_onset), y}, y,
+                std::string(kHitRoleTie), region.segment_suffix, false, false);
           }
         }
       }
     }
 
     for (const NotationEntityId& id :
-         system_reference_ids(voice_indexed.grace_groups, measures)) {
+         region.grace_groups[voice_index - Voice::kMin]) {
       const GraceGroup& group =
           voice_indexed.grace_groups.entries.at(id).record;
       const EventPlacement* principal =
           resolve_event(voice, group.principal_event);
-      if (principal == nullptr || principal->onset < system_start ||
-          principal->onset >= system_end ||
+      if (principal == nullptr || principal->onset < region.start ||
+          principal->onset >= region.end ||
           std::holds_alternative<Rest>(*principal->event)) {
         continue;
       }
@@ -747,8 +837,11 @@ template std::vector<NotationEntityId> system_reference_ids(
       for (std::size_t index = 0; index < group.notes.size(); ++index) {
         const GraceNote& grace = group.notes[index];
         const double distance = static_cast<double>(group.notes.size() - index);
-        const double x =
-            span_x(principal->onset) - space * (2.0 + distance * 1.3);
+        // Anchor to the principal notehead's own x (not span_x, which clamps a
+        // boundary-onset principal to left_x + 0.5*space), so a pickdown grace
+        // group extends left of the notehead instead of left of the transition
+        // boundary.
+        const double x = principal->x - space * (2.0 + distance * 1.3);
         const double y = pitch_y(grace.pitch, clef, staff.bounds.y, space);
         if (!builder
                  .add_glyph(
@@ -780,9 +873,8 @@ template std::vector<NotationEntityId> system_reference_ids(
           }
         }
         if (grace.pitch.accidental() !=
-            key_accidental(
-                measure_map.measure(principal->measure).key_signature,
-                grace.pitch.letter())) {
+            key_accidental(region.key_at(principal->measure),
+                           grace.pitch.letter())) {
           if (!builder
                    .add_glyph(make_id(grace.id, "grace-accidental"),
                               smufl_codepoint(
@@ -852,10 +944,10 @@ template std::vector<NotationEntityId> system_reference_ids(
       }
       // The domain keys kIncompleteTupletGroup to the run's true global first
       // event (its backward walk over the whole voice), while first_record is
-      // only the first event of this system's local fragment -- a mid-run
-      // event whenever the run began in an earlier system. Walk back to the
-      // true run start before comparing so a malformed run suppresses its
-      // digit on every system it spans, not just the one holding the run start.
+      // only the first event of this region's local fragment -- a mid-run
+      // event whenever the run began earlier. Walk back to the true run start
+      // before comparing so a malformed run suppresses its digit on every
+      // region it spans, not just the one holding the run start.
       const NotationEntityId true_run_start = [&]() {
         if (!ratio.has_value()) {
           return first_record.id;
@@ -874,8 +966,8 @@ template std::vector<NotationEntityId> system_reference_ids(
                diagnostic.code ==
                    NotationDiagnosticCode::kIncompleteTupletGroup;
       };
-      if (ratio.has_value() && run_end > system_start &&
-          run_start < system_end &&
+      if (ratio.has_value() && run_end > region.start &&
+          run_start < region.end &&
           !std::ranges::any_of(voice_indexed.diagnostics,
                                is_incomplete_tuplet_diagnostic)) {
         const NotationEntityId id = first_record.id;
@@ -906,6 +998,209 @@ template std::vector<NotationEntityId> system_reference_ids(
     }
   }
   return true;
+}
+
+[[nodiscard]] bool add_rhythm(LayoutBuilder&                    builder,
+                              const SystemLayout&               system,
+                              const StaffSystemLayout&          staff,
+                              const StaveVoices&                voices,
+                              const IndexedStaff&               indexed,
+                              const std::vector<double>&        widths,
+                              const std::vector<MeasureLayout>& measures) {
+  const MeasureMap& measure_map = builder.timeline.measures();
+  RhythmRegion      region;
+  region.start = measure_map.measure_start(measures.front().ordinal);
+  region.end   = measure_map.measure_start(measures.back().ordinal) +
+               measure_map.measure_length(measures.back().ordinal);
+  region.left_x      = measures.front().bounds.x;
+  region.right_x     = measures.back().bounds.x + measures.back().bounds.width;
+  const double space = builder.options.staff_space;
+  region.span_inset  = space * 0.5;
+  region.placements =
+      placements_for_system(builder.timeline, staff.stave_id, voices, indexed,
+                            staff, widths, measures);
+  region.x_at = [&measure_map, &widths, &measures, space](Rational position) {
+    const std::size_t measure = *measure_map.measure_index_at(position);
+    const std::size_t local   = measure - measures.front().ordinal;
+    return position_x(measure_map, widths, measure, position,
+                      measures[local].bounds.x, space);
+  };
+  region.key_at = [&measure_map](std::size_t measure) {
+    return measure_map.measure(measure).key_signature;
+  };
+  region.emit_diagnostics = measures.front().ordinal == 0;
+  region.segment_suffix   = "system-" + std::to_string(system.first_measure);
+
+  std::array<std::vector<NotationEntityId>, 4> override_ids;
+  for (std::uint8_t voice_index = Voice::kMin; voice_index <= Voice::kMax;
+       ++voice_index) {
+    const IndexedVoice& voice_indexed =
+        indexed.voices[voice_index - Voice::kMin];
+    const std::size_t slot = voice_index - Voice::kMin;
+    region.dynamics[slot] =
+        system_reference_ids(voice_indexed.dynamics, measures);
+    region.hairpins[slot] =
+        system_reference_ids(voice_indexed.hairpins, measures);
+    region.slurs[slot] = system_reference_ids(voice_indexed.slurs, measures);
+    region.grace_groups[slot] =
+        system_reference_ids(voice_indexed.grace_groups, measures);
+    override_ids[slot] =
+        system_reference_ids(voice_indexed.beam_overrides, measures);
+
+    std::vector<IndexedEvent>& local_events = region.local_events[slot];
+    if (measures.front().ordinal > 0 &&
+        !voice_indexed.measures[measures.front().ordinal - 1].empty()) {
+      local_events.push_back(
+          voice_indexed.measures[measures.front().ordinal - 1].back());
+    }
+    for (std::size_t ordinal = measures.front().ordinal;
+         ordinal <= measures.back().ordinal; ++ordinal) {
+      local_events.insert(local_events.end(),
+                          voice_indexed.measures[ordinal].begin(),
+                          voice_indexed.measures[ordinal].end());
+    }
+  }
+  region.beam_pairs = compute_main_beam_pairs(builder.timeline, voices, indexed,
+                                              measures, override_ids);
+  return add_region_rhythm(builder, system, staff, voices, indexed,
+                           std::move(region));
+}
+
+[[nodiscard]] bool add_pickdown_region(LayoutBuilder&           builder,
+                                       const SystemLayout&      system,
+                                       const StaffSystemLayout& staff,
+                                       const StaveVoices&       voices,
+                                       const IndexedStaff&      indexed,
+                                       double boundary_x, double pickdown_width,
+                                       double content_inset) {
+  const NodeTimeline& timeline    = builder.timeline;
+  const MeasureMap&   measure_map = timeline.measures();
+  RhythmRegion        region;
+  region.start   = timeline.boundary_position();
+  region.end     = timeline.node_end();
+  region.left_x  = boundary_x;
+  region.right_x = boundary_x + pickdown_width;
+  region.placements =
+      placements_for_pickdown(timeline, voices, indexed, staff, boundary_x,
+                              pickdown_width, content_inset);
+  const double space = builder.options.staff_space;
+  region.span_inset  = content_inset;
+  region.x_at        = [&timeline, boundary_x, pickdown_width,
+                 content_inset](Rational position) {
+    return pickdown_position_x(timeline, position, boundary_x, pickdown_width,
+                                      content_inset);
+  };
+  const KeySignature key =
+      measure_map.measure(measure_map.measure_count() - 1).key_signature;
+  region.key_at           = [key](std::size_t /*measure*/) { return key; };
+  region.emit_diagnostics = false;
+  region.segment_suffix   = "pickdown";
+
+  // A clef change whose position falls inside [boundary, node_end) steers
+  // tail-note placement through clef_at(), but the main-region clef engraving
+  // only scans real MeasureLayout ranges, so it would never emit a glyph.
+  // Emit one here in pickdown coordinates with a stable, region-distinct id,
+  // mirroring the main-region interior clef-change glyph convention (x nudged
+  // one staff-space past the change position).
+  const Rational clef_boundary = timeline.boundary_position();
+  const Rational clef_node_end = timeline.node_end();
+  if (const ClefLane* clef_lane = timeline.clef_lane(staff.stave_id);
+      clef_lane != nullptr) {
+    for (const ClefChange& change : clef_lane->changes()) {
+      if (change.position < clef_boundary || change.position >= clef_node_end) {
+        continue;
+      }
+      const auto        components = change.position.to_components();
+      const std::string role       = "clef-change/pickdown/" +
+                               std::to_string(components.numerator) + "-" +
+                               std::to_string(components.denominator);
+      const NotationId change_id = make_id(staff.id.value, role);
+      const double     x =
+          pickdown_position_x(timeline, change.position, boundary_x,
+                              pickdown_width, content_inset) +
+          space;
+      if (!builder
+               .add_glyph(change_id, clef_glyph(change.clef),
+                          {x, staff.bounds.y},
+                          NotationId{staff.stave_id.to_string()})
+               .has_value()) {
+        return false;
+      }
+    }
+  }
+
+  const std::size_t measure_count = measure_map.measure_count();
+  std::array<std::vector<NotationEntityId>, 4> override_ids;
+  for (std::uint8_t voice_index = Voice::kMin; voice_index <= Voice::kMax;
+       ++voice_index) {
+    const IndexedVoice& voice_indexed =
+        indexed.voices[voice_index - Voice::kMin];
+    const std::size_t slot = voice_index - Voice::kMin;
+    region.dynamics[slot] =
+        pickdown_reference_ids(voice_indexed.dynamics, measure_count);
+    region.hairpins[slot] =
+        pickdown_reference_ids(voice_indexed.hairpins, measure_count);
+    region.slurs[slot] =
+        pickdown_reference_ids(voice_indexed.slurs, measure_count);
+    region.grace_groups[slot] =
+        pickdown_reference_ids(voice_indexed.grace_groups, measure_count);
+    override_ids[slot] =
+        pickdown_reference_ids(voice_indexed.beam_overrides, measure_count);
+
+    std::vector<IndexedEvent>& local_events = region.local_events[slot];
+    if (!voice_indexed.measures[measure_count - 1].empty()) {
+      local_events.push_back(voice_indexed.measures[measure_count - 1].back());
+    }
+    local_events.insert(local_events.end(), voice_indexed.pickdown.begin(),
+                        voice_indexed.pickdown.end());
+  }
+  region.beam_pairs =
+      compute_pickdown_beam_pairs(timeline, voices, indexed, override_ids);
+  return add_region_rhythm(builder, system, staff, voices, indexed,
+                           std::move(region));
+}
+
+[[nodiscard]] bool add_pickdown_content(
+    LayoutBuilder& builder, const SystemLayout& system,
+    const StaffSystemLayout& staff, const StaveVoices& voices,
+    const IndexedStaff& indexed, double boundary_x, double pickdown_width,
+    double content_inset) {
+  const NodeTimeline& timeline    = builder.timeline;
+  const MeasureMap&   measure_map = timeline.measures();
+  const double        space       = builder.options.staff_space;
+
+  std::vector<PedalSpan> pickdown_pedals;
+  for (const NotationEntityId& id :
+       pickdown_reference_ids(indexed.pedals, measure_map.measure_count())) {
+    pickdown_pedals.push_back(indexed.pedals.entries.at(id).record);
+  }
+  const Rational pickdown_start = timeline.boundary_position();
+  const Rational pickdown_end   = timeline.node_end();
+  // The pedal "down"/"up" glyphs sit at the region's clamped pedal endpoints,
+  // so their own injected metrics decide how far those endpoints may sit from
+  // the boundary/node-end barline instead of assuming FixedMetrics bounds. The
+  // up glyph also reserves a small slack so it never passes node-end.
+  const double pedal_down_left = glyph_left(
+      builder.metrics, smufl_codepoint(SmuflGlyph::kPedalDown), space);
+  const double pickdown_left_x =
+      boundary_x + std::max(space * 0.5, -pedal_down_left * space);
+  const double pickdown_right_x =
+      boundary_x + pickdown_width -
+      (glyph_right(builder.metrics, smufl_codepoint(SmuflGlyph::kPedalUp),
+                   space) +
+       0.25) *
+          space;
+  const auto pickdown_x_at = [&](Rational position) {
+    return pickdown_position_x(timeline, position, boundary_x, pickdown_width,
+                               content_inset);
+  };
+  if (!add_pedal_spans(builder, system, staff, pickdown_pedals, pickdown_start,
+                       pickdown_end, pickdown_left_x, pickdown_right_x,
+                       pickdown_x_at, false, "pickdown")) {
+    return false;
+  }
+  return add_pickdown_region(builder, system, staff, voices, indexed,
+                             boundary_x, pickdown_width, content_inset);
 }
 
 }  // namespace graphscore

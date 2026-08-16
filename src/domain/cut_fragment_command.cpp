@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <graphscore/core/result.hpp>
@@ -50,6 +51,11 @@ TrackLane* find_candidate(
 Result CutFragmentCommand::execute(Project& project) noexcept {
   if (state_ != State::kFresh)
     return Result(ResultCode::kInvalidArgument);
+
+  if (const auto* measures = std::get_if<FullMeasureSet>(&selection_);
+      measures != nullptr && measures->items().front().measure_count != 1u) {
+    return Result(ResultCode::kInvalidArgument);
+  }
 
   std::optional<CutCommitBundle> commit;
   try {

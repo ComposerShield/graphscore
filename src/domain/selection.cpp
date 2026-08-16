@@ -6,6 +6,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -476,7 +477,9 @@ std::vector<SelectionDiagnostic> validate_full_measure_set(
       continue;
     }
 
-    if (item.measure_index >= timeline->measures().measure_count()) {
+    const std::size_t timeline_count = timeline->measures().measure_count();
+    if (item.measure_index >= timeline_count ||
+        item.measure_count > timeline_count - item.measure_index) {
       diags.push_back(SelectionDiagnostic{
           i, SelectionDiagnosticCode::kMeasureIndexOutOfRange,
           "measure index out of range"});
@@ -692,6 +695,13 @@ std::optional<FullMeasureSet> FullMeasureSet::create(
     return std::nullopt;
   if (!all_distinct(items))
     return std::nullopt;
+  for (const FullMeasureItem& item : items) {
+    if (item.measure_count == 0 ||
+        item.measure_index >
+            std::numeric_limits<std::size_t>::max() - item.measure_count) {
+      return std::nullopt;
+    }
+  }
   return FullMeasureSet(std::move(items));
 }
 

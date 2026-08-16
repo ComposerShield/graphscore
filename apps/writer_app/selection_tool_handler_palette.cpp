@@ -238,7 +238,7 @@ bool SelectionToolHandler::staff_step_available(
       .has_value();
 }
 
-bool SelectionToolHandler::copy_cut_available() const {
+bool SelectionToolHandler::copy_available() const {
   const auto& committed = drag_.committed_selection();
   if (!committed.has_value()) {
     return false;
@@ -250,11 +250,25 @@ bool SelectionToolHandler::copy_cut_available() const {
   if (!is_measure && !is_range) {
     return false;
   }
-  // The exact extraction copy/cut will perform: a pure, non-mutating query
+  // The exact extraction copy will perform: a pure, non-mutating query
   // whose failure (stale entities, archived track, multi-node, mixed span,
   // mixed measure index, straddling tuplet, ...) is the same set
   // extract_fragment rejects.
   return graphscore::extract_fragment(project_, *committed).status.ok();
+}
+
+bool SelectionToolHandler::cut_available() const {
+  const auto& committed = drag_.committed_selection();
+  if (!committed.has_value() || !copy_available()) {
+    return false;
+  }
+  const auto* measures = std::get_if<graphscore::FullMeasureSet>(&*committed);
+  if (measures == nullptr) {
+    return true;
+  }
+  return std::ranges::all_of(measures->items(), [](const auto& item) {
+    return item.measure_count == 1u;
+  });
 }
 
 // M5-phase-28b: exact make_insert_measure_command/make_delete_measure_command
@@ -280,6 +294,12 @@ bool SelectionToolHandler::measure_delete_available() const {
   }
   return graphscore::make_delete_measure_command(project_, *committed) !=
          nullptr;
+}
+
+bool SelectionToolHandler::pickdown_clear_available() const {
+  const graphscore::Node* node = project_.find_node(layout_.node_id);
+  return node != nullptr && node->timeline() != nullptr &&
+         node->timeline()->pickdown_duration().has_value();
 }
 
 bool SelectionToolHandler::step_entry_cursor_live() const {
@@ -436,6 +456,10 @@ palette_interval(PaletteCommandId id) {
     case PaletteCommandId::kRemoveHairpin:
     case PaletteCommandId::kApplyPedalSpan:
     case PaletteCommandId::kRemovePedalSpan:
+    case PaletteCommandId::kApplyBeamBreak:
+    case PaletteCommandId::kApplyBeamJoin:
+    case PaletteCommandId::kRemoveBeamOverride:
+    case PaletteCommandId::kClearPickdown:
       return true;
     default:
       return false;
@@ -668,8 +692,9 @@ bool SelectionToolHandler::palette_command_available(
     case PaletteCommandId::kStaffStepNext:
       return staff_step_available(graphscore::StaffStepDirection::kNext);
     case PaletteCommandId::kCut:
+      return cut_available();
     case PaletteCommandId::kCopy:
-      return copy_cut_available();
+      return copy_available();
     case PaletteCommandId::kPaste:
       return paste_available();
     case PaletteCommandId::kUndo:
@@ -726,6 +751,21 @@ bool SelectionToolHandler::palette_command_available(
              graphscore::make_slur_edit_command(project_, *selection, edit)
                  .available();
     }
+    case PaletteCommandId::kApplyBeamBreak:
+    case PaletteCommandId::kApplyBeamJoin:
+    case PaletteCommandId::kRemoveBeamOverride: {
+      const auto& selection = drag_.committed_selection();
+      const auto  edit      = id == PaletteCommandId::kRemoveBeamOverride
+                                  ? graphscore::MarkingEdit::kRemove
+                                  : graphscore::MarkingEdit::kApply;
+      const auto  kind      = id == PaletteCommandId::kApplyBeamJoin
+                                  ? graphscore::BeamOverride::Kind::kJoin
+                                  : graphscore::BeamOverride::Kind::kBreak;
+      return selection.has_value() &&
+             graphscore::make_beam_override_edit_command(project_, *selection,
+                                                         edit, kind)
+                 .available();
+    }
     case PaletteCommandId::kStemAuto:
     case PaletteCommandId::kStemUp:
     case PaletteCommandId::kStemDown: {
@@ -780,6 +820,10 @@ bool SelectionToolHandler::palette_command_available(
                                                       *operation)
                  .available();
     }
+    case PaletteCommandId::kSetPickdownDuration:
+      return true;
+    case PaletteCommandId::kClearPickdown:
+      return pickdown_clear_available();
   }
   return false;
 }
@@ -866,7 +910,20 @@ std::string SelectionToolHandler::palette_command_unavailable_reason(
       return active_tool_ == graphscore::ActiveTool::kNoteEntry
                  ? "no eligible step-entry cursor or adjacent staff"
                  : "no eligible selection";
-    case PaletteCommandId::kCut:
+    case PaletteCommandId::kCut: {
+      const auto& committed = drag_.committed_selection();
+      if (committed.has_value()) {
+        if (const auto* measures =
+                std::get_if<graphscore::FullMeasureSet>(&*committed);
+            measures != nullptr &&
+            std::ranges::any_of(measures->items(), [](const auto& item) {
+              return item.measure_count != 1u;
+            })) {
+          return "multiple-measure cut is not supported";
+        }
+      }
+      return "requires a full-measure or range selection";
+    }
     case PaletteCommandId::kCopy:
       return "requires a full-measure or range selection";
     case PaletteCommandId::kPaste:
@@ -957,6 +1014,24 @@ std::string SelectionToolHandler::palette_command_unavailable_reason(
       return graphscore::make_slur_edit_command(project_, *selection, edit)
           .unavailable_reason;
     }
+    case PaletteCommandId::kApplyBeamBreak:
+    case PaletteCommandId::kApplyBeamJoin:
+    case PaletteCommandId::kRemoveBeamOverride: {
+      const auto& selection = drag_.committed_selection();
+      if (!selection.has_value()) {
+        return "requires an exact range of complete events on one live staff "
+               "and voice";
+      }
+      const auto edit = id == PaletteCommandId::kRemoveBeamOverride
+                            ? graphscore::MarkingEdit::kRemove
+                            : graphscore::MarkingEdit::kApply;
+      const auto kind = id == PaletteCommandId::kApplyBeamJoin
+                            ? graphscore::BeamOverride::Kind::kJoin
+                            : graphscore::BeamOverride::Kind::kBreak;
+      return graphscore::make_beam_override_edit_command(project_, *selection,
+                                                         edit, kind)
+          .unavailable_reason;
+    }
     case PaletteCommandId::kStemAuto:
     case PaletteCommandId::kStemUp:
     case PaletteCommandId::kStemDown: {
@@ -1015,6 +1090,10 @@ std::string SelectionToolHandler::palette_command_unavailable_reason(
                                                       *operation)
           .unavailable_reason;
     }
+    case PaletteCommandId::kSetPickdownDuration:
+      return "";
+    case PaletteCommandId::kClearPickdown:
+      return "no pickdown to clear";
   }
   return "";
 }
@@ -1318,6 +1397,22 @@ bool SelectionToolHandler::run_palette_command(PaletteCommandId id) {
       return edit_selected_slur(graphscore::MarkingEdit::kApply);
     case PaletteCommandId::kRemoveSlur:
       return edit_selected_slur(graphscore::MarkingEdit::kRemove);
+    case PaletteCommandId::kApplyBeamBreak:
+      return edit_selected_beam_override(
+          graphscore::MarkingEdit::kApply,
+          graphscore::BeamOverride::Kind::kBreak);
+    case PaletteCommandId::kApplyBeamJoin:
+      return edit_selected_beam_override(graphscore::MarkingEdit::kApply,
+                                         graphscore::BeamOverride::Kind::kJoin);
+    case PaletteCommandId::kRemoveBeamOverride:
+      return edit_selected_beam_override(
+          graphscore::MarkingEdit::kRemove,
+          graphscore::BeamOverride::Kind::kBreak);
+    case PaletteCommandId::kSetPickdownDuration:
+      request_pickdown_duration_entry();
+      return true;
+    case PaletteCommandId::kClearPickdown:
+      return clear_pickdown();
   }
   return false;
 }

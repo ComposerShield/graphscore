@@ -1199,6 +1199,25 @@ bool SelectionToolHandler::edit_selected_slur(graphscore::MarkingEdit edit) {
       edit == graphscore::MarkingEdit::kRemove);
 }
 
+bool SelectionToolHandler::edit_selected_beam_override(
+    graphscore::MarkingEdit edit, graphscore::BeamOverride::Kind kind) {
+  if (history_.poisoned()) {
+    post_diagnostic("beam override: command history is unavailable");
+    return false;
+  }
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value()) {
+    post_diagnostic(
+        "beam override: requires an exact range of complete events on one "
+        "live staff and voice");
+    return false;
+  }
+  return run_marking_edit("beam override",
+                          graphscore::make_beam_override_edit_command(
+                              project_, *selection, edit, kind),
+                          false);
+}
+
 void SelectionToolHandler::request_tuplet_ratio_entry() {
   tuplet_ratio_entry_requested_ = true;
   post_diagnostic("tuplet ratio: enter played N and normal M, then apply N:M");
@@ -1206,6 +1225,118 @@ void SelectionToolHandler::request_tuplet_ratio_entry() {
 
 bool SelectionToolHandler::tuplet_ratio_entry_requested() const noexcept {
   return tuplet_ratio_entry_requested_;
+}
+
+void SelectionToolHandler::request_pickdown_duration_entry() {
+  pickdown_duration_entry_requested_ = true;
+  post_diagnostic("pickdown: enter a node-end duration, then apply it");
+}
+
+bool SelectionToolHandler::pickdown_duration_entry_requested() const noexcept {
+  return pickdown_duration_entry_requested_;
+}
+
+bool SelectionToolHandler::apply_pickdown_duration(
+    graphscore::Rational duration) {
+  pickdown_duration_entry_requested_ = false;
+  if (history_.poisoned()) {
+    post_diagnostic("pickdown: command history is unavailable");
+    return false;
+  }
+  const graphscore::Node* node = project_.find_node(layout_.node_id);
+  if (node == nullptr || node->timeline() == nullptr) {
+    post_diagnostic("pickdown: no current node timeline");
+    return false;
+  }
+  // Validate the bounds the domain's NodeTimeline::set_pickdown will enforce
+  // (strictly positive and strictly shorter than the final main measure), so
+  // an invalid duration is diagnosed before any mutation or transaction.
+  const graphscore::MeasureMap& measures    = node->timeline()->measures();
+  const std::size_t             final_index = measures.measure_count() - 1;
+  const graphscore::Rational    final_length =
+      measures.measure_length(final_index);
+  if (!(duration > graphscore::Rational(0)) || !(duration < final_length)) {
+    post_diagnostic(
+        "pickdown: duration must be greater than zero and shorter than the "
+        "final measure");
+    return false;
+  }
+  const std::optional<graphscore::NotationInvalidation> invalidation =
+      pickdown_invalidation();
+  if (!invalidation.has_value()) {
+    post_diagnostic("pickdown: cannot invalidate layout");
+    return false;
+  }
+  auto command = std::make_unique<graphscore::SetPickdownCommand>(
+      layout_.node_id, duration);
+  graphscore::CommandHistory::Transaction transaction =
+      history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active()) {
+    post_diagnostic(
+        "pickdown: duration rejected (tempo lane invalid or history is full)");
+    return false;
+  }
+  if (!refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      recover_from_failed_rollback();
+      return false;
+    }
+    layout_cache_.reset();
+    warm_layout_cache();
+    post_diagnostic("pickdown: layout refresh failed");
+    return false;
+  }
+  if (!transaction.commit().ok()) {
+    post_diagnostic("pickdown: commit failed");
+    return false;
+  }
+  return true;
+}
+
+bool SelectionToolHandler::clear_pickdown() {
+  pickdown_duration_entry_requested_ = false;
+  if (history_.poisoned()) {
+    post_diagnostic("clear pickdown: command history is unavailable");
+    return false;
+  }
+  const graphscore::Node* node = project_.find_node(layout_.node_id);
+  if (node == nullptr || node->timeline() == nullptr ||
+      !node->timeline()->pickdown_duration().has_value()) {
+    post_diagnostic("clear pickdown: no pickdown to clear");
+    return false;
+  }
+  const std::optional<graphscore::NotationInvalidation> invalidation =
+      pickdown_invalidation();
+  if (!invalidation.has_value()) {
+    post_diagnostic("clear pickdown: cannot invalidate layout");
+    return false;
+  }
+  auto command =
+      std::make_unique<graphscore::ClearPickdownCommand>(layout_.node_id);
+  graphscore::CommandHistory::Transaction transaction =
+      history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active()) {
+    post_diagnostic(
+        "clear pickdown: rejected (tempo lane invalid or history is full)");
+    return false;
+  }
+  if (!refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      recover_from_failed_rollback();
+      return false;
+    }
+    layout_cache_.reset();
+    warm_layout_cache();
+    post_diagnostic("clear pickdown: layout refresh failed");
+    return false;
+  }
+  if (!transaction.commit().ok()) {
+    post_diagnostic("clear pickdown: commit failed");
+    return false;
+  }
+  return true;
 }
 
 // Primary+Up/Down (M5-phase-24): moves the committed selection to the

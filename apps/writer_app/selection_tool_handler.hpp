@@ -109,6 +109,26 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   bool edit_selected_pedal_span(graphscore::MarkingEdit edit);
   bool edit_selected_tie(graphscore::MarkingEdit edit);
   bool edit_selected_slur(graphscore::MarkingEdit edit);
+  bool edit_selected_beam_override(graphscore::MarkingEdit        edit,
+                                   graphscore::BeamOverride::Kind kind);
+
+  // ---- pickdown (M5-phase-31, palette-only) --------------------------------
+
+  // Toolkit-neutral parameter-entry handoff, exactly like the tuplet-ratio
+  // row: a platform dialog/AT observes this and calls apply_pickdown_duration.
+  void               request_pickdown_duration_entry();
+  [[nodiscard]] bool pickdown_duration_entry_requested() const noexcept;
+
+  // Sets the current editor node's (layout_.node_id) pickdown duration as one
+  // reversible SetPickdownCommand, refreshing layout transactionally. Requires
+  // a duration strictly greater than zero and strictly shorter than the final
+  // main measure; an invalid duration, a missing timeline, or a failed refresh
+  // is a no-op with a diagnostic and leaves project/history/layout atomic.
+  bool apply_pickdown_duration(graphscore::Rational duration);
+
+  // Clears the current editor node's pickdown as one reversible
+  // ClearPickdownCommand. A no-op with a diagnostic when no pickdown exists.
+  bool clear_pickdown();
 
   // Toolkit-neutral parameter-entry handoff established by the palette row.
   // A platform dialog/AT can observe this and call apply_tuplet_ratio().
@@ -569,7 +589,9 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // extraction would succeed: a FullMeasureSet or ArbitraryRangeSet sharing
   // one node and one measure index / identical span, passing
   // validate_selection -- the same preconditions extract_fragment enforces.
-  [[nodiscard]] bool copy_cut_available() const;
+  [[nodiscard]] bool copy_available() const;
+
+  [[nodiscard]] bool cut_available() const;
 
   // Exact PasteFragmentCommand eligibility against a project value copy.
   [[nodiscard]] bool paste_available() const;
@@ -584,6 +606,16 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // Exact make_delete_measure_command eligibility for the committed
   // selection, including the sole-measure guard.
   [[nodiscard]] bool measure_delete_available() const;
+
+  // Exact clear-pickdown eligibility: the current editor node still owns a
+  // timeline carrying a pickdown (M5-phase-31).
+  [[nodiscard]] bool pickdown_clear_available() const;
+
+  // The kMeasureStructure invalidation for a pickdown set/clear: the final
+  // measure ordinal as both first_measure and last_measure, which invalidates
+  // only the final system(s) whose geometry the pickdown region extends.
+  [[nodiscard]] std::optional<graphscore::NotationInvalidation>
+  pickdown_invalidation() const;
 
   [[nodiscard]] bool tuplet_ratio_available(
       graphscore::TupletRatio ratio) const;
@@ -653,7 +685,9 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   graphscore::NotationLayoutWork last_layout_work_;
   // True once the pointer has moved during the current drag, so a
   // press-and-release-without-move is distinguished from a genuine range drag.
-  bool                      moved_during_drag_ = false;
+  bool                      moved_during_drag_      = false;
+  bool                      measure_selection_drag_ = false;
+  graphscore::NotationPoint measure_selection_anchor_{};
   graphscore::ActiveTool    active_tool_ = graphscore::ActiveTool::kSelection;
   graphscore::PointerButton initiating_button_ =
       graphscore::PointerButton::kUnknown;
@@ -705,8 +739,9 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // The nonvisual command-palette model (§11).
   bool        palette_open_ = false;
   std::string palette_filter_;
-  std::size_t palette_selected_index_       = 0;
-  bool        tuplet_ratio_entry_requested_ = false;
+  std::size_t palette_selected_index_            = 0;
+  bool        tuplet_ratio_entry_requested_      = false;
+  bool        pickdown_duration_entry_requested_ = false;
 
   // The app-owned composer diagnostic sink (§1, §8.5, §10): appended by
   // every rejected action's fallback, observable and resettable by tests.

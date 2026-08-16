@@ -54,6 +54,7 @@ add_library(graphscore_domain STATIC
   pickdown_ownership.cpp
   project.cpp
   register_event_command.cpp
+  replace_beam_override_command.cpp
   remove_beam_override_command.cpp
   remove_clef_change_command.cpp
   remove_dynamic_command.cpp

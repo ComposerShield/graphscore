@@ -39,6 +39,7 @@ add_executable(graphscore_writer_app
   writer_app/selftests/selftest_notehead_delete.cpp
   writer_app/selftests/selftest_notehead_move.cpp
   writer_app/selftests/selftest_notehead_move_rollback.cpp
+  writer_app/selftests/selftest_pickdown_edit.cpp
   writer_app/selftests/selftest_renderer_backend.cpp
   writer_app/selftests/selftest_render_geometry.cpp
   writer_app/selftests/selftest_renderer_present.cpp

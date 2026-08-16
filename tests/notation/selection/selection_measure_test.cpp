@@ -42,6 +42,25 @@ TEST(MeasureSelectionTest, BlankMeasureClickSelectsOneFullMeasure) {
 }
 
 TEST(MeasureSelectionTest,
+     MeasureAlignedDragSelectsContiguousCompleteMeasures) {
+  Fixture              fixture(3);
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+
+  const auto selection = resolve_measure_range_selection(
+      fixture.project, layout, staff_center(layout, 0, 2),
+      staff_center(layout, 0, 0));
+  ASSERT_TRUE(selection.has_value());
+  const auto* set = std::get_if<FullMeasureSet>(&*selection);
+  ASSERT_NE(set, nullptr);
+  ASSERT_EQ(set->items().size(), 1u);
+  EXPECT_EQ(set->items().front().measure_index, 0u);
+  EXPECT_EQ(set->items().front().measure_count, 3u);
+  EXPECT_TRUE(validate_selection(fixture.project, *selection).empty());
+}
+
+TEST(MeasureSelectionTest,
      GrandStaffClicksNameTheSameMeasureOnDifferentStaves) {
   Fixture fixture({StaffLayout::grand_staff()}, 1);
 

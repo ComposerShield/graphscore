@@ -34,6 +34,16 @@ void SelectionToolHandler::on_pointer_press(graphscore::PointerEvent event) {
     note_entry_press_point_   = point;
     return;
   }
+  if (event.measure_selection) {
+    if (drag_.is_dragging()) {
+      drag_.cancel();
+    }
+    measure_selection_drag_   = true;
+    measure_selection_anchor_ = point;
+    initiating_button_        = event.button;
+    moved_during_drag_        = false;
+    return;
+  }
   if (!drag_.begin(active_tool_, point)) {
     // begin() cancels any prior drag and returns false; committed_selection_
     // persists.  Show whatever highlight fits (committed, if any, or clear).
@@ -52,6 +62,10 @@ void SelectionToolHandler::on_pointer_move(graphscore::PointerEvent event) {
     // A move during a note-entry press cancels the click (there is no
     // note-entry drag gesture).
     note_entry_press_pending_ = false;
+    return;
+  }
+  if (measure_selection_drag_) {
+    moved_during_drag_ = true;
     return;
   }
   if (!drag_.is_dragging()) {
@@ -79,6 +93,20 @@ void SelectionToolHandler::on_pointer_release(graphscore::PointerEvent event) {
       return;
     }
     note_entry_press_pending_ = false;
+    return;
+  }
+  if (measure_selection_drag_) {
+    if (event.button != initiating_button_) {
+      return;
+    }
+    measure_selection_drag_ = false;
+    const graphscore::NotationPoint point{event.x, event.y};
+    auto selection = graphscore::resolve_measure_range_selection(
+        project_, layout_, measure_selection_anchor_, point);
+    if (selection.has_value()) {
+      drag_.set_committed_selection(std::move(selection));
+    }
+    update_highlight();
     return;
   }
   if (!drag_.is_dragging()) {
@@ -132,6 +160,7 @@ void SelectionToolHandler::on_pointer_release(graphscore::PointerEvent event) {
 
 void SelectionToolHandler::on_cancel() {
   note_entry_press_pending_ = false;
+  measure_selection_drag_   = false;
   if (drag_.is_dragging()) {
     drag_.cancel();
   }

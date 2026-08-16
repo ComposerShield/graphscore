@@ -6,6 +6,7 @@ add_executable(graphscore_notation_test
   headers/notation_palette_smoke_test.cpp
   headers/notation_selection_smoke_test.cpp
   headers/notation_types_smoke_test.cpp
+  beam_override_edit_test.cpp
   event_style_edit_test.cpp
   marking_style_edit_test.cpp
   measure_edit_test.cpp
@@ -14,6 +15,7 @@ add_executable(graphscore_notation_test
   note_entry_test.cpp
   note_palette_test.cpp
   note_preview_test.cpp
+  pickdown_layout_test.cpp
   tuplet_edit_test.cpp
   selection/selection_drag_lifecycle_test.cpp
   selection/selection_highlight_rects_test.cpp

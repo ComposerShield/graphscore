@@ -26,9 +26,10 @@ namespace graphscore {
 // normalized rests (attack was inside the cut range). A straddling tuplet
 // fails the whole cut with kInvalidArgument, leaving the project unchanged.
 // Only the selected (track, stave, voice) triples are touched — for a
-// FullMeasureSet selection that is every voice of each selected stave; for
-// an ArbitraryRangeSet selection that is exactly the named (stave, voice)
-// pairs.
+// single-measure FullMeasureSet selection that is every voice of each selected
+// stave; for an ArbitraryRangeSet selection that is exactly the named (stave,
+// voice) pairs. A multi-measure FullMeasureSet is rejected with
+// kInvalidArgument before extraction or mutation.
 //
 // Markings anchored to a removed event are dropped, exactly as
 // PasteFragmentCommand documents. Pedal spans (TrackLane-scoped)

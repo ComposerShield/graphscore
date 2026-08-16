@@ -255,6 +255,19 @@ const std::vector<PaletteCommand> kInventory = [] {
       "Apply a slur across the selected single-voice event range");
   add(PaletteCommandId::kRemoveSlur, "Remove slur", "",
       "Remove the selected slur marking");
+  add(PaletteCommandId::kApplyBeamBreak, "Apply beam break", "",
+      "Apply a manual beam break across the selected event range");
+  add(PaletteCommandId::kApplyBeamJoin, "Apply beam join", "",
+      "Apply a manual beam join across the selected event range");
+  add(PaletteCommandId::kRemoveBeamOverride, "Remove beam override", "",
+      "Remove the manual beam override on the selected exact event range");
+
+  // M5-phase-31 pickdown: a parameterized set route and a clear route,
+  // both chord-less and palette-only.
+  add(PaletteCommandId::kSetPickdownDuration, "Pickdown duration (node end)...",
+      "", "Request a node-end pickdown duration, then apply it to the node");
+  add(PaletteCommandId::kClearPickdown, "Clear pickdown", "",
+      "Clear the node's trailing pickdown region");
 
   return rows;
 }();

@@ -233,8 +233,8 @@ listed separately in §7.6.
 |---|---|---|---|---|---|
 | Primary+Up | Staff step to prior staff, wrapping (24) | Both | single `NoteheadSet`/`ChordSet`/`RestSet`/`InsertionCaretSet` | no-op | safe |
 | Primary+Down | Staff step to next staff, wrapping (24) | Both | same as Primary+Up | no-op | safe |
-| Primary+X | Cut selection to in-memory clipboard (27) | Any | `FullMeasureSet` or `ArbitraryRangeSet` (valid) | no-op + diagnostic; clipboard preserved (§10) | once |
-| Primary+C | Copy selection to in-memory clipboard (27) | Any | `FullMeasureSet` or `ArbitraryRangeSet` (valid) | no-op + diagnostic; clipboard preserved (§10) | safe |
+| Primary+X | Cut selection to in-memory clipboard (27) | Any | single-measure `FullMeasureSet` or valid `ArbitraryRangeSet` | no-op + diagnostic; clipboard preserved (§10) | once |
+| Primary+C | Copy selection to in-memory clipboard (27) | Any | contiguous one-or-more-measure `FullMeasureSet` or valid `ArbitraryRangeSet` | no-op + diagnostic; clipboard preserved (§10) | safe |
 | Primary+V | Paste in-memory clipboard at caret/anchor (27) | Any | non-empty clipboard + derivable `PasteAnchor` (§10) | no-op + diagnostic (§10) | once |
 | Primary+Z | Undo (27) | Any | `CommandHistory` (selection-independent) | no-op on empty undo stack | safe |
 | Primary+K | Toggle command palette (27) | Any | — | — | once |
@@ -503,17 +503,20 @@ produced it.
 
 ### 10.1 Copy and cut
 
-- **Eligible selections.** Copy and cut accept exactly the arms
-  `extract_fragment` whitelists: `FullMeasureSet` and `ArbitraryRangeSet`,
-  each satisfying its own preconditions (single node; single measure index or
-  single span). Every other arm — notehead, chord, rest, marking, node,
-  connector, caret — is an ineligible copy/cut target and is a no-op with a
-  diagnostic. (Copying a run of rests is expressed as the `ArbitraryRangeSet`
-  covering them.)
+- **Eligible selections.** Copy accepts exactly the arms `extract_fragment`
+  whitelists: `FullMeasureSet`, including a contiguous multi-measure set, and
+  `ArbitraryRangeSet`, each satisfying its own preconditions (single node;
+  one shared measure range or one shared span). Cut accepts the same
+  `ArbitraryRangeSet` selections but only a single-measure `FullMeasureSet`;
+  multi-measure cut is outside M5-phase-32. Every other arm — notehead, chord,
+  rest, marking, node, connector, caret — is an ineligible copy/cut target and
+  is a no-op with a diagnostic. (Copying a run of rests is expressed as the
+  `ArbitraryRangeSet` covering them.)
 - **Copy (`Primary+C`)** is a pure extraction: on success the extracted
   `NotationFragment` **replaces** the in-memory clipboard and the project is
   unchanged; on failure the clipboard is **preserved** (left exactly as it was)
-  and a diagnostic is reported.
+  and a diagnostic is reported. A contiguous multi-measure `FullMeasureSet`
+  copies its complete measure span.
 - **Cut (`Primary+X`)** is extraction plus range-clearing in one reversible
   command: on success the command's `fragment()` **replaces** the clipboard,
   the selection's range is replaced by normalized rests, the command is pushed
@@ -606,11 +609,11 @@ is the greatest power of two strictly below `N` (`3:2`, `5:4`, `7:4`, `9:8`,
 
 ### 10.4 Marking style actions (M5-phase-30)
 
-Articulations, stem overrides, dynamics, hairpins, pedal spans, ties, and slurs are
-chord-less command-palette actions. They consume no key at all — neither a
-letter, which `A`–`G` step entry and `N`/`R` already own, nor a digit, which
-the `2`–`8` interval bindings own — so §7's binding table is unchanged by
-them and the reservations in §7.6/§7.7 stand.
+Articulations, stem overrides, dynamics, hairpins, pedal spans, ties, slurs,
+and beam overrides are chord-less command-palette actions. They consume no key
+at all — neither a letter, which `A`–`G` step entry and `N`/`R` already own,
+nor a digit, which the `2`–`8` interval bindings own — so §7's binding table
+is unchanged by them and the reservations in §7.6/§7.7 stand.
 
 - **Apply articulation** (one row per articulation) requires one selected
   note or chord event and adds that articulation to it. **Change
@@ -662,6 +665,16 @@ them and the reservations in §7.6/§7.7 stand.
   requires exactly one selected slur marking and clears that now-stale marking
   selection. There is no change action because a slur has no style attribute;
   endpoint dragging is future work.
+- **Apply beam break / apply beam join** require an exact, non-empty
+  `ArbitraryRangeSet` of at least two complete contiguous beamable events on
+  one staff and one voice. The ordered selected events define every adjacent
+  pair governed by the override. Applying the kind already present on that
+  exact range is rejected; applying the opposite kind replaces it while
+  preserving its identity and precedence among overlapping overrides.
+  **Remove beam override** removes the override on that exact range. Beam
+  editing remains range-based: beam overrides have no marking selection or hit
+  geometry, and the range selection survives apply, replacement, removal,
+  undo, and redo.
 
 Stale selections, wrong selection arms, grace notes (which carry no
 event-anchored marking of their own), and edits that would change nothing are
@@ -669,6 +682,34 @@ rejected with a diagnostic and no mutation. Every mutation is one undoable
 command, and availability is computed by constructing the same notation-layer
 command execution uses, so a row is enabled exactly when running it would
 succeed.
+
+### 10.5 Pickdown actions (M5-phase-31)
+
+The pickdown actions are chord-less command-palette rows. They consume no key
+and leave §7's binding table unchanged.
+
+- **Pickdown duration (node end)...**
+  (`PaletteCommandId::kSetPickdownDuration`) has an empty chord hint and is
+  always available as a request for parameter input. Running it calls
+  `request_pickdown_duration_entry()`; the platform presentation or
+  assistive-technology client then supplies a `Rational` duration to
+  `apply_pickdown_duration`. A valid duration is greater than zero and strictly
+  shorter than the final main-region measure. Applying it executes one
+  reversible `SetPickdownCommand` and refreshes the final measure/system through
+  one transactional measure-structure invalidation. The request row's
+  availability does not promise that applying the supplied value will succeed:
+  unusable history, a missing current-node timeline, an invalid duration or
+  tempo-lane result, and refresh or commit failure each reject the apply with a
+  diagnostic and no partial edit.
+- **Clear pickdown** (`PaletteCommandId::kClearPickdown`) has an empty chord
+  hint and executes one reversible `ClearPickdownCommand`. It is available only
+  when command history is usable and the current editor node has a timeline
+  carrying a pickdown. Otherwise it is disabled with `command history is
+  unavailable` or `no pickdown to clear`, as applicable.
+
+Both actions address the current editor node (`layout_.node_id`) rather than
+the committed `Selection`; neither requires a musical selection. They add no
+key binding.
 
 ## 11. Command palette (complete normative route)
 
@@ -691,21 +732,25 @@ action in this table, and it is what makes the numpad-only bindings
   row per articulation), remove articulation, the three stem-direction rows,
   apply/change dynamic (one row per dynamic), remove dynamic, apply
   crescendo/diminuendo, change hairpin to crescendo/diminuendo, remove
-  hairpin, apply pedal span, remove pedal span, apply/remove tie, and
-  apply/remove slur. Every one of those
-  chord-less rows — the structural, tuplet, and marking style rows alike —
-  carries an **empty chord hint**: they are deliberately **not** bound to any
-  key chord (no row in §7 names them), so §7's `(chord, key)` space is
+  hairpin, apply pedal span, remove pedal span, apply/remove tie,
+  apply/remove slur, apply beam break, apply beam join, and remove beam
+  override; and M5-phase-31's two pickdown rows in §10.5 — request a node-end
+  pickdown duration and clear the current pickdown. Every one of those
+  chord-less rows — the structural, tuplet, marking-style, and pickdown rows
+  alike — carries an **empty chord hint**: they are deliberately **not** bound
+  to any key chord (no row in §7 names them), so §7's `(chord, key)` space is
   unchanged by their addition and §12's claim that this space is exhaustively
   enumerable still holds. Each row carries a stable **name**, its **chord
   hint** (empty for the chord-less accessible controls, structural actions,
-  and marking style actions), a one-line description, and a live
-  **availability** state.
+  tuplet actions, marking-style actions, and pickdown actions), a one-line
+  description, and a live **availability** state.
 - **Availability.** A row's availability is derived from the same precondition
-  and fallback logic as its chord row, for a row that has one: "Cut" is
-  available exactly when a valid `FullMeasureSet` or `ArbitraryRangeSet` is
-  committed; "Paste" when the clipboard is non-empty and a `PasteAnchor` can
-  be derived (§10); the duration/rest/dots rows are available exactly when
+  and fallback logic as its chord row, for a row that has one: "Copy" is
+  available for a valid contiguous one-or-more-measure `FullMeasureSet` or
+  valid `ArbitraryRangeSet`; "Cut" accepts the same ranges but only a
+  single-measure `FullMeasureSet`; "Paste" when the clipboard is non-empty and
+  a `PasteAnchor` can be derived (§10); the duration/rest/dots rows are
+  available exactly when
   `kNoteEntry` is active (they are Entry-tool actions). A chord-less row's
   availability is its own precondition: each structural measure-editing row
   is available exactly when the operation it names would succeed, so "Delete
@@ -718,8 +763,8 @@ action in this table, and it is what makes the numpad-only bindings
   palette never switches tools or performs a broader operation than the chord).
   A chord-less row performs its own action under its own precondition; like
   the clipboard and history rows of §7.3, the structural measure-editing,
-  tuplet, and marking style rows are ungated by tool, since their
-  precondition is a committed selection rather than an active tool.
+  tuplet, marking-style, and pickdown rows are ungated by tool. Their own
+  selection or current-node preconditions apply rather than the active tool.
 - **Search.** The filter matches the name and description, case-insensitively;
   filtering never changes an action's availability or chord hint.
 
