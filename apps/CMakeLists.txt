@@ -12,6 +12,7 @@ add_executable(graphscore_writer_app
   writer_app/app_project.cpp
   writer_app/app_run.cpp
   writer_app/app_shell_report.cpp
+  writer_app/canvas_gesture_handler.cpp
   writer_app/command_palette.cpp
   writer_app/selection_tool_handler.cpp
   writer_app/selection_tool_handler_clipboard.cpp
@@ -39,10 +40,15 @@ add_executable(graphscore_writer_app
   writer_app/selftests/selftest_notehead_move.cpp
   writer_app/selftests/selftest_notehead_move_rollback.cpp
   writer_app/selftests/selftest_pickdown_edit.cpp
+  writer_app/selftests/selftest_renderer_backend.cpp
+  writer_app/selftests/selftest_render_geometry.cpp
+  writer_app/selftests/selftest_renderer_present.cpp
+  writer_app/selftests/selftest_renderer_zoom.cpp
   writer_app/selftests/selftest_selection_tool.cpp
   writer_app/selftests/selftest_selection_tool_shell.cpp
   writer_app/selftests/selftest_staff_step.cpp
   writer_app/selftests/selftest_step_entry.cpp
+  writer_app/selftests/selftest_trackpad_gesture.cpp
   writer_app/selftests/selftest_tuplet_edit.cpp
   writer_app/selftests/selftest_support.cpp
 )

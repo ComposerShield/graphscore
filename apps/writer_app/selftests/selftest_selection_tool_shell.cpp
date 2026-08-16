@@ -42,16 +42,21 @@ namespace graphscore::writer_app {
 // upload-readback, committed-selection highlight persistence across cancel,
 // and texture failure non-success.
 //
-// The test seam applies the same DPI scale conversion contract as the
-// production SDL_ConvertEventToRenderCoordinates path, so coordinate
-// assertions hold for both paths.  Texture-readback assertions use
+// The production pointer seam (dispatch_sdl_test_pointer_event) builds SDL
+// mouse events in window-coordinate units (points) tagged with the shell's
+// real window ID, so the coordinate assertions below exercise the actual
+// SDL_ConvertEventToRenderCoordinates window→render conversion rather than a
+// fabricated "logical × DPI" pixel space. Texture-readback assertions use
 // SDL_RenderReadPixels; they verify channel-order integrity and are not
 // framebuffer-pixel-accuracy claims.
 //
-// A genuinely absent display (kBackendUnavailable) or absent GPU
-// (kRendererUnavailable) is a skip-match; a rendering-setup defect such as
-// a texture creation or upload failure (kRenderingSetupFailed) is a hard
-// test failure and does not match the PASS regex.
+// Only a genuinely absent display (kBackendUnavailable) is a skip-match: SDL
+// video initialisation itself failed, so there is no window to test against.
+// A renderer failure (kRendererUnavailable) means video initialised and the
+// window was created but the ADR-locked GPU renderer failed — a real defect
+// on a display-capable machine — and a rendering-setup defect such as a
+// texture creation or upload failure (kRenderingSetupFailed) is likewise a
+// hard test failure. Neither matches the PASS regex.
 int selection_tool_shell_test() {
   // ---- pre-open surface validation (display-independent) ----
   // set_notation_surface validates dimensions and buffer size eagerly,
@@ -229,12 +234,14 @@ int selection_tool_shell_test() {
 
   const graphscore::ShellResult result = shell.open_window(options);
   if (!result.ok()) {
+    // Only a genuinely absent display is a benign headless skip. A
+    // kRendererUnavailable (video initialised, window created, GPU renderer
+    // failed) is a real defect on a display-capable machine and must fail.
     const bool is_benign_headless =
-        result.error == graphscore::ShellError::kBackendUnavailable ||
-        result.error == graphscore::ShellError::kRendererUnavailable;
+        result.error == graphscore::ShellError::kBackendUnavailable;
     std::fprintf(stderr, "selection-tool-shell-test: open_window failed: %s\n",
                  is_benign_headless
-                     ? "no display or renderer — headless host (skip)"
+                     ? "no display available — headless host (skip)"
                      : result.message.c_str());
     shell.set_input_handler(nullptr);
     return is_benign_headless ? 0 : 1;
@@ -252,10 +259,14 @@ int selection_tool_shell_test() {
     return e;
   };
 
-  // ---- exact coordinate assertions at 1x DPI (production SDL path) ----
-  // Route pixel-space coordinates through dispatch_sdl_test_pointer_event,
-  // which exercises SDL_ConvertEventToRenderCoordinates.  At 1x DPI,
-  // pixel and logical coordinates are identical.
+  // ---- exact coordinate assertions at production DPI (production SDL
+  //     path) ----
+  // Route window-coordinate (point) values through
+  // dispatch_sdl_test_pointer_event, which builds a real SDL mouse event with
+  // the shell's window ID and exercises SDL_ConvertEventToRenderCoordinates.
+  // In production the render scale equals the window's DPI scale, so the
+  // window→render conversion is the identity: a click at window point P lands
+  // at notation point P regardless of the display's DPI scale.
   {
     const double press_x = layout.systems[0].measures[0].bounds.x;
     const double press_y = layout.systems[0].staves[0].bounds.y +
@@ -264,19 +275,22 @@ int selection_tool_shell_test() {
     shell.dispatch_sdl_test_pointer_event(0, make_event(press_x, press_y));
     if (!handler.drag_state().is_dragging()) {
       std::fprintf(stderr,
-                   "selection-tool-shell-test: drag did not begin at 1x "
-                   "(production SDL path)\n");
+                   "selection-tool-shell-test: drag did not begin at "
+                   "production DPI (production SDL path)\n");
       shell.set_input_handler(nullptr);
       return 1;
     }
-    // Anchor must be exactly the press position (at 1x DPI,
-    // SDL_ConvertEventToRenderCoordinates is the identity).
+    // Anchor must be the press position: with the render scale equal to the
+    // DPI scale, SDL_ConvertEventToRenderCoordinates is the identity. The
+    // 1e-4 tolerance absorbs the double→float round-trip through SDL's float
+    // coordinate conversion (a real scale/window mismatch would be orders of
+    // magnitude larger).
     const graphscore::NotationPoint anchor = handler.drag_state().anchor();
-    if (std::abs(anchor.x - press_x) > 1e-9 ||
-        std::abs(anchor.y - press_y) > 1e-9) {
+    if (std::abs(anchor.x - press_x) > 1e-4 ||
+        std::abs(anchor.y - press_y) > 1e-4) {
       std::fprintf(stderr,
-                   "selection-tool-shell-test: anchor mismatch at 1x: "
-                   "expected (%.2f, %.2f), got (%.2f, %.2f)\n",
+                   "selection-tool-shell-test: anchor mismatch at production "
+                   "DPI: expected (%.2f, %.2f), got (%.2f, %.2f)\n",
                    press_x, press_y, anchor.x, anchor.y);
       shell.set_input_handler(nullptr);
       return 1;
@@ -375,78 +389,158 @@ int selection_tool_shell_test() {
     }
   }
 
-  // ---- 2x DPI scale: press, move, release, exact converted anchor ----
-  // Use dispatch_sdl_test_pointer_event which routes through the production
-  // SDL_ConvertEventToRenderCoordinates path.  set_test_dpi_scale also
-  // pushes the scale to the renderer via SDL_SetRenderScale so the
-  // conversion path sees the correct 2x mapping.
+  // ---- real-renderer window↔render coordinate semantics on high DPI ------
+  // SDL mouse events carry window-coordinate units (points), not pixels. The
+  // production path converts them via SDL_ConvertEventToRenderCoordinates,
+  // which multiplies by the window's DPI scale (pixel_size/logical_size) and
+  // divides by the render scale set by SDL_SetRenderScale; in production both
+  // are equal, so the conversion is the identity regardless of the display's
+  // DPI scale. This block asserts that semantics through the production
+  // seams — the window→render round-trip and the real-window-ID dispatch —
+  // rather than fabricating "logical × DPI" pixel coordinates, and derives
+  // each axis from its own measured DPI scale — SDL computes X and Y
+  // independently and fractional size rounding can make them differ — rather
+  // than assuming a particular (e.g. Retina 2×) or equal scale.
   handler.set_active_tool(graphscore::ActiveTool::kSelection);
-  shell.set_test_dpi_scale(2.0);
   {
-    // Pixel-space coordinates at the logical position × 2.  The SDL
-    // production path converts these through
-    // SDL_ConvertEventToRenderCoordinates with the 2x render scale, yielding
-    // the correct logical position.
     const double logical_x = layout.systems[0].measures[0].bounds.x;
     const double logical_y = layout.systems[0].staves[0].bounds.y +
                              layout.systems[0].staves[0].bounds.height * 0.5;
-    const double pixel_x = logical_x * 2.0;
-    const double pixel_y = logical_y * 2.0;
 
-    shell.dispatch_sdl_test_pointer_event(0, make_event(pixel_x, pixel_y));
-    if (!handler.drag_state().is_dragging()) {
+    // The measured pixel/logical DPI scale must be finite and positive on
+    // each axis; any supported scale (1×, 1.25×, 2× Retina, …) is valid, and
+    // the two axes are read independently because fractional pixel-size
+    // rounding can make them differ. The assertions below derive each axis's
+    // expectation from its own measured scale rather than a fixed 2×.
+    const double dpi_scale_x = shell.test_dpi_scale_x();
+    if (!std::isfinite(dpi_scale_x) || dpi_scale_x <= 0.0) {
       std::fprintf(stderr,
-                   "selection-tool-shell-test: drag did not begin at 2x "
-                   "(production SDL path)\n");
+                   "selection-tool-shell-test: invalid X DPI scale %f "
+                   "(expected finite and positive)\n",
+                   dpi_scale_x);
       shell.set_input_handler(nullptr);
       return 1;
     }
-    // Anchor must be at the logical coordinates (SDL conversion applied).
-    const graphscore::NotationPoint anchor = handler.drag_state().anchor();
-    if (std::abs(anchor.x - logical_x) > 1e-9 ||
-        std::abs(anchor.y - logical_y) > 1e-9) {
+    const double dpi_scale_y = shell.test_dpi_scale_y();
+    if (!std::isfinite(dpi_scale_y) || dpi_scale_y <= 0.0) {
       std::fprintf(stderr,
-                   "selection-tool-shell-test: anchor mismatch at 2x: "
-                   "expected logical (%.2f, %.2f), got (%.2f, %.2f)\n",
+                   "selection-tool-shell-test: invalid Y DPI scale %f "
+                   "(expected finite and positive)\n",
+                   dpi_scale_y);
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // Production round-trip: window → render → window is the identity. With
+    // the production render scale equal to the DPI scale, the forward map is
+    // also the identity — a window point maps to itself in render (notation)
+    // coordinates.
+    const auto render = shell.test_window_to_render_point(logical_x, logical_y);
+    if (!render.has_value() || std::abs(render->x - logical_x) > 1e-4 ||
+        std::abs(render->y - logical_y) > 1e-4) {
+      std::fprintf(stderr,
+                   "selection-tool-shell-test: window→render conversion did "
+                   "not preserve the window point (expected (%.2f, %.2f), "
+                   "got (%.2f, %.2f))\n",
+                   logical_x, logical_y, render.has_value() ? render->x : -1.0,
+                   render.has_value() ? render->y : -1.0);
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto back = shell.test_render_to_window_point(render->x, render->y);
+    if (!back.has_value() || std::abs(back->x - logical_x) > 1e-4 ||
+        std::abs(back->y - logical_y) > 1e-4) {
+      std::fprintf(stderr,
+                   "selection-tool-shell-test: render→window round-trip did "
+                   "not return to the window point\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // Prove the conversion is real (not a vacuous pass-through): driving the
+    // render scale away from the DPI scale must scale the forward map by
+    // dpi_scale / render_scale. Each axis derives its expectation from its
+    // own measured scale (dpi_scale_x, dpi_scale_y), not from a shared value.
+    // Override the render scale to the sum of the two scales — a value
+    // guaranteed different from both (each is strictly positive) — so the
+    // check is non-degenerate on every display and axis.
+    const double override          = dpi_scale_x + dpi_scale_y;
+    const double expected_scaled_x = logical_x * dpi_scale_x / override;
+    const double expected_scaled_y = logical_y * dpi_scale_y / override;
+    shell.set_test_dpi_scale(override);
+    const auto scaled = shell.test_window_to_render_point(logical_x, logical_y);
+    if (!scaled.has_value() || std::abs(scaled->x - expected_scaled_x) > 1e-4 ||
+        std::abs(scaled->y - expected_scaled_y) > 1e-4) {
+      std::fprintf(stderr,
+                   "selection-tool-shell-test: window→render conversion did "
+                   "not scale per-axis with render scale %.3f vs DPI scales "
+                   "(x=%.3f, y=%.3f) — expected (%.2f, %.2f), got (%.2f, "
+                   "%.2f)\n",
+                   override, dpi_scale_x, dpi_scale_y, expected_scaled_x,
+                   expected_scaled_y, scaled.has_value() ? scaled->x : -1.0,
+                   scaled.has_value() ? scaled->y : -1.0);
+      shell.set_test_dpi_scale(0.0);
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_test_dpi_scale(0.0);
+
+    // A click at the window point through the real-window-ID dispatch seam
+    // lands the drag anchor exactly at that point (conversion identity).
+    shell.dispatch_sdl_test_pointer_event(0, make_event(logical_x, logical_y));
+    if (!handler.drag_state().is_dragging()) {
+      std::fprintf(stderr,
+                   "selection-tool-shell-test: drag did not begin at the "
+                   "window point (production SDL path)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const graphscore::NotationPoint anchor = handler.drag_state().anchor();
+    if (std::abs(anchor.x - logical_x) > 1e-4 ||
+        std::abs(anchor.y - logical_y) > 1e-4) {
+      std::fprintf(stderr,
+                   "selection-tool-shell-test: anchor mismatch at the window "
+                   "point: expected (%.2f, %.2f), got (%.2f, %.2f)\n",
                    logical_x, logical_y, anchor.x, anchor.y);
       shell.set_input_handler(nullptr);
       return 1;
     }
 
-    // Move and release at 2x pixel coords.
-    const double move_logical_x = layout.systems[0].measures[0].bounds.x +
-                                  layout.systems[0].measures[0].bounds.width;
-    const double move_pixel_x = move_logical_x * 2.0;
-    shell.dispatch_sdl_test_pointer_event(1, make_event(move_pixel_x, pixel_y));
-    shell.dispatch_sdl_test_pointer_event(2, make_event(move_pixel_x, pixel_y));
+    // Move and release at the window point for the opposite edge of the
+    // measure; the committed selection span and highlight rect are the same
+    // full-measure drag as the production-DPI block above.
+    const double move_x = layout.systems[0].measures[0].bounds.x +
+                          layout.systems[0].measures[0].bounds.width;
+    shell.dispatch_sdl_test_pointer_event(1, make_event(move_x, logical_y));
+    shell.dispatch_sdl_test_pointer_event(2, make_event(move_x, logical_y));
 
     if (handler.drag_state().is_dragging()) {
       std::fprintf(stderr,
-                   "selection-tool-shell-test: drag still in progress at 2x "
-                   "after release\n");
+                   "selection-tool-shell-test: drag still in progress at the "
+                   "window point after release\n");
       shell.set_input_handler(nullptr);
       return 1;
     }
     const auto& committed = handler.drag_state().committed_selection();
     if (!committed.has_value()) {
       std::fprintf(stderr,
-                   "selection-tool-shell-test: no committed selection at 2x\n");
+                   "selection-tool-shell-test: no committed selection at the "
+                   "window point\n");
       shell.set_input_handler(nullptr);
       return 1;
     }
     const auto* set = std::get_if<graphscore::ArbitraryRangeSet>(&*committed);
     if (set == nullptr || set->items().empty()) {
       std::fprintf(stderr,
-                   "selection-tool-shell-test: committed selection at 2x is "
-                   "empty\n");
+                   "selection-tool-shell-test: committed selection at the "
+                   "window point is empty\n");
       shell.set_input_handler(nullptr);
       return 1;
     }
-    // Exact span at 2x: same fixture, same full-measure drag, same [0, 1).
     if (set->items().size() != 1u) {
       std::fprintf(stderr,
-                   "selection-tool-shell-test: expected 1 range item at 2x, "
-                   "got %zu\n",
+                   "selection-tool-shell-test: expected 1 range item at the "
+                   "window point, got %zu\n",
                    set->items().size());
       shell.set_input_handler(nullptr);
       return 1;
@@ -457,7 +551,7 @@ int selection_tool_shell_test() {
       if (set->items()[0].span != expected) {
         std::fprintf(
             stderr,
-            "selection-tool-shell-test: span mismatch at 2x — "
+            "selection-tool-shell-test: span mismatch at the window point — "
             "expected [0, 1), got [%" PRId64 "/%" PRId64 ", %" PRId64
             "/%" PRId64 ")\n",
             static_cast<std::int64_t>(set->items()[0].span.start.numerator()),
@@ -468,17 +562,13 @@ int selection_tool_shell_test() {
         return 1;
       }
     }
-    // Exact highlight rect at 2x: same expected geometry as 1x — the
-    // rect is in logical (notation) coordinates, not pixel coordinates,
-    // so the DPI scale does not affect it.  x,y,width,height must exactly
-    // equal the values derived from the fixture's measure and staff bounds.
     {
       const std::vector<graphscore::NotationRect> rects =
           shell.test_snapshot_highlight_rects();
       if (rects.size() != 1u) {
         std::fprintf(stderr,
                      "selection-tool-shell-test: expected 1 highlight rect "
-                     "at 2x, got %zu\n",
+                     "at the window point, got %zu\n",
                      rects.size());
         shell.set_input_handler(nullptr);
         return 1;
@@ -488,7 +578,7 @@ int selection_tool_shell_test() {
       if (rects[0] != expected) {
         std::fprintf(stderr,
                      "selection-tool-shell-test: highlight rect mismatch "
-                     "at 2x — "
+                     "at the window point — "
                      "expected [%.6f,%.6f %.6fx%.6f], "
                      "got [%.6f,%.6f %.6fx%.6f]\n",
                      expected.x, expected.y, expected.width, expected.height,
@@ -498,7 +588,6 @@ int selection_tool_shell_test() {
       }
     }
   }
-  shell.set_test_dpi_scale(0.0);
 
   // ---- unregistered handler receives no event ----
   shell.set_input_handler(nullptr);
@@ -514,6 +603,10 @@ int selection_tool_shell_test() {
       return 1;
     }
   }
+  // Re-register for the remaining handler-driven blocks (the committed-
+  // selection highlight-persistence check below dispatches through the
+  // production SDL path and needs a registered handler).
+  shell.set_input_handler(&handler);
 
   // ---- RGBA upload-readback: distinctive non-symmetric pixel pattern ----
   // Upload a 2×2 raster surface with known per-pixel RGBA values and read
@@ -646,8 +739,10 @@ int selection_tool_shell_test() {
   // After a valid surface is uploaded and readable, call set_notation_surface
   // with invalid surfaces and verify: (a) the call returns
   // kRenderingSetupFailed, (b) the previously valid texture is not destroyed or
-  // replaced, and (c) a prior distinctive pixel remains readable. Honest skip
-  // when no renderer is available.
+  // replaced, and (c) a prior distinctive pixel remains readable. A renderer
+  // necessarily exists here (open_window succeeded and the texture uploaded),
+  // so a nullopt readback is a defect, not a headless skip: every assertion
+  // below runs unconditionally.
   {
     // Upload a known-good 2×2 distinctive pattern.
     graphscore::RasterSurface good;
@@ -664,42 +759,39 @@ int selection_tool_shell_test() {
       return 1;
     }
 
-    auto       prior         = shell.test_read_notation_pixel(0, 0);
-    const bool have_renderer = prior.has_value();
-    if (!have_renderer) {
-      // Renderer unavailable — honest skip.
-      std::printf(
-          "selection-tool-shell-test: no renderer — post-open surface "
-          "validation skipped (renderer-unavailable)\n");
+    auto prior = shell.test_read_notation_pixel(0, 0);
+    if (!prior.has_value()) {
+      std::fprintf(stderr,
+                   "selection-tool-shell-test: readback of the valid "
+                   "post-open surface returned nullopt (renderer exists)\n");
+      return 1;
     }
-    if (have_renderer) {
-      if ((*prior)[0] != 0xAA || (*prior)[1] != 0x00 || (*prior)[2] != 0xFF ||
-          (*prior)[3] != 0x80) {
+    if ((*prior)[0] != 0xAA || (*prior)[1] != 0x00 || (*prior)[2] != 0xFF ||
+        (*prior)[3] != 0x80) {
+      std::fprintf(stderr,
+                   "selection-tool-shell-test: pixel (0,0) mismatch before "
+                   "invalid post-open call\n");
+      return 1;
+    }
+    // Upload replaced old 1x1 texture: created=3, destroyed=2, alive=1.
+    {
+      auto s = shell.test_notation_texture_stats();
+      if (s.created != 3 || s.destroyed != 2) {
         std::fprintf(stderr,
-                     "selection-tool-shell-test: pixel (0,0) mismatch before "
-                     "invalid post-open call\n");
+                     "selection-tool-shell-test: texture stats after "
+                     "post-open good upload — "
+                     "expected created=3 destroyed=2 alive=1, "
+                     "got created=%" PRIu64 " destroyed=%" PRIu64
+                     " alive=%" PRIu64 "\n",
+                     static_cast<std::uint64_t>(s.created),
+                     static_cast<std::uint64_t>(s.destroyed),
+                     static_cast<std::uint64_t>(s.created - s.destroyed));
         return 1;
-      }
-      // Upload replaced old 1x1 texture: created=3, destroyed=2, alive=1.
-      {
-        auto s = shell.test_notation_texture_stats();
-        if (s.created != 3 || s.destroyed != 2) {
-          std::fprintf(stderr,
-                       "selection-tool-shell-test: texture stats after "
-                       "post-open good upload — "
-                       "expected created=3 destroyed=2 alive=1, "
-                       "got created=%" PRIu64 " destroyed=%" PRIu64
-                       " alive=%" PRIu64 "\n",
-                       static_cast<std::uint64_t>(s.created),
-                       static_cast<std::uint64_t>(s.destroyed),
-                       static_cast<std::uint64_t>(s.created - s.destroyed));
-          return 1;
-        }
       }
     }
 
     // Post-open invalid: oversized buffer (2×2 needs 16, 20 supplied).
-    if (have_renderer) {
+    {
       graphscore::RasterSurface bad;
       bad.width  = 2;
       bad.height = 2;
@@ -741,7 +833,7 @@ int selection_tool_shell_test() {
     }
 
     // Post-open invalid: one-zero dimension (0, 1).
-    if (have_renderer) {
+    {
       graphscore::RasterSurface bad;
       bad.width  = 0;
       bad.height = 1;
@@ -1194,13 +1286,15 @@ int selection_tool_shell_test() {
       graphscore::WindowOptions opts;
       opts.run_event_loop                       = false;
       const graphscore::ShellResult open_result = dtor_shell.open_window(opts);
-      const bool                    is_headless =
-          open_result.error == graphscore::ShellError::kBackendUnavailable ||
-          open_result.error == graphscore::ShellError::kRendererUnavailable;
+      // Only a genuinely absent display is a benign skip. kRendererUnavailable
+      // means the ADR-locked GPU renderer failed on a display-capable machine —
+      // a real defect — and must fail this subtest like the main path above.
+      const bool is_benign_headless =
+          open_result.error == graphscore::ShellError::kBackendUnavailable;
       if (!open_result.ok()) {
-        if (is_headless) {
+        if (is_benign_headless) {
           std::printf(
-              "selection-tool-shell-test: renderer unavailable in "
+              "selection-tool-shell-test: no display available in "
               "destructor scope — skipped\n");
           dtor_handle.reset();
         } else {
