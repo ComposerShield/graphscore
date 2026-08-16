@@ -2,8 +2,11 @@
 
 #include "selftests.hpp"
 
+#include "../app_project.hpp"
 #include "../canvas_gesture_handler.hpp"
 #include "../selection_tool_handler.hpp"
+#include "selftest_fixtures.hpp"
+#include "selftest_support.hpp"
 
 #include <graphscore/canvas/graphscore_canvas.hpp>
 #include <graphscore/writer_shell/graphscore_writer_shell.hpp>
@@ -47,10 +50,10 @@ class RecordingGestureHandler final : public graphscore::InputHandler {
 
   void on_pointer_release(graphscore::PointerEvent /*event*/) override {}
 
-  void on_cancel() override {}
+  void on_cancel() override { ++cancels; }
 
-  void on_scroll(graphscore::ScrollDelta delta) override {
-    scrolls.push_back(delta);
+  void on_wheel(graphscore::WheelEvent event) override {
+    wheels.push_back(event);
   }
 
   void on_pinch(graphscore::PinchUpdate update) override {
@@ -73,12 +76,13 @@ class RecordingGestureHandler final : public graphscore::InputHandler {
     finger_cancels.push_back(finger_id);
   }
 
-  std::vector<graphscore::ScrollDelta>   scrolls;
+  std::vector<graphscore::WheelEvent>    wheels;
   std::vector<graphscore::PinchUpdate>   pinches;
   std::vector<graphscore::FingerContact> finger_downs;
   std::vector<graphscore::FingerContact> finger_moves;
   std::vector<std::uint64_t>             finger_ups;
   std::vector<std::uint64_t>             finger_cancels;
+  int                                    cancels = 0;
 };
 
 // Records every non-gesture callback the CanvasGestureHandler should forward
@@ -100,6 +104,10 @@ class RecordingDelegateHandler final : public graphscore::InputHandler {
 
   void on_cancel() override { ++cancels; }
 
+  void on_wheel(graphscore::WheelEvent event) override {
+    wheels.push_back(event);
+  }
+
   void on_key_press(graphscore::KeyEvent event) override {
     keys.push_back(event);
   }
@@ -114,6 +122,17 @@ class RecordingDelegateHandler final : public graphscore::InputHandler {
   int                                   cancels = 0;
   std::vector<graphscore::KeyEvent>     keys;
   std::vector<std::string>              texts;
+  std::vector<graphscore::WheelEvent>   wheels;
+};
+
+class FixedFocusProvider final : public graphscore::FocusPointProvider {
+ public:
+  std::optional<graphscore::WorldBounds> bounds;
+
+  [[nodiscard]] std::optional<graphscore::WorldBounds> focused_world_bounds()
+      const override {
+    return bounds;
+  }
 };
 }  // namespace
 
@@ -133,9 +152,16 @@ int trackpad_gesture_test() {
 
     // Values exactly representable as float so the float->double round trip
     // in the production path is exact.
-    shell.dispatch_sdl_test_scroll_event(1.25, -2.75, 0);
-    if (handler.scrolls.size() != 1 ||
-        handler.scrolls.back() != graphscore::ScrollDelta{1.25, -2.75}) {
+    graphscore::KeyModifiers control;
+    control.control = true;
+    shell.dispatch_sdl_test_modifier_transition(control, true);
+    shell.dispatch_sdl_test_scroll_event(1.25, -2.75, 0, 45.0, 55.0);
+    shell.dispatch_sdl_test_modifier_transition({}, false);
+    if (handler.wheels.size() != 1 ||
+        handler.wheels.back().delta != (graphscore::ScrollDelta{1.25, -2.75}) ||
+        handler.wheels.back().pointer !=
+            (graphscore::ViewportPosition{45.0, 55.0}) ||
+        !handler.wheels.back().modifiers.control) {
       std::fprintf(stderr,
                    "trackpad-gesture-test: scroll delta did not translate "
                    "verbatim through the SDL seam\n");
@@ -144,11 +170,27 @@ int trackpad_gesture_test() {
     }
 
     shell.dispatch_sdl_test_scroll_event(1.5, -2.5, 1);
-    if (handler.scrolls.size() != 2 ||
-        handler.scrolls.back() != graphscore::ScrollDelta{-1.5, 2.5}) {
+    if (handler.wheels.size() != 2 ||
+        handler.wheels.back().delta != graphscore::ScrollDelta{-1.5, 2.5}) {
       std::fprintf(stderr,
                    "trackpad-gesture-test: FLIPPED scroll direction was not "
                    "negated through the SDL seam\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    // The aggregate state remains set when one side of a combined modifier
+    // is released while the other is still held, then focus loss clears it.
+    shell.dispatch_sdl_test_modifier_transition(control, true);
+    shell.dispatch_sdl_test_modifier_transition(control, false);
+    shell.dispatch_sdl_test_scroll_event(0.0, 1.0, 0);
+    shell.dispatch_sdl_test_focus_loss();
+    shell.dispatch_sdl_test_scroll_event(0.0, 1.0, 0);
+    if (handler.wheels.size() != 4 || !handler.wheels[2].modifiers.control ||
+        handler.wheels[3].modifiers.control || handler.cancels != 1) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: ordered combined modifier or "
+                   "focus-loss reset was not preserved\n");
       shell.set_input_handler(nullptr);
       return 1;
     }
@@ -308,6 +350,289 @@ int trackpad_gesture_test() {
       std::fprintf(stderr,
                    "trackpad-gesture-test: a non-gesture callback was not "
                    "forwarded to the delegate\n");
+      return 1;
+    }
+  }
+
+  // --- test: wheel policy normalizes Primary for both platform mappings ----
+  for (const PrimaryModifier primary :
+       {PrimaryModifier::kMeta, PrimaryModifier::kControl}) {
+    CanvasGestureHandler     handler(primary);
+    RecordingDelegateHandler delegate;
+    handler.set_delegate(&delegate);
+
+    graphscore::WheelEvent pan_event;
+    pan_event.delta   = {1.25, -2.75};
+    pan_event.pointer = {100.0, 50.0};
+    handler.on_wheel(pan_event);
+    if (handler.transform().viewport_anchor() !=
+            (graphscore::ViewportPosition{1.25, -2.75}) ||
+        handler.transform().zoom() != 1.0) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: unmodified wheel did not pan both "
+                   "high-resolution axes\n");
+      return 1;
+    }
+
+    graphscore::WheelEvent zoom_event;
+    zoom_event.delta.y = 2.0;
+    zoom_event.pointer = {100.0, 50.0};
+    if (primary == PrimaryModifier::kMeta) {
+      zoom_event.modifiers.meta = true;
+    } else {
+      zoom_event.modifiers.control = true;
+    }
+    const auto focal_before = handler.transform().to_world(zoom_event.pointer);
+    handler.on_wheel(zoom_event);
+    if (!focal_before.has_value() || handler.transform().zoom() == 1.0 ||
+        handler.transform().to_world(zoom_event.pointer) != focal_before) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: Primary+wheel did not preserve the "
+                   "current pointer focal point\n");
+      return 1;
+    }
+
+    graphscore::WheelEvent other_modifier;
+    other_modifier.modifiers.alt = true;
+    handler.on_wheel(other_modifier);
+    if (delegate.wheels.size() != 1) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: unbound modified wheel was not "
+                   "delegated\n");
+      return 1;
+    }
+  }
+
+  // --- test: middle drag is viewport-space and has complete lifecycle ------
+  {
+    CanvasGestureHandler     handler;
+    RecordingDelegateHandler delegate;
+    handler.set_delegate(&delegate);
+    handler.on_pointer_press({10.0, 20.0, graphscore::PointerButton::kMiddle});
+    handler.on_pointer_move({25.5, 12.0, graphscore::PointerButton::kUnknown});
+    if (handler.transform().viewport_anchor() !=
+            (graphscore::ViewportPosition{15.5, -8.0}) ||
+        !delegate.presses.empty() || !delegate.moves.empty()) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: middle drag was not consumed as a "
+                   "1:1 viewport pan\n");
+      return 1;
+    }
+    handler.on_pointer_release(
+        {25.5, 12.0, graphscore::PointerButton::kMiddle});
+    handler.on_pointer_move({30.0, 30.0, graphscore::PointerButton::kUnknown});
+    if (delegate.moves.size() != 1 ||
+        handler.transform().viewport_anchor() !=
+            graphscore::ViewportPosition{15.5, -8.0}) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: middle release left a stuck drag\n");
+      return 1;
+    }
+
+    handler.on_pointer_press({0.0, 0.0, graphscore::PointerButton::kMiddle});
+    handler.on_cancel();
+    handler.on_pointer_move({5.0, 5.0, graphscore::PointerButton::kUnknown});
+    if (delegate.cancels != 1 || delegate.moves.size() != 2) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: cancel left a stuck middle drag or "
+                   "was not delegated\n");
+      return 1;
+    }
+  }
+
+  // --- test: notation/palette focus wins through the real wrapper ----------
+  {
+    const SelfTestMetrics metrics;
+    auto                  fixture = build_notehead_move_fixture(metrics);
+    if (!fixture.has_value()) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: keyboard routing fixture failed\n");
+      return 1;
+    }
+
+    graphscore::WriterShell route_shell;
+    SelectionToolHandler    notation(std::move(fixture->project),
+                                     std::move(fixture->layout), &route_shell);
+    notation.set_metrics(&metrics);
+    notation.set_surface_publisher(
+        [&route_shell](const graphscore::NotationLayout& layout) {
+          return publish_headless_test_surface(layout, &route_shell);
+        });
+    notation.set_active_tool(graphscore::ActiveTool::kSelection);
+    if (!select_noteheads(
+            notation, {{fixture->node_id, fixture->track_id, fixture->stave_id,
+                        voice_one(), fixture->first_note_id}})) {
+      std::fprintf(
+          stderr, "trackpad-gesture-test: keyboard routing selection failed\n");
+      return 1;
+    }
+
+    CanvasGestureHandler wrapper;
+    wrapper.set_delegate(&notation);
+    route_shell.set_input_handler(&wrapper);
+    const auto  canvas_before    = wrapper.transform().viewport_anchor();
+    std::size_t expected_history = notation.test_undo_stack_size();
+    for (const graphscore::KeyCode code :
+         {graphscore::KeyCode::kUp, graphscore::KeyCode::kDown,
+          graphscore::KeyCode::kEquals, graphscore::KeyCode::kMinus}) {
+      route_shell.dispatch_test_key_event(plain_key(code));
+      ++expected_history;
+      if (notation.test_undo_stack_size() != expected_history ||
+          wrapper.transform().viewport_anchor() != canvas_before ||
+          wrapper.transform().zoom() != 1.0) {
+        std::fprintf(stderr,
+                     "trackpad-gesture-test: notation key was intercepted by "
+                     "the canvas wrapper\n");
+        route_shell.set_input_handler(nullptr);
+        return 1;
+      }
+    }
+
+    notation.toggle_command_palette();
+    graphscore::KeyEvent palette_down = plain_key(graphscore::KeyCode::kDown);
+    route_shell.dispatch_test_key_event(palette_down);
+    if (notation.command_palette_selected_index() != 1) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: palette Down did not reach palette "
+                   "routing through the wrapper\n");
+      route_shell.set_input_handler(nullptr);
+      return 1;
+    }
+    route_shell.dispatch_test_key_event(plain_key(graphscore::KeyCode::kUp));
+    route_shell.dispatch_test_key_event(
+        plain_key(graphscore::KeyCode::kEquals));
+    route_shell.dispatch_test_key_event(
+        shift_key(graphscore::KeyCode::kEquals));
+    if (notation.command_palette_selected_index() != 0 ||
+        wrapper.transform().viewport_anchor() != canvas_before ||
+        wrapper.transform().zoom() != 1.0) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: palette key navigated the canvas "
+                   "or bypassed palette routing\n");
+      route_shell.set_input_handler(nullptr);
+      return 1;
+    }
+    route_shell.set_input_handler(nullptr);
+  }
+
+  // --- test: keyboard pan/repeat and accessibility-focus zoom --------------
+  {
+    CanvasGestureHandler     handler;
+    RecordingDelegateHandler delegate;
+    FixedFocusProvider       focus;
+    focus.bounds = graphscore::WorldBounds{{100.0, 200.0}, 40.0, 20.0};
+    handler.set_delegate(&delegate);
+    handler.set_focus_point_provider(&focus);
+    handler.set_keyboard_focus(CanvasKeyboardFocus::kCanvas);
+    handler.on_viewport_size_changed(800.0, 600.0);
+
+    graphscore::KeyEvent left;
+    left.code = graphscore::KeyCode::kLeft;
+    handler.on_key_press(left);
+    if (handler.transform().viewport_anchor() !=
+        graphscore::ViewportPosition{graphscore::kKeyboardPanStep, 0.0}) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: canvas Left did not pan left\n");
+      return 1;
+    }
+    graphscore::KeyEvent right;
+    right.code = graphscore::KeyCode::kRight;
+    handler.on_key_press(right);
+    if (handler.transform().viewport_anchor() !=
+        graphscore::ViewportPosition{0.0, 0.0}) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: canvas Right did not pan right\n");
+      return 1;
+    }
+    graphscore::KeyEvent up;
+    up.code = graphscore::KeyCode::kUp;
+    handler.on_key_press(up);
+    if (handler.transform().viewport_anchor() !=
+        graphscore::ViewportPosition{0.0, graphscore::kKeyboardPanStep}) {
+      std::fprintf(stderr, "trackpad-gesture-test: canvas Up did not pan up\n");
+      return 1;
+    }
+    graphscore::KeyEvent down;
+    down.code = graphscore::KeyCode::kDown;
+    handler.on_key_press(down);
+    if (handler.transform().viewport_anchor() !=
+        graphscore::ViewportPosition{0.0, 0.0}) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: canvas Down did not pan down\n");
+      return 1;
+    }
+    right.repeat = true;
+    handler.on_key_press(right);
+    if (handler.transform().viewport_anchor() !=
+        graphscore::ViewportPosition{-graphscore::kKeyboardPanStep, 0.0}) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: repeated canvas arrow did not use "
+                   "the fixed pan step\n");
+      return 1;
+    }
+
+    const graphscore::GraphPosition focus_center{120.0, 210.0};
+    const auto focus_viewport = handler.transform().to_viewport(focus_center);
+    graphscore::KeyEvent zoom_in;
+    zoom_in.code = graphscore::KeyCode::kEquals;
+    handler.on_key_press(zoom_in);
+    if (!focus_viewport.has_value() ||
+        handler.transform().zoom() != graphscore::kKeyboardZoomStep ||
+        handler.transform().to_viewport(focus_center) != focus_viewport) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: keyboard zoom did not preserve the "
+                   "focused semantic bounds center\n");
+      return 1;
+    }
+    const double zoom_before_plus = handler.transform().zoom();
+    zoom_in.modifiers.shift       = true;
+    zoom_in.repeat                = true;
+    handler.on_key_press(zoom_in);
+    if (handler.transform().zoom() !=
+        zoom_before_plus * graphscore::kKeyboardZoomStep) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: repeated '+' did not apply the "
+                   "keyboard zoom step\n");
+      return 1;
+    }
+
+    graphscore::KeyEvent unbound;
+    unbound.code = graphscore::KeyCode::kBackspace;
+    handler.on_key_press(unbound);
+    graphscore::KeyEvent modified_arrow;
+    modified_arrow.code          = graphscore::KeyCode::kUp;
+    modified_arrow.modifiers.alt = true;
+    handler.on_key_press(modified_arrow);
+    if (delegate.keys.size() != 2 || delegate.keys[0].code != unbound.code ||
+        delegate.keys[1].code != modified_arrow.code) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: non-canvas key behavior did not "
+                   "delegate unchanged\n");
+      return 1;
+    }
+  }
+
+  // --- test: absent/invalid focus deterministically uses viewport center ----
+  for (const auto bounds :
+       {std::optional<graphscore::WorldBounds>{},
+        std::optional<graphscore::WorldBounds>{
+            graphscore::WorldBounds{{0.0, 0.0}, -1.0, 20.0}}}) {
+    CanvasGestureHandler handler;
+    FixedFocusProvider   focus;
+    focus.bounds = bounds;
+    handler.set_focus_point_provider(&focus);
+    handler.set_keyboard_focus(CanvasKeyboardFocus::kCanvas);
+    handler.on_viewport_size_changed(800.0, 600.0);
+    constexpr graphscore::ViewportPosition kCenter{400.0, 300.0};
+    const auto           center_before = handler.transform().to_world(kCenter);
+    graphscore::KeyEvent zoom_out;
+    zoom_out.code = graphscore::KeyCode::kMinus;
+    handler.on_key_press(zoom_out);
+    if (!center_before.has_value() ||
+        handler.transform().to_world(kCenter) != center_before) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: missing/invalid focus did not use "
+                   "the viewport-center fallback\n");
       return 1;
     }
   }
@@ -473,7 +798,7 @@ int trackpad_gesture_test() {
     shell.dispatch_sdl_test_scroll_event(1.0, 1.0, 0);
     shell.dispatch_sdl_test_pinch_event(1.5, 100.0, 100.0);
     shell.dispatch_sdl_test_finger_event(0, 9, 0.25, 0.25);
-    if (!handler.scrolls.empty() || !handler.pinches.empty() ||
+    if (!handler.wheels.empty() || !handler.pinches.empty() ||
         !handler.finger_downs.empty()) {
       std::fprintf(stderr,
                    "trackpad-gesture-test: gesture callback fired after "

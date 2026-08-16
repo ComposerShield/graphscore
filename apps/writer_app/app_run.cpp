@@ -22,6 +22,18 @@ namespace graphscore::writer_app {
 
 namespace {
 
+// M6-phase-6 installs the GraphScore-owned focus-provider seam without
+// fabricating the later semantic canvas tree. Until that tree supplies focused
+// world bounds, keyboard zoom deterministically takes its viewport-center
+// fallback.
+class PendingCanvasFocusProvider final : public graphscore::FocusPointProvider {
+ public:
+  [[nodiscard]] std::optional<graphscore::WorldBounds> focused_world_bounds()
+      const override {
+    return std::nullopt;
+  }
+};
+
 // Rasterizes `layout`'s commands with `font` and publishes the resulting
 // surface to `shell`. Returns kRenderingSetupFailed when rasterization fails,
 // otherwise the shell's own set_notation_surface result. Shared by run()'s
@@ -138,8 +150,14 @@ int run(bool smoke_test) {
   // authoritative viewport: the shell renders the notation surface through it
   // and the pinch focal fallback (window center) is derived from the actual
   // logical window size the shell reports on creation and resize.
-  CanvasGestureHandler gestures;
+  CanvasGestureHandler       gestures;
+  PendingCanvasFocusProvider focus_provider;
   gestures.set_delegate(&handler);
+  gestures.set_focus_point_provider(&focus_provider);
+  // The current production focus owner is the notation editor (including its
+  // command-palette precedence). A later graph-canvas focus owner will switch
+  // this explicitly rather than treating wrapper position as focus.
+  gestures.set_keyboard_focus(CanvasKeyboardFocus::kNotation);
   shell.set_input_handler(&gestures);
   shell.set_viewport_transform(&gestures.transform());
 

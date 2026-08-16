@@ -30,6 +30,31 @@ struct ScrollDelta {
   [[nodiscard]] bool operator==(const ScrollDelta&) const = default;
 };
 
+struct WorldBounds {
+  GraphPosition origin;
+  double        width  = 0.0;
+  double        height = 0.0;
+
+  [[nodiscard]] bool operator==(const WorldBounds&) const = default;
+};
+
+// App-owned accessibility focus implementations provide only the focused
+// semantic element's GraphScore world geometry through this seam. The broader
+// semantic tree remains owned by later accessibility phases.
+class FocusPointProvider {
+ public:
+  virtual ~FocusPointProvider() = default;
+  [[nodiscard]] virtual std::optional<WorldBounds> focused_world_bounds()
+      const = 0;
+};
+
+// Deterministic viewport-space navigation increments. Wheel deltas retain
+// their high-resolution magnitude; keyboard input applies one increment per
+// delivered press (including OS repeat presses).
+constexpr double kKeyboardPanStep      = 64.0;
+constexpr double kKeyboardZoomStep     = 1.2;
+constexpr double kWheelZoomStepPerUnit = 1.1;
+
 // A toolkit-neutral pinch update, the exclusive pinch-zoom stream. `scale`
 // is the multiplicative zoom change since the previous update (scale > 1
 // zooms in). `focal_point` is the gesture's focal point in logical viewport
@@ -156,6 +181,27 @@ class TrackpadGestureController {
   ViewportTransform&                          transform_;
   ViewportPosition                            window_center_{0.0, 0.0};
   std::array<std::optional<FingerContact>, 2> fingers_;
+};
+
+class CanvasNavigationController {
+ public:
+  explicit CanvasNavigationController(ViewportTransform& transform) noexcept;
+
+  CanvasNavigationController(const CanvasNavigationController&) = delete;
+  CanvasNavigationController& operator=(const CanvasNavigationController&) =
+      delete;
+  CanvasNavigationController(CanvasNavigationController&&)            = delete;
+  CanvasNavigationController& operator=(CanvasNavigationController&&) = delete;
+
+  [[nodiscard]] bool wheel_pan(ScrollDelta delta) noexcept;
+  [[nodiscard]] bool wheel_zoom(double           delta_y,
+                                ViewportPosition focal_point) noexcept;
+  [[nodiscard]] bool pan(ViewportPosition delta) noexcept;
+  [[nodiscard]] bool zoom_in(ViewportPosition focal_point) noexcept;
+  [[nodiscard]] bool zoom_out(ViewportPosition focal_point) noexcept;
+
+ private:
+  ViewportTransform& transform_;
 };
 
 class Canvas {

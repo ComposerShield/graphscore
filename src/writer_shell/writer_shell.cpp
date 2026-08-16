@@ -90,6 +90,7 @@ struct WriterShell::Impl {
 
   InputHandler* input_handler     = nullptr;
   bool          text_input_active = false;
+  KeyModifiers  ordered_modifiers;
 
   // The authoritative viewport transform the render pass applies (non-owning;
   // owned by the app's input handler). Null renders at native scale.
@@ -182,9 +183,11 @@ bool WriterShell::backend_compiled_in() {
 }
 
 // Forward-declared: defined after sdl_button_to_pointer_button below.
+[[nodiscard]] KeyModifiers sdl_keymod_to_key_modifiers(
+    SDL_Keymod sdl_mod) noexcept;
 void dispatch_sdl_event(InputHandler* handler, SDL_Renderer* renderer,
-                        SDL_Event event,
-                        bool      force_pinch_conversion_failure = false);
+                        KeyModifiers* ordered_modifiers, SDL_Event event,
+                        bool force_pinch_conversion_failure = false);
 
 // Deliver the current logical window size to the handler's viewport-size
 // callback, which derives size-dependent fallbacks (e.g. the pinch focal
@@ -508,6 +511,7 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
   // Derive size-dependent fallbacks (the pinch focal window center) from the
   // actual logical size now that the window is realized.
   deliver_viewport_size(impl_->window, impl_->input_handler);
+  impl_->ordered_modifiers = sdl_keymod_to_key_modifiers(SDL_GetModState());
 
   // Enable alpha blending so semi-transparent highlight rects and
   // notation-surface alpha compose correctly.
@@ -579,7 +583,8 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
         deliver_viewport_size(impl_->window, impl_->input_handler);
       }
 
-      dispatch_sdl_event(impl_->input_handler, impl_->renderer, event);
+      dispatch_sdl_event(impl_->input_handler, impl_->renderer,
+                         &impl_->ordered_modifiers, event);
 
       // Render the frame: notation surface first, then highlight rects on
       // top as a semi-transparent blue overlay. Any SDL failure is a
@@ -601,7 +606,8 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
       if (should_cancel && impl_->input_handler != nullptr) {
         impl_->input_handler->on_cancel();
       }
-      dispatch_sdl_event(impl_->input_handler, impl_->renderer, event);
+      dispatch_sdl_event(impl_->input_handler, impl_->renderer,
+                         &impl_->ordered_modifiers, event);
     }
     // Render one frame so the window shows content even without an event
     // loop. Any SDL failure is a rendering-setup defect and is surfaced
@@ -772,7 +778,17 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
 }
 
 void dispatch_sdl_event(InputHandler* handler, SDL_Renderer* renderer,
-                        SDL_Event event, bool force_pinch_conversion_failure) {
+                        KeyModifiers* ordered_modifiers, SDL_Event event,
+                        bool force_pinch_conversion_failure) {
+  if (ordered_modifiers != nullptr) {
+    if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
+      *ordered_modifiers = sdl_keymod_to_key_modifiers(event.key.mod);
+    } else if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST ||
+               event.type == SDL_EVENT_QUIT ||
+               event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+      *ordered_modifiers = {};
+    }
+  }
   if (handler == nullptr) {
     return;
   }
@@ -797,27 +813,30 @@ void dispatch_sdl_event(InputHandler* handler, SDL_Renderer* renderer,
   switch (event.type) {
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
       PointerEvent pe;
-      pe.x                 = static_cast<double>(event.button.x);
-      pe.y                 = static_cast<double>(event.button.y);
-      pe.button            = sdl_button_to_pointer_button(event.button.button);
-      pe.measure_selection = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
+      pe.x      = static_cast<double>(event.button.x);
+      pe.y      = static_cast<double>(event.button.y);
+      pe.button = sdl_button_to_pointer_button(event.button.button);
+      pe.measure_selection =
+          ordered_modifiers != nullptr && ordered_modifiers->shift;
       handler->on_pointer_press(pe);
       break;
     }
     case SDL_EVENT_MOUSE_MOTION: {
       PointerEvent pe;
-      pe.x                 = static_cast<double>(event.motion.x);
-      pe.y                 = static_cast<double>(event.motion.y);
-      pe.measure_selection = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
+      pe.x = static_cast<double>(event.motion.x);
+      pe.y = static_cast<double>(event.motion.y);
+      pe.measure_selection =
+          ordered_modifiers != nullptr && ordered_modifiers->shift;
       handler->on_pointer_move(pe);
       break;
     }
     case SDL_EVENT_MOUSE_BUTTON_UP: {
       PointerEvent pe;
-      pe.x                 = static_cast<double>(event.button.x);
-      pe.y                 = static_cast<double>(event.button.y);
-      pe.button            = sdl_button_to_pointer_button(event.button.button);
-      pe.measure_selection = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
+      pe.x      = static_cast<double>(event.button.x);
+      pe.y      = static_cast<double>(event.button.y);
+      pe.button = sdl_button_to_pointer_button(event.button.button);
+      pe.measure_selection =
+          ordered_modifiers != nullptr && ordered_modifiers->shift;
       handler->on_pointer_release(pe);
       break;
     }
@@ -849,22 +868,27 @@ void dispatch_sdl_event(InputHandler* handler, SDL_Renderer* renderer,
     }
     case SDL_EVENT_MOUSE_WHEEL: {
       // The native two-finger trackpad pan stream on macOS arrives as a
-      // mouse-wheel event (ADR 0004 §8); this is the sole pan route, so no
-      // zoom and no modifier semantics are attached here. The x/y fields are
+      // mouse-wheel event (ADR 0004 §8). The shell preserves its data and the
+      // app decides whether it is pan or Primary+wheel zoom. The x/y fields are
       // subpixel floats in scroll units and are NOT touched by
       // SDL_ConvertEventToRenderCoordinates (which converts only the
       // mouse_x/mouse_y pointer position); they are delivered as double
       // deltas verbatim. SDL_MOUSEWHEEL_FLIPPED means the platform inverts
       // the direction; the shell negates so the handler always receives
       // content-relative motion.
-      ScrollDelta delta;
-      delta.x = static_cast<double>(event.wheel.x);
-      delta.y = static_cast<double>(event.wheel.y);
+      WheelEvent wheel;
+      wheel.delta.x = static_cast<double>(event.wheel.x);
+      wheel.delta.y = static_cast<double>(event.wheel.y);
       if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
-        delta.x = -delta.x;
-        delta.y = -delta.y;
+        wheel.delta.x = -wheel.delta.x;
+        wheel.delta.y = -wheel.delta.y;
       }
-      handler->on_scroll(delta);
+      wheel.pointer = {static_cast<double>(event.wheel.mouse_x),
+                       static_cast<double>(event.wheel.mouse_y)};
+      if (ordered_modifiers != nullptr) {
+        wheel.modifiers = *ordered_modifiers;
+      }
+      handler->on_wheel(wheel);
       break;
     }
     case SDL_EVENT_PINCH_UPDATE: {
@@ -1429,7 +1453,8 @@ void WriterShell::dispatch_sdl_test_pointer_event(std::uint8_t kind,
     default:
       return;
   }
-  dispatch_sdl_event(handler, impl_->renderer, sdl_event);
+  dispatch_sdl_event(handler, impl_->renderer, &impl_->ordered_modifiers,
+                     sdl_event);
 #else
   (void)kind;
   (void)event;
@@ -1518,11 +1543,53 @@ void WriterShell::dispatch_sdl_test_key_event(std::uint32_t sdl_scancode,
   sdl_event.key.mod      = static_cast<SDL_Keymod>(sdl_key_modifiers);
   sdl_event.key.key      = static_cast<SDL_Keycode>(sdl_keycode);
   sdl_event.key.down     = true;
-  dispatch_sdl_event(handler, impl_->renderer, sdl_event);
+  dispatch_sdl_event(handler, impl_->renderer, &impl_->ordered_modifiers,
+                     sdl_event);
 #else
   (void)sdl_scancode;
   (void)sdl_key_modifiers;
   (void)sdl_keycode;
+#endif
+}
+
+void WriterShell::dispatch_sdl_test_modifier_transition(KeyModifiers modifiers,
+                                                        bool         key_down) {
+#ifdef GRAPHSCORE_HAVE_SDL3
+  SDL_Keymod sdl_modifiers = SDL_KMOD_NONE;
+  if (modifiers.shift) {
+    sdl_modifiers |= SDL_KMOD_LSHIFT;
+  }
+  if (modifiers.control) {
+    sdl_modifiers |= SDL_KMOD_LCTRL;
+  }
+  if (modifiers.alt) {
+    sdl_modifiers |= SDL_KMOD_LALT;
+  }
+  if (modifiers.meta) {
+    sdl_modifiers |= SDL_KMOD_LGUI;
+  }
+
+  SDL_Event sdl_event{};
+  sdl_event.type     = key_down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+  sdl_event.key.mod  = sdl_modifiers;
+  sdl_event.key.down = key_down;
+  dispatch_sdl_event(impl_->input_handler, impl_->renderer,
+                     &impl_->ordered_modifiers, sdl_event);
+#else
+  (void)modifiers;
+  (void)key_down;
+#endif
+}
+
+void WriterShell::dispatch_sdl_test_focus_loss() {
+#ifdef GRAPHSCORE_HAVE_SDL3
+  if (impl_->input_handler != nullptr) {
+    impl_->input_handler->on_cancel();
+  }
+  SDL_Event sdl_event{};
+  sdl_event.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+  dispatch_sdl_event(impl_->input_handler, impl_->renderer,
+                     &impl_->ordered_modifiers, sdl_event);
 #endif
 }
 
@@ -1542,14 +1609,17 @@ void WriterShell::dispatch_sdl_test_text_input(std::string_view text) {
   SDL_Event   sdl_event{};
   sdl_event.type      = SDL_EVENT_TEXT_INPUT;
   sdl_event.text.text = owned.c_str();
-  dispatch_sdl_event(handler, impl_->renderer, sdl_event);
+  dispatch_sdl_event(handler, impl_->renderer, &impl_->ordered_modifiers,
+                     sdl_event);
 #else
   (void)text;
 #endif
 }
 
 void WriterShell::dispatch_sdl_test_scroll_event(double x, double y,
-                                                 std::uint32_t direction) {
+                                                 std::uint32_t direction,
+                                                 double        pointer_x,
+                                                 double        pointer_y) {
 #ifdef GRAPHSCORE_HAVE_SDL3
   InputHandler* handler = impl_->input_handler;
   if (handler == nullptr) {
@@ -1566,11 +1636,19 @@ void WriterShell::dispatch_sdl_test_scroll_event(double x, double y,
   sdl_event.wheel.x         = static_cast<float>(x);
   sdl_event.wheel.y         = static_cast<float>(y);
   sdl_event.wheel.direction = static_cast<SDL_MouseWheelDirection>(direction);
-  dispatch_sdl_event(handler, impl_->renderer, sdl_event);
+  sdl_event.wheel.mouse_x   = static_cast<float>(pointer_x);
+  sdl_event.wheel.mouse_y   = static_cast<float>(pointer_y);
+  const SDL_Keymod prior_modifiers = SDL_GetModState();
+  SDL_SetModState(SDL_KMOD_NONE);
+  dispatch_sdl_event(handler, impl_->renderer, &impl_->ordered_modifiers,
+                     sdl_event);
+  SDL_SetModState(prior_modifiers);
 #else
   (void)x;
   (void)y;
   (void)direction;
+  (void)pointer_x;
+  (void)pointer_y;
 #endif
 }
 
@@ -1592,8 +1670,8 @@ void WriterShell::dispatch_sdl_test_pinch_event(double scale, double focus_x,
   sdl_event.pinch.scale   = static_cast<float>(scale);
   sdl_event.pinch.focus_x = static_cast<float>(focus_x);
   sdl_event.pinch.focus_y = static_cast<float>(focus_y);
-  dispatch_sdl_event(handler, impl_->renderer, sdl_event,
-                     impl_->test_force_pinch_conversion_failure);
+  dispatch_sdl_event(handler, impl_->renderer, &impl_->ordered_modifiers,
+                     sdl_event, impl_->test_force_pinch_conversion_failure);
 #else
   (void)scale;
   (void)focus_x;
@@ -1634,7 +1712,8 @@ void WriterShell::dispatch_sdl_test_finger_event(std::uint32_t kind,
   sdl_event.tfinger.fingerID = static_cast<SDL_FingerID>(finger_id);
   sdl_event.tfinger.x        = static_cast<float>(x);
   sdl_event.tfinger.y        = static_cast<float>(y);
-  dispatch_sdl_event(handler, impl_->renderer, sdl_event);
+  dispatch_sdl_event(handler, impl_->renderer, &impl_->ordered_modifiers,
+                     sdl_event);
 #else
   (void)kind;
   (void)finger_id;

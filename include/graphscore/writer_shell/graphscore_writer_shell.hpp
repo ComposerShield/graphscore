@@ -158,6 +158,15 @@ struct KeyModifiers {
   [[nodiscard]] bool operator==(const KeyModifiers&) const = default;
 };
 
+// A high-resolution wheel event in logical viewport coordinates. The shell
+// preserves both axes, current pointer position, and raw platform-neutral
+// modifiers; application routing resolves Primary and chooses pan or zoom.
+struct WheelEvent {
+  ScrollDelta      delta;
+  ViewportPosition pointer;
+  KeyModifiers     modifiers;
+};
+
 // A single key-press event, platform-neutral. There is no release
 // counterpart — actions are driven entirely by presses. The two identity
 // axes follow docs/plan/05-notation-editor-action-table.md §4: `code` is
@@ -222,12 +231,12 @@ class InputHandler {
   // input is not forced to write an empty override. Default: ignore.
   virtual void on_text_input(TextInputEvent /*event*/) {}
 
-  // Two-finger trackpad pan stream (M6-phase-5): translation only, never
-  // zoom. The shell translates SDL_EVENT_MOUSE_WHEEL — the native two-finger
-  // pan representation on macOS — to this callback, preserving the subpixel
-  // delta in logical viewport units. The shell applies no modifier
-  // semantics here; mouse-wheel zoom belongs to M6-phase-6. Default: ignore.
-  virtual void on_scroll(ScrollDelta /*delta*/) {}
+  // Mouse-wheel/two-finger scroll stream: the shell translates
+  // SDL_EVENT_MOUSE_WHEEL while preserving both subpixel axes, the current
+  // logical-viewport pointer position, and modifiers. The app applies Primary
+  // normalization and chooses pan versus pointer-centered zoom. Default:
+  // ignore.
+  virtual void on_wheel(WheelEvent /*event*/) {}
 
   // Pinch zoom (M6-phase-5): the exclusive pinch-zoom stream. The shell
   // translates SDL_EVENT_PINCH_UPDATE to this; `update.scale` is the
@@ -473,6 +482,20 @@ class WriterShell {
                                    std::uint16_t sdl_key_modifiers,
                                    std::uint32_t sdl_keycode = 0);
 
+  // Test-only: inject an ordered SDL key transition carrying the given
+  // platform-neutral aggregate modifier state. A down transition also follows
+  // ordinary key dispatch (as kUnknown); an up transition only updates the
+  // shell's event-time modifier snapshot. This does not alter SDL's global
+  // modifier state, so a following synthetic wheel proves that queued event
+  // order, rather than the final global state, determines its chord.
+  void dispatch_sdl_test_modifier_transition(KeyModifiers modifiers,
+                                             bool         key_down);
+
+  // Test-only: inject SDL_EVENT_WINDOW_FOCUS_LOST through the production
+  // event-state path, clearing the ordered modifier snapshot. The registered
+  // handler receives on_cancel(), matching the production event loop.
+  void dispatch_sdl_test_focus_loss();
+
   // Test-only: inject a synthetic text-input event that calls the registered
   // InputHandler's on_text_input() directly with a platform-neutral
   // TextInputEvent, without exercising any SDL conversion. This is the
@@ -492,12 +515,16 @@ class WriterShell {
 
   // Test-only: inject a synthetic SDL mouse-wheel (two-finger pan) event
   // through the production dispatch_sdl_event path, so a test asserts what
-  // on_scroll actually receives — the subpixel delta and the FLIPPED-
-  // direction negation — rather than a reverse mapping written only for the
-  // test. `direction` is the raw SDL_MouseWheelDirection value (0 = normal,
-  // 1 = flipped). In a writer-OFF build this is a no-op.
+  // on_wheel actually receives — subpixel delta, pointer, modifiers, and the
+  // FLIPPED-direction negation — rather than a reverse mapping written only
+  // for the test. `direction` is the raw SDL_MouseWheelDirection value (0 =
+  // normal, 1 = flipped). The seam forces SDL's global modifier state clear
+  // while dispatching, so modifiers can only come from prior ordered key
+  // transitions. In a writer-OFF build this is a no-op.
   void dispatch_sdl_test_scroll_event(double x, double y,
-                                      std::uint32_t direction);
+                                      std::uint32_t direction,
+                                      double        pointer_x = 0.0,
+                                      double        pointer_y = 0.0);
 
   // Test-only: inject a synthetic SDL pinch-update event through the
   // production dispatch_sdl_event path, so a test asserts what on_pinch

@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "key_bindings.hpp"
+
 #include <graphscore/canvas/graphscore_canvas.hpp>
 #include <graphscore/writer_shell/graphscore_writer_shell.hpp>
 
@@ -10,11 +12,16 @@
 
 namespace graphscore::writer_app {
 
-// Applies M6-phase-5 trackpad gestures to a canvas viewport transform. Owns
-// the ViewportTransform and its TrackpadGestureController and implements the
-// gesture half of InputHandler: on_scroll pans (translation only),
-// on_pinch zooms exactly once, and the finger callbacks maintain the
-// centroid fallback.
+// Application-owned keyboard focus context. The notation context includes its
+// higher-precedence command-palette and text-entry routing; canvas navigation
+// is eligible only when the application explicitly transfers focus to it.
+enum class CanvasKeyboardFocus : std::uint8_t {
+  kNotation,
+  kCanvas,
+};
+
+// Owns and routes the canvas viewport's trackpad, wheel, middle-drag, and
+// keyboard navigation while forwarding every unconsumed event unchanged.
 //
 // Every non-gesture event (pointer/key/text/cancel) is forwarded to a
 // settable delegate so this handler can sit in front of the notation
@@ -22,7 +29,8 @@ namespace graphscore::writer_app {
 // M6-phase-5 isolation requirement. Gesture events are never forwarded.
 class CanvasGestureHandler final : public graphscore::InputHandler {
  public:
-  CanvasGestureHandler();
+  explicit CanvasGestureHandler(
+      PrimaryModifier primary = kPlatformPrimaryModifier);
 
   // The controller holds a reference to this handler's transform. A generated
   // copy or move would rebind it to the source transform, so the operations
@@ -34,7 +42,7 @@ class CanvasGestureHandler final : public graphscore::InputHandler {
 
   // ---- InputHandler (gestures) ---------------------------------------------
 
-  void on_scroll(graphscore::ScrollDelta delta) override;
+  void on_wheel(graphscore::WheelEvent event) override;
   void on_pinch(graphscore::PinchUpdate update) override;
   void on_finger_down(graphscore::FingerContact finger) override;
   void on_finger_move(graphscore::FingerContact finger) override;
@@ -59,6 +67,9 @@ class CanvasGestureHandler final : public graphscore::InputHandler {
   // The delegate that receives non-gesture events. May be null (events are
   // then dropped). Not owned.
   void set_delegate(graphscore::InputHandler* delegate) noexcept;
+  void set_focus_point_provider(
+      const graphscore::FocusPointProvider* provider) noexcept;
+  void set_keyboard_focus(CanvasKeyboardFocus focus) noexcept;
 
   // The pinch focal fallback (logical viewport coordinates), forwarded to
   // the controller.
@@ -77,10 +88,16 @@ class CanvasGestureHandler final : public graphscore::InputHandler {
   // dropped rather than dispatched in the wrong coordinate space.
   [[nodiscard]] std::optional<graphscore::PointerEvent> to_world_pointer(
       graphscore::PointerEvent event) const;
+  [[nodiscard]] graphscore::ViewportPosition keyboard_zoom_focal() const;
 
-  graphscore::ViewportTransform         transform_;
-  graphscore::TrackpadGestureController controller_;
-  graphscore::InputHandler*             delegate_ = nullptr;
+  graphscore::ViewportTransform          transform_;
+  graphscore::TrackpadGestureController  controller_;
+  graphscore::CanvasNavigationController navigation_;
+  PrimaryModifier                        primary_;
+  graphscore::InputHandler*              delegate_       = nullptr;
+  const graphscore::FocusPointProvider*  focus_provider_ = nullptr;
+  CanvasKeyboardFocus keyboard_focus_ = CanvasKeyboardFocus::kNotation;
+  std::optional<graphscore::ViewportPosition> middle_drag_position_;
 };
 
 }  // namespace graphscore::writer_app

@@ -14,6 +14,8 @@ static_assert(!std::is_copy_constructible_v<TrackpadGestureController>);
 static_assert(!std::is_move_constructible_v<TrackpadGestureController>);
 static_assert(!std::is_copy_assignable_v<TrackpadGestureController>);
 static_assert(!std::is_move_assignable_v<TrackpadGestureController>);
+static_assert(!std::is_copy_constructible_v<CanvasNavigationController>);
+static_assert(!std::is_move_constructible_v<CanvasNavigationController>);
 
 namespace {
 constexpr int kCanvasVersion = 1;
@@ -361,6 +363,37 @@ std::optional<ViewportPosition> TrackpadGestureController::resolve_focal(
     return centroid;
   }
   return window_center_;
+}
+
+CanvasNavigationController::CanvasNavigationController(
+    ViewportTransform& transform) noexcept
+    : transform_(transform) {}
+
+bool CanvasNavigationController::wheel_pan(ScrollDelta delta) noexcept {
+  return transform_.pan_by({delta.x, delta.y});
+}
+
+bool CanvasNavigationController::wheel_zoom(
+    double delta_y, ViewportPosition focal_point) noexcept {
+  if (!std::isfinite(delta_y)) {
+    return false;
+  }
+  const double factor = std::pow(kWheelZoomStepPerUnit, delta_y);
+  return transform_.zoom_by(factor, focal_point);
+}
+
+bool CanvasNavigationController::pan(ViewportPosition delta) noexcept {
+  return transform_.pan_by(delta);
+}
+
+bool CanvasNavigationController::zoom_in(
+    ViewportPosition focal_point) noexcept {
+  return transform_.zoom_by(kKeyboardZoomStep, focal_point);
+}
+
+bool CanvasNavigationController::zoom_out(
+    ViewportPosition focal_point) noexcept {
+  return transform_.zoom_by(1.0 / kKeyboardZoomStep, focal_point);
 }
 
 int canvas_version() noexcept {
