@@ -604,4 +604,25 @@ std::vector<NotationRect> build_range_highlight_rects(
   return rects;
 }
 
+std::vector<NotationRect> build_paste_preview_rects(
+    const PastePlacement& placement, const Project& project,
+    const NotationLayout& layout) {
+  if (placement.node != layout.node_id || placement.scopes.empty()) {
+    return {};
+  }
+  const Voice                     preview_voice = *Voice::create(Voice::kMin);
+  std::vector<ArbitraryRangeItem> items;
+  items.reserve(placement.scopes.size());
+  for (const PasteScope& scope : placement.scopes) {
+    items.push_back(ArbitraryRangeItem{placement.node, scope.track, scope.stave,
+                                       preview_voice, placement.span});
+  }
+  const std::optional<ArbitraryRangeSet> set =
+      ArbitraryRangeSet::create(std::move(items));
+  if (!set.has_value()) {
+    return {};
+  }
+  return build_range_highlight_rects(Selection{*set}, project, layout);
+}
+
 }  // namespace graphscore

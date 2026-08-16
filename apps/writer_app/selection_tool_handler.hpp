@@ -501,8 +501,12 @@ class SelectionToolHandler final : public graphscore::InputHandler {
 
   // ---- clipboard helpers ---------------------------------------------------
 
-  [[nodiscard]] std::optional<graphscore::PasteAnchor> derive_paste_anchor()
-      const;
+  [[nodiscard]] std::optional<graphscore::PasteAnchor> derive_paste_anchor(
+      const std::optional<graphscore::Selection>& selection) const;
+
+  [[nodiscard]] std::optional<graphscore::PastePlacement>
+  current_paste_placement(
+      const std::optional<graphscore::Selection>& selection) const;
 
   [[nodiscard]] std::optional<graphscore::NotationInvalidation>
   full_invalidation() const;

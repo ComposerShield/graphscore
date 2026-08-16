@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <graphscore/domain/node_timeline.hpp>
+#include <graphscore/domain/paste_fragment_command.hpp>
 #include <graphscore/domain/selection.hpp>
 #include <graphscore/notation/notation_palette.hpp>
 #include <graphscore/notation/notation_types.hpp>
@@ -653,6 +654,14 @@ enum class RangeEdge : std::uint8_t {
 // A pure query: never mutates `project` or `layout`.
 [[nodiscard]] std::vector<NotationRect> build_range_highlight_rects(
     const Selection& selection, const Project& project,
+    const NotationLayout& layout);
+
+// Projects a validated domain paste placement into layout-space rectangles.
+// Every affected destination stave receives the placement's exact half-open
+// musical-time span. Styling and opacity remain shell/application policy.
+// A pure query: never mutates the project, layout, or placement.
+[[nodiscard]] std::vector<NotationRect> build_paste_preview_rects(
+    const PastePlacement& placement, const Project& project,
     const NotationLayout& layout);
 
 // The writer's active tool discriminator.  Range selection occurs only when

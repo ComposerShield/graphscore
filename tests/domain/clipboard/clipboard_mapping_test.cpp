@@ -88,6 +88,72 @@ TEST(ClipboardCommandTest, PasteMultiStaveFragmentOntoGrandStaff) {
       pitch(Letter::kE));
 }
 
+TEST(ClipboardCommandTest,
+     PastePlacementMatchesCommandIntervalAndAffectedStavesWithoutMutation) {
+  Fixture                fx;
+  const TrackLane        before   = fx.lane_of(fx.track_a);
+  const NotationFragment fragment = make_fragment(
+      rat(1, 2), {FragmentTrackShape{2}},
+      {FragmentVoicePart{0, 0, kVoice1,
+                         build_voice({make_note(pitch(Letter::kC), half())})},
+       FragmentVoicePart{0, 1, kVoice2,
+                         build_voice({make_note(pitch(Letter::kE), half())})}});
+  const PasteAnchor anchor{fx.node_id, fx.track_a, fx.stave_a_treble,
+                           rat(1, 4)};
+
+  const auto placement = describe_paste_placement(fx.project, fragment, anchor);
+  ASSERT_TRUE(placement.has_value());
+  EXPECT_EQ(placement->node, fx.node_id);
+  EXPECT_EQ(placement->span, (MusicalSpan{rat(1, 4), rat(3, 4)}));
+  EXPECT_EQ(placement->scopes,
+            (std::vector<PasteScope>{{fx.track_a, fx.stave_a_treble},
+                                     {fx.track_a, fx.stave_a_bass}}));
+  EXPECT_TRUE(fx.lane_of(fx.track_a) == before);
+
+  PasteFragmentCommand command(fragment, anchor);
+  ASSERT_TRUE(command.execute(fx.project).ok());
+  EXPECT_FALSE(fx.lane_of(fx.track_a) == before);
+}
+
+TEST(ClipboardCommandTest,
+     PastePlacementUsesExplicitScopesAndRejectsExactlyWhenCommandRejects) {
+  Fixture                fx;
+  const TrackLane        before_a = fx.lane_of(fx.track_a);
+  const TrackLane        before_b = fx.lane_of(fx.track_b);
+  const NotationFragment fragment = make_fragment(
+      rat(1, 4), {FragmentTrackShape{2}},
+      {FragmentVoicePart{
+           0, 0, kVoice1,
+           build_voice({make_note(pitch(Letter::kC), quarter())})},
+       FragmentVoicePart{
+           0, 1, kVoice1,
+           build_voice({make_note(pitch(Letter::kE), quarter())})}});
+  const PasteAnchor explicit_anchor{
+      fx.node_id,
+      fx.track_a,
+      fx.stave_a_treble,
+      Rational(0),
+      {{fx.track_a, fx.stave_a_bass}, {fx.track_b, fx.stave_b}}};
+
+  const auto placement =
+      describe_paste_placement(fx.project, fragment, explicit_anchor);
+  ASSERT_TRUE(placement.has_value());
+  EXPECT_EQ(placement->scopes,
+            (std::vector<PasteScope>{{fx.track_a, fx.stave_a_bass},
+                                     {fx.track_b, fx.stave_b}}));
+  EXPECT_TRUE(fx.lane_of(fx.track_a) == before_a);
+  EXPECT_TRUE(fx.lane_of(fx.track_b) == before_b);
+
+  const PasteAnchor out_of_range{fx.node_id, fx.track_a, fx.stave_a_treble,
+                                 fx.node_end()};
+  EXPECT_FALSE(
+      describe_paste_placement(fx.project, fragment, out_of_range).has_value());
+  PasteFragmentCommand rejected(fragment, out_of_range);
+  EXPECT_EQ(rejected.execute(fx.project).code(), ResultCode::kInvalidArgument);
+  EXPECT_TRUE(fx.lane_of(fx.track_a) == before_a);
+  EXPECT_TRUE(fx.lane_of(fx.track_b) == before_b);
+}
+
 TEST(ClipboardCommandTest, PasteMultiTrackFragmentOntoConsecutiveActiveTracks) {
   Fixture                fx;
   const NotationFragment fragment = make_fragment(

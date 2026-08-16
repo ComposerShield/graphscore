@@ -80,14 +80,14 @@ SelectionToolHandler::full_invalidation() const {
 // single span / measure index (the same preconditions extract_fragment
 // enforces), so a stale or ambiguous selection can never produce an anchor.
 std::optional<graphscore::PasteAnchor>
-SelectionToolHandler::derive_paste_anchor() const {
-  const auto& committed = drag_.committed_selection();
-  if (!committed.has_value()) {
+SelectionToolHandler::derive_paste_anchor(
+    const std::optional<graphscore::Selection>& selection) const {
+  if (!selection.has_value()) {
     return std::nullopt;
   }
 
   if (const auto* set =
-          std::get_if<graphscore::InsertionCaretSet>(&*committed)) {
+          std::get_if<graphscore::InsertionCaretSet>(&*selection)) {
     if (set->items().size() != 1u) {
       return std::nullopt;
     }
@@ -114,7 +114,7 @@ SelectionToolHandler::derive_paste_anchor() const {
     return graphscore::PasteAnchor{node, track, stave, *onset};
   };
 
-  if (const auto* set = std::get_if<graphscore::NoteheadSet>(&*committed)) {
+  if (const auto* set = std::get_if<graphscore::NoteheadSet>(&*selection)) {
     if (set->items().size() != 1u) {
       return std::nullopt;
     }
@@ -122,7 +122,7 @@ SelectionToolHandler::derive_paste_anchor() const {
     return event_anchor(item.node, item.track, item.stave, item.voice,
                         item.entity);
   }
-  if (const auto* set = std::get_if<graphscore::ChordSet>(&*committed)) {
+  if (const auto* set = std::get_if<graphscore::ChordSet>(&*selection)) {
     if (set->items().size() != 1u) {
       return std::nullopt;
     }
@@ -130,7 +130,7 @@ SelectionToolHandler::derive_paste_anchor() const {
     return event_anchor(item.node, item.track, item.stave, item.voice,
                         item.entity);
   }
-  if (const auto* set = std::get_if<graphscore::RestSet>(&*committed)) {
+  if (const auto* set = std::get_if<graphscore::RestSet>(&*selection)) {
     if (set->items().size() != 1u) {
       return std::nullopt;
     }
@@ -139,7 +139,7 @@ SelectionToolHandler::derive_paste_anchor() const {
                         item.entity);
   }
   if (const auto* set =
-          std::get_if<graphscore::ArbitraryRangeSet>(&*committed)) {
+          std::get_if<graphscore::ArbitraryRangeSet>(&*selection)) {
     if (set->items().empty()) {
       return std::nullopt;
     }
@@ -158,11 +158,11 @@ SelectionToolHandler::derive_paste_anchor() const {
     return graphscore::PasteAnchor{first.node, first.track, first.stave,
                                    first.span.start};
   }
-  if (const auto* set = std::get_if<graphscore::FullMeasureSet>(&*committed)) {
+  if (const auto* set = std::get_if<graphscore::FullMeasureSet>(&*selection)) {
     if (set->items().empty()) {
       return std::nullopt;
     }
-    if (!graphscore::validate_selection(project_, *committed).empty()) {
+    if (!graphscore::validate_selection(project_, *selection).empty()) {
       return std::nullopt;
     }
     const auto& first = set->items().front();
@@ -203,20 +203,21 @@ SelectionToolHandler::derive_paste_anchor() const {
   return std::nullopt;
 }
 
-bool SelectionToolHandler::paste_available() const {
+std::optional<graphscore::PastePlacement>
+SelectionToolHandler::current_paste_placement(
+    const std::optional<graphscore::Selection>& selection) const {
   if (!clipboard_.has_value() || history_.poisoned()) {
-    return false;
+    return std::nullopt;
   }
-  const auto anchor = derive_paste_anchor();
+  const auto anchor = derive_paste_anchor(selection);
   if (!anchor.has_value()) {
-    return false;
+    return std::nullopt;
   }
-  // Execute against a value copy: this is side-effect-free for app state and
-  // exercises the exact PasteFragmentCommand placement, mapping, range,
-  // tuplet, and meter checks rather than maintaining a weaker approximation.
-  graphscore::Project              candidate = project_;
-  graphscore::PasteFragmentCommand probe(*clipboard_, *anchor);
-  return probe.execute(candidate).ok();
+  return graphscore::describe_paste_placement(project_, *clipboard_, *anchor);
+}
+
+bool SelectionToolHandler::paste_available() const {
+  return current_paste_placement(drag_.committed_selection()).has_value();
 }
 
 bool SelectionToolHandler::copy_selection() {
@@ -241,6 +242,7 @@ bool SelectionToolHandler::copy_selection() {
     return false;
   }
   clipboard_ = std::move(*extraction.fragment);
+  update_highlight();
   return true;
 }
 
@@ -362,7 +364,7 @@ bool SelectionToolHandler::paste_clipboard() {
     post_diagnostic("paste: clipboard is empty");
     return false;
   }
-  const auto anchor = derive_paste_anchor();
+  const auto anchor = derive_paste_anchor(drag_.committed_selection());
   if (!anchor.has_value()) {
     post_diagnostic("paste: no paste anchor");
     return false;
@@ -399,6 +401,7 @@ bool SelectionToolHandler::paste_clipboard() {
     return false;
   }
   // Paste does not consume the fragment: the clipboard stays intact.
+  update_highlight();
   return true;
 }
 

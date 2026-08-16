@@ -930,7 +930,7 @@ std::string SelectionToolHandler::palette_command_unavailable_reason(
       if (!clipboard_.has_value()) {
         return "clipboard is empty";
       }
-      if (!derive_paste_anchor().has_value()) {
+      if (!derive_paste_anchor(drag_.committed_selection()).has_value()) {
         return "no live paste anchor";
       }
       return "paste placement or meter is invalid";

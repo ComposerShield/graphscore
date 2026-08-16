@@ -35,6 +35,7 @@ SelectionToolHandler::~SelectionToolHandler() {
     // composition before this InputHandler can become stale.
     shell_->set_text_input_active(false);
     shell_->set_highlight_rects({});
+    shell_->set_paste_preview_rects({});
   }
 }
 
@@ -204,11 +205,15 @@ void SelectionToolHandler::recover_from_failed_rollback() {
 }
 
 bool SelectionToolHandler::test_undo() {
-  return history_.undo(project_).ok();
+  const bool undone = history_.undo(project_).ok();
+  update_highlight();
+  return undone;
 }
 
 bool SelectionToolHandler::test_redo() {
-  return history_.redo(project_).ok();
+  const bool redone = history_.redo(project_).ok();
+  update_highlight();
+  return redone;
 }
 
 // Primary+Z (M5-phase-27): undo the most recent command. Selection-independent

@@ -387,6 +387,64 @@ bool clef_lane_absent_or_equals(const NodeTimeline& timeline, StaveId stave,
 
 }  // namespace
 
+std::optional<PastePlacement> describe_paste_placement(
+    const Project& project, const NotationFragment& fragment,
+    const PasteAnchor& anchor) noexcept {
+  try {
+    const std::optional<internal::PasteMapping> mapping =
+        internal::resolve_paste_mapping(project, fragment, anchor);
+    if (!mapping.has_value()) {
+      return std::nullopt;
+    }
+
+    std::vector<std::pair<std::size_t, std::size_t>> source_scopes;
+    const auto add_source_scope = [&source_scopes](std::size_t track,
+                                                   std::size_t stave) {
+      const auto scope = std::pair{track, stave};
+      if (std::find(source_scopes.begin(), source_scopes.end(), scope) ==
+          source_scopes.end()) {
+        source_scopes.push_back(scope);
+      }
+    };
+    for (const FragmentVoicePart& part : fragment.parts()) {
+      add_source_scope(part.track_ordinal, part.stave_ordinal);
+    }
+    for (const FragmentPedalSpan& span : fragment.pedal_spans()) {
+      add_source_scope(span.track_ordinal, span.stave_ordinal);
+    }
+    for (const FragmentClefChange& change : fragment.clef_changes()) {
+      add_source_scope(change.track_ordinal, change.stave_ordinal);
+    }
+    std::ranges::sort(source_scopes);
+
+    std::vector<PasteScope> destination_scopes;
+    destination_scopes.reserve(source_scopes.size());
+    for (const auto& [track, stave] : source_scopes) {
+      const std::optional<PasteScope> destination =
+          mapping->scope(track, stave);
+      if (!destination.has_value()) {
+        return std::nullopt;
+      }
+      destination_scopes.push_back(*destination);
+    }
+
+    // Execute only on a private value copy. This preserves one validation
+    // implementation: preview eligibility cannot drift from the command.
+    Project              candidate = project;
+    PasteFragmentCommand probe(fragment, anchor);
+    if (!probe.execute(candidate).ok()) {
+      return std::nullopt;
+    }
+
+    return PastePlacement{
+        anchor.node,
+        MusicalSpan{anchor.position, anchor.position + fragment.span_length()},
+        std::move(destination_scopes)};
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
 Result PasteFragmentCommand::execute(Project& project) noexcept {
   if (state_ != State::kFresh)
     return Result(ResultCode::kInvalidArgument);

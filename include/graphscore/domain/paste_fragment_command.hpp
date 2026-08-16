@@ -56,6 +56,25 @@ struct PasteAnchor {
   [[nodiscard]] bool operator==(const PasteAnchor&) const = default;
 };
 
+// Pure description of one valid paste's destination. `scopes` is the exact
+// set of destination staves the paste command will touch through voice parts,
+// pedal spans, or clef changes, in deterministic source-ordinal order.
+struct PastePlacement {
+  NodeId                  node;
+  MusicalSpan             span;
+  std::vector<PasteScope> scopes;
+
+  [[nodiscard]] bool operator==(const PastePlacement&) const = default;
+};
+
+// Validates `fragment` at `anchor` with PasteFragmentCommand's exact mapping,
+// range, meter, tuplet, rhythm, marking, pedal, and clef rules and returns its
+// affected destination interval/staves. This is a side-effect-free query: it
+// never mutates `project`, `fragment`, or `anchor`.
+[[nodiscard]] std::optional<PastePlacement> describe_paste_placement(
+    const Project& project, const NotationFragment& fragment,
+    const PasteAnchor& anchor) noexcept;
+
 // Pastes a NotationFragment (see notation_fragment.hpp) into a live Project
 // at `anchor`, reversibly.
 //

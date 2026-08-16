@@ -306,7 +306,8 @@ TEST(ClipboardCommandTest,
       {}, {}, {}, mismatched);
   const PasteAnchor anchor{node_id, track_id, stave_id, Rational(0)};
 
-  const TrackLane      before = *node_p->lane(track_id);
+  const TrackLane before = *node_p->lane(track_id);
+  EXPECT_FALSE(describe_paste_placement(project, fragment, anchor).has_value());
   PasteFragmentCommand command(fragment, anchor);
   EXPECT_EQ(command.execute(project).code(), ResultCode::kInvalidArgument);
   EXPECT_TRUE(*node_p->lane(track_id) == before);
