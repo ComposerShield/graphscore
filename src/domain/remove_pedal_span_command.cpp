@@ -45,7 +45,8 @@ Result RemovePedalSpanCommand::execute(Project& project) noexcept {
     if (!result.ok())
       return result;
 
-    Result vr = internal::validate_lane_candidate(candidate, node_end);
+    Result vr = internal::validate_pedal_stave_candidate(candidate, stave_id_,
+                                                         node_end);
     if (!vr.ok())
       return vr;
 
@@ -67,8 +68,8 @@ Result RemovePedalSpanCommand::undo(Project& project) noexcept {
     return Result(ResultCode::kInvalidArgument);
 
   Result r = internal::lane_restore_snapshot(pre_snapshot_, post_snapshot_,
-                                             node_id_, track_id_, project,
-                                             &compensation_snapshot_);
+                                             node_id_, track_id_, stave_id_,
+                                             project, &compensation_snapshot_);
   if (!r.ok())
     return r;
 
@@ -81,8 +82,8 @@ Result RemovePedalSpanCommand::redo(Project& project) noexcept {
     return Result(ResultCode::kInvalidArgument);
 
   Result r = internal::lane_restore_snapshot(post_snapshot_, pre_snapshot_,
-                                             node_id_, track_id_, project,
-                                             &compensation_snapshot_);
+                                             node_id_, track_id_, stave_id_,
+                                             project, &compensation_snapshot_);
   if (!r.ok())
     return r;
 

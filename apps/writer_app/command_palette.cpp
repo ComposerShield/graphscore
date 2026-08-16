@@ -247,6 +247,14 @@ const std::vector<PaletteCommand> kInventory = [] {
       "Apply a sustain pedal span across the selected range");
   add(PaletteCommandId::kRemovePedalSpan, "Remove pedal span", "",
       "Remove the selected pedal span marking");
+  add(PaletteCommandId::kApplyTie, "Apply tie", "",
+      "Tie the selected notehead to the immediately following event");
+  add(PaletteCommandId::kRemoveTie, "Remove tie", "",
+      "Remove the tie from the selected notehead");
+  add(PaletteCommandId::kApplySlur, "Apply slur", "",
+      "Apply a slur across the selected single-voice event range");
+  add(PaletteCommandId::kRemoveSlur, "Remove slur", "",
+      "Remove the selected slur marking");
 
   return rows;
 }();

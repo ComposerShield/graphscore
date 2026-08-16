@@ -706,6 +706,26 @@ bool SelectionToolHandler::palette_command_available(
                  project_, *selection, operation->first, operation->second)
                  .available();
     }
+    case PaletteCommandId::kApplyTie:
+    case PaletteCommandId::kRemoveTie: {
+      const auto& selection = drag_.committed_selection();
+      const auto  edit      = id == PaletteCommandId::kApplyTie
+                                  ? graphscore::MarkingEdit::kApply
+                                  : graphscore::MarkingEdit::kRemove;
+      return selection.has_value() &&
+             graphscore::make_tie_edit_command(project_, *selection, edit)
+                 .available();
+    }
+    case PaletteCommandId::kApplySlur:
+    case PaletteCommandId::kRemoveSlur: {
+      const auto& selection = drag_.committed_selection();
+      const auto  edit      = id == PaletteCommandId::kApplySlur
+                                  ? graphscore::MarkingEdit::kApply
+                                  : graphscore::MarkingEdit::kRemove;
+      return selection.has_value() &&
+             graphscore::make_slur_edit_command(project_, *selection, edit)
+                 .available();
+    }
     case PaletteCommandId::kStemAuto:
     case PaletteCommandId::kStemUp:
     case PaletteCommandId::kStemDown: {
@@ -913,6 +933,28 @@ std::string SelectionToolHandler::palette_command_unavailable_reason(
         return "requires a note, chord, or articulation marking";
       return graphscore::make_articulation_edit_command(
                  project_, *selection, operation->first, operation->second)
+          .unavailable_reason;
+    }
+    case PaletteCommandId::kApplyTie:
+    case PaletteCommandId::kRemoveTie: {
+      const auto& selection = drag_.committed_selection();
+      if (!selection.has_value())
+        return "requires exactly one live notehead";
+      const auto edit = id == PaletteCommandId::kApplyTie
+                            ? graphscore::MarkingEdit::kApply
+                            : graphscore::MarkingEdit::kRemove;
+      return graphscore::make_tie_edit_command(project_, *selection, edit)
+          .unavailable_reason;
+    }
+    case PaletteCommandId::kApplySlur:
+    case PaletteCommandId::kRemoveSlur: {
+      const auto& selection = drag_.committed_selection();
+      if (!selection.has_value())
+        return "requires a range or slur marking";
+      const auto edit = id == PaletteCommandId::kApplySlur
+                            ? graphscore::MarkingEdit::kApply
+                            : graphscore::MarkingEdit::kRemove;
+      return graphscore::make_slur_edit_command(project_, *selection, edit)
           .unavailable_reason;
     }
     case PaletteCommandId::kStemAuto:
@@ -1268,6 +1310,14 @@ bool SelectionToolHandler::run_palette_command(PaletteCommandId id) {
       const auto operation = palette_pedal(id);
       return operation.has_value() && edit_selected_pedal_span(*operation);
     }
+    case PaletteCommandId::kApplyTie:
+      return edit_selected_tie(graphscore::MarkingEdit::kApply);
+    case PaletteCommandId::kRemoveTie:
+      return edit_selected_tie(graphscore::MarkingEdit::kRemove);
+    case PaletteCommandId::kApplySlur:
+      return edit_selected_slur(graphscore::MarkingEdit::kApply);
+    case PaletteCommandId::kRemoveSlur:
+      return edit_selected_slur(graphscore::MarkingEdit::kRemove);
   }
   return false;
 }

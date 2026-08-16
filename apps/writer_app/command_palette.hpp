@@ -126,6 +126,10 @@ enum class PaletteCommandId : std::uint8_t {
   kRemoveHairpin,
   kApplyPedalSpan,
   kRemovePedalSpan,
+  kApplyTie,
+  kRemoveTie,
+  kApplySlur,
+  kRemoveSlur,
 };
 
 // One palette row: a stable name, its chord hint (empty for the chord-less

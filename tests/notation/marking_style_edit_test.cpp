@@ -65,8 +65,7 @@ NotationEntityId append_chord(Fixture& fixture) {
   return id;
 }
 
-// Pedal commands snapshot and revalidate the whole TrackLane, which requires
-// every voice of the stave to be rhythmically complete.
+// Pedal commands require every voice of the addressed stave to be complete.
 void complete_every_voice(Fixture& fixture) {
   for (std::uint8_t index = Voice::kMin; index <= Voice::kMax; ++index) {
     EXPECT_TRUE(voice(fixture, index).normalize(node_end(fixture)).ok());
@@ -469,7 +468,7 @@ TEST(MarkingStyleEditTest, PedalSpanRejectsIncompleteLanesAndStaleMarkings) {
       MarkingEdit::kApply);
   EXPECT_FALSE(incomplete.available());
   EXPECT_EQ(incomplete.unavailable_reason,
-            "requires complete rhythm in every voice on the track");
+            "requires complete rhythm in every voice on the staff");
   EXPECT_EQ(pedal_spans(fixture), nullptr);
 
   complete_every_voice(fixture);
@@ -561,6 +560,11 @@ TEST(MarkingStyleEditTest, RangeResolutionRejectsMultiStaffAndMultiItemSets) {
       fixture.project, two_staves, MarkingEdit::kApply);
   EXPECT_FALSE(pedal.available());
   EXPECT_EQ(pedal.unavailable_reason, "requires a range on one staff");
+  auto slur_staves = graphscore::make_slur_edit_command(
+      fixture.project, two_staves, MarkingEdit::kApply);
+  EXPECT_FALSE(slur_staves.available());
+  EXPECT_EQ(slur_staves.unavailable_reason,
+            "requires a range of complete events on one staff and voice");
 
   // A hairpin is voice-scoped and consumes exactly one range item, so even a
   // two-item set naming one staff and one voice is rejected.
@@ -577,4 +581,171 @@ TEST(MarkingStyleEditTest, RangeResolutionRejectsMultiStaffAndMultiItemSets) {
   EXPECT_FALSE(hairpin.available());
   EXPECT_EQ(hairpin.unavailable_reason,
             "requires a range of complete events on one staff and voice");
+  auto slur_items = graphscore::make_slur_edit_command(
+      fixture.project, two_items, MarkingEdit::kApply);
+  EXPECT_FALSE(slur_items.available());
+  EXPECT_EQ(slur_items.unavailable_reason,
+            "requires a range of complete events on one staff and voice");
+}
+
+TEST(MarkingStyleEditTest, TieApplyAndRemoveTargetExactlyOneNotehead) {
+  Fixture    fixture(1);
+  const auto ids = append_notes(fixture, {quarter(), quarter(), quarter()});
+  const Selection selected = note_selection(fixture, ids.front());
+
+  auto applied = graphscore::make_tie_edit_command(fixture.project, selected,
+                                                   MarkingEdit::kApply);
+  ASSERT_TRUE(applied.available()) << applied.unavailable_reason;
+  ASSERT_TRUE(applied.command->execute(fixture.project).ok());
+  EXPECT_TRUE(std::get<Note>(voice(fixture).events().front()).tied_to_next);
+  ASSERT_TRUE(applied.command->undo(fixture.project).ok());
+  EXPECT_FALSE(std::get<Note>(voice(fixture).events().front()).tied_to_next);
+  ASSERT_TRUE(applied.command->redo(fixture.project).ok());
+
+  auto duplicate = graphscore::make_tie_edit_command(fixture.project, selected,
+                                                     MarkingEdit::kApply);
+  EXPECT_FALSE(duplicate.available());
+  EXPECT_EQ(duplicate.unavailable_reason, "notehead is already tied");
+
+  auto removed = graphscore::make_tie_edit_command(fixture.project, selected,
+                                                   MarkingEdit::kRemove);
+  ASSERT_TRUE(removed.available()) << removed.unavailable_reason;
+  ASSERT_TRUE(removed.command->execute(fixture.project).ok());
+  EXPECT_FALSE(std::get<Note>(voice(fixture).events().front()).tied_to_next);
+
+  auto absent = graphscore::make_tie_edit_command(fixture.project, selected,
+                                                  MarkingEdit::kRemove);
+  EXPECT_FALSE(absent.available());
+  EXPECT_EQ(absent.unavailable_reason, "notehead has no tie to remove");
+
+  auto wrong = graphscore::make_tie_edit_command(
+      fixture.project, chord_selection(fixture, ids[1]), MarkingEdit::kApply);
+  EXPECT_FALSE(wrong.available());
+  EXPECT_EQ(wrong.unavailable_reason, "requires exactly one live notehead");
+}
+
+TEST(MarkingStyleEditTest, TieApplyRequiresImmediateMatchingPitch) {
+  Fixture    fixture(1);
+  Note       first = make_note(*SpelledPitch::create(Letter::kC, 4), quarter());
+  const auto first_id = first.id;
+  ASSERT_TRUE(voice(fixture).append(std::move(first)).ok());
+  ASSERT_TRUE(
+      voice(fixture)
+          .append(make_note(*SpelledPitch::create(Letter::kD, 4), quarter()))
+          .ok());
+  ASSERT_TRUE(voice(fixture).normalize(node_end(fixture)).ok());
+
+  auto mismatch = graphscore::make_tie_edit_command(
+      fixture.project, note_selection(fixture, first_id), MarkingEdit::kApply);
+  EXPECT_FALSE(mismatch.available());
+  EXPECT_EQ(mismatch.unavailable_reason,
+            "requires an immediately following event with the same pitch");
+  EXPECT_FALSE(std::get<Note>(voice(fixture).events().front()).tied_to_next);
+}
+
+TEST(MarkingStyleEditTest, TieTargetsOneNoteheadWithinAChord) {
+  Fixture     fixture(1);
+  const auto  chord_id = append_chord(fixture);
+  const auto* chord    = std::get_if<Chord>(&voice(fixture).events().front());
+  ASSERT_NE(chord, nullptr);
+  const auto selected_notehead = chord->notes.front().id;
+  ASSERT_TRUE(
+      voice(fixture)
+          .replace_event(at(1, 4),
+                         make_note(chord->notes.front().pitch, quarter()),
+                         node_end(fixture))
+          .ok());
+
+  auto applied = graphscore::make_tie_edit_command(
+      fixture.project, note_selection(fixture, selected_notehead),
+      MarkingEdit::kApply);
+  ASSERT_TRUE(applied.available()) << applied.unavailable_reason;
+  ASSERT_TRUE(applied.command->execute(fixture.project).ok());
+  const auto* changed = std::get_if<Chord>(&voice(fixture).events().front());
+  ASSERT_NE(changed, nullptr);
+  EXPECT_EQ(changed->id, chord_id);
+  EXPECT_TRUE(changed->notes.front().tied_to_next);
+  EXPECT_FALSE(changed->notes.back().tied_to_next);
+}
+
+TEST(MarkingStyleEditTest, SlurApplyAndRemoveRoundTripWithPreciseFeedback) {
+  Fixture    fixture(1);
+  const auto ids = append_notes(fixture, {quarter(), quarter(), quarter()});
+  const Selection range = range_selection(fixture, Rational(0), at(3, 4));
+
+  auto applied = graphscore::make_slur_edit_command(fixture.project, range,
+                                                    MarkingEdit::kApply);
+  ASSERT_TRUE(applied.available()) << applied.unavailable_reason;
+  ASSERT_TRUE(applied.command->execute(fixture.project).ok());
+  ASSERT_EQ(voice(fixture).slurs().size(), 1u);
+  EXPECT_EQ(voice(fixture).slurs().front().start_event, ids.front());
+  EXPECT_EQ(voice(fixture).slurs().front().end_event, ids[2]);
+  const auto slur_id = voice(fixture).slurs().front().id;
+  ASSERT_TRUE(applied.command->undo(fixture.project).ok());
+  EXPECT_TRUE(voice(fixture).slurs().empty());
+  ASSERT_TRUE(applied.command->redo(fixture.project).ok());
+
+  auto duplicate = graphscore::make_slur_edit_command(fixture.project, range,
+                                                      MarkingEdit::kApply);
+  EXPECT_FALSE(duplicate.available());
+  EXPECT_EQ(duplicate.unavailable_reason,
+            "slur already exists across this range");
+
+  const Selection selected =
+      marking_selection(fixture, MarkingKind::kSlur, slur_id);
+  auto removed = graphscore::make_slur_edit_command(fixture.project, selected,
+                                                    MarkingEdit::kRemove);
+  ASSERT_TRUE(removed.available()) << removed.unavailable_reason;
+  ASSERT_TRUE(removed.command->execute(fixture.project).ok());
+  EXPECT_TRUE(voice(fixture).slurs().empty());
+
+  auto stale = graphscore::make_slur_edit_command(fixture.project, selected,
+                                                  MarkingEdit::kRemove);
+  EXPECT_FALSE(stale.available());
+  EXPECT_EQ(stale.unavailable_reason, "requires one live slur marking");
+}
+
+TEST(MarkingStyleEditTest, SlurRejectsPartialSingleAndRestEndpointRanges) {
+  Fixture fixture(1);
+  ASSERT_TRUE(voice(fixture).append(make_rest(quarter())).ok());
+  ASSERT_TRUE(
+      voice(fixture)
+          .append(make_note(*SpelledPitch::create(Letter::kC, 4), quarter()))
+          .ok());
+  ASSERT_TRUE(voice(fixture).normalize(node_end(fixture)).ok());
+
+  auto partial = graphscore::make_slur_edit_command(
+      fixture.project, range_selection(fixture, Rational(0), at(3, 8)),
+      MarkingEdit::kApply);
+  EXPECT_FALSE(partial.available());
+  EXPECT_EQ(partial.unavailable_reason,
+            "requires a range of complete events on one staff and voice");
+
+  auto single = graphscore::make_slur_edit_command(
+      fixture.project, range_selection(fixture, at(1, 4), at(1, 2)),
+      MarkingEdit::kApply);
+  EXPECT_FALSE(single.available());
+  EXPECT_EQ(single.unavailable_reason,
+            "requires a range of at least two events");
+
+  auto rest_endpoint = graphscore::make_slur_edit_command(
+      fixture.project, range_selection(fixture, Rational(0), at(1, 2)),
+      MarkingEdit::kApply);
+  EXPECT_FALSE(rest_endpoint.available());
+  EXPECT_EQ(rest_endpoint.unavailable_reason,
+            "slur endpoints must be notes or chords");
+}
+
+TEST(MarkingStyleEditTest, PedalValidationIsLimitedToTheAddressedStaff) {
+  Fixture fixture({StaffLayout::grand_staff()}, 1);
+  append_notes(fixture, {quarter(), quarter()});
+  for (std::uint8_t index = Voice::kMin; index <= Voice::kMax; ++index) {
+    EXPECT_TRUE(fixture.voice(index, 0, 0).normalize(node_end(fixture)).ok());
+  }
+  // Every voice on the other staff remains empty and incomplete.
+  auto applied = graphscore::make_pedal_span_edit_command(
+      fixture.project, range_selection(fixture, Rational(0), at(1, 2)),
+      MarkingEdit::kApply);
+  ASSERT_TRUE(applied.available()) << applied.unavailable_reason;
+  EXPECT_TRUE(applied.command->execute(fixture.project).ok());
 }

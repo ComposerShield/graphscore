@@ -66,35 +66,25 @@ inline Result validate_voice_candidate(const VoiceContent& voice,
   }
 }
 
-// Centralized candidate lane validation: checks every voice's
-// rhythmic completeness, structural validity, and referential
-// integrity, plus every stave's pedal spans against node_end.
-// Whole-lane snapshots (pedal add/remove) require every voice in
-// every stave to be complete and valid so that a pedal command
-// never silently accepts a lane whose underlying notation is broken.
-inline Result validate_lane_candidate(const TrackLane& lane,
-                                      const Rational   node_end) {
+// Pedal mutation addresses one stave. Validate that stave's voices and spans;
+// unrelated staves in the same track do not gate the edit.
+inline Result validate_pedal_stave_candidate(const TrackLane& lane,
+                                             const StaveId    stave_id,
+                                             const Rational   node_end) {
   try {
-    const std::vector<NotationDiagnostic> lane_diags =
-        validate_lane_references(lane, node_end);
-    if (!lane_diags.empty())
+    const StaveVoices* stave = lane.stave(stave_id);
+    if (stave == nullptr)
       return Result(ResultCode::kInvalidArgument);
-
-    // Check rhythmic completeness and structural validity for every voice.
-    for (const StaveId stave_id : lane.stave_ids()) {
-      const StaveVoices* stave = lane.stave(stave_id);
-      if (stave == nullptr)
+    const std::vector<PedalSpan>* spans = lane.pedal_spans(stave_id);
+    if (spans != nullptr && !validate_pedal_spans(*spans, node_end).empty())
+      return Result(ResultCode::kInvalidArgument);
+    for (std::uint8_t v = Voice::kMin; v <= Voice::kMax; ++v) {
+      const std::optional<Voice> voice = Voice::create(v);
+      if (!voice.has_value())
         continue;
-      for (std::uint8_t v = Voice::kMin; v <= Voice::kMax; ++v) {
-        const std::optional<Voice> voice = Voice::create(v);
-        if (!voice.has_value())
-          continue;
-        const VoiceContent& vc = stave->voice(*voice);
-        if (!vc.check_complete(node_end).ok())
-          return Result(ResultCode::kInvalidArgument);
-        if (!vc.validate().ok())
-          return Result(ResultCode::kInvalidArgument);
-      }
+      const VoiceContent& content = stave->voice(*voice);
+      if (!validate_voice_candidate(content, node_end).ok())
+        return Result(ResultCode::kInvalidArgument);
     }
 
     return Result();
@@ -166,7 +156,7 @@ inline Result voice_restore_snapshot(
 inline Result lane_restore_snapshot(
     const std::optional<TrackLane>& pre_snapshot,
     const std::optional<TrackLane>& expected_current, const NodeId node_id,
-    const TrackId track_id, Project& project,
+    const TrackId track_id, const StaveId stave_id, Project& project,
     std::optional<TrackLane>* displaced = nullptr) {
   if (!pre_snapshot.has_value())
     return Result(ResultCode::kInternalError);
@@ -192,7 +182,7 @@ inline Result lane_restore_snapshot(
   try {
     TrackLane candidate = *pre_snapshot;
 
-    Result vr = validate_lane_candidate(candidate, node_end);
+    Result vr = validate_pedal_stave_candidate(candidate, stave_id, node_end);
     if (!vr.ok())
       return vr;
 

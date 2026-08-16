@@ -606,7 +606,7 @@ is the greatest power of two strictly below `N` (`3:2`, `5:4`, `7:4`, `9:8`,
 
 ### 10.4 Marking style actions (M5-phase-30)
 
-Articulations, stem overrides, dynamics, hairpins, and pedal spans are
+Articulations, stem overrides, dynamics, hairpins, pedal spans, ties, and slurs are
 chord-less command-palette actions. They consume no key at all — neither a
 letter, which `A`–`G` step entry and `N`/`R` already own, nor a digit, which
 the `2`–`8` interval bindings own — so §7's binding table is unchanged by
@@ -644,10 +644,24 @@ them and the reservations in §7.6/§7.7 stand.
   hairpin one, and the span's bounds are the union of the range's own bounds,
   validated against the node's own timeline before any command is built.
   **Remove pedal span** requires one selected pedal span marking. Both pedal
-  actions are available only when every voice on the track has complete
-  rhythm; otherwise they report `requires complete rhythm in every voice on
-  the track`. There is no change action: a pedal span carries no style
+  actions are available only when every voice on the addressed staff has
+  complete rhythm; unrelated staves on the track do not gate the edit.
+  Otherwise they report `requires complete rhythm in every voice on the
+  staff`. There is no change action: a pedal span carries no style
   attribute, only endpoints, which a later endpoint-drag gesture owns.
+- **Apply tie** and **remove tie** require exactly one selected notehead, not a
+  chord/event, rest, range, or tie marking. Apply requires the immediately
+  following event in the same voice to sound the selected pitch and rejects an
+  existing tie; remove requires that notehead to carry a tie. The selected
+  notehead survives both edits.
+- **Apply slur** requires an exact, non-empty `ArbitraryRangeSet` of complete
+  contiguous events on one staff and one voice. It requires at least two
+  events and sounding note/chord endpoints, then creates one slur from the
+  first event to the last. Partial-event, mixed staff/voice, stale, rest/grace
+  endpoint, and duplicate endpoint-pair targets are rejected. **Remove slur**
+  requires exactly one selected slur marking and clears that now-stale marking
+  selection. There is no change action because a slur has no style attribute;
+  endpoint dragging is future work.
 
 Stale selections, wrong selection arms, grace notes (which carry no
 event-anchored marking of their own), and edits that would change nothing are
@@ -677,7 +691,8 @@ action in this table, and it is what makes the numpad-only bindings
   row per articulation), remove articulation, the three stem-direction rows,
   apply/change dynamic (one row per dynamic), remove dynamic, apply
   crescendo/diminuendo, change hairpin to crescendo/diminuendo, remove
-  hairpin, apply pedal span, and remove pedal span. Every one of those
+  hairpin, apply pedal span, remove pedal span, apply/remove tie, and
+  apply/remove slur. Every one of those
   chord-less rows — the structural, tuplet, and marking style rows alike —
   carries an **empty chord hint**: they are deliberately **not** bound to any
   key chord (no row in §7 names them), so §7's `(chord, key)` space is

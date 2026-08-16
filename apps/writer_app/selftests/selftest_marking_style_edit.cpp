@@ -85,8 +85,8 @@ class FailingStyleInverseCommand final : public graphscore::Command {
 };
 
 // Two 4/4 measures carrying eight quarter notes in voice 1. Every voice of the
-// stave is normalized, because the stave-scoped pedal commands revalidate the
-// whole TrackLane and require complete rhythm in each of its voices.
+// stave is normalized because stave-scoped pedal commands require complete
+// rhythm in every voice of the addressed stave.
 [[nodiscard]] std::optional<MarkingFixture> build_fixture(
     const graphscore::GlyphMetrics& metrics) {
   graphscore::Project project{graphscore::ProjectId::generate(), "Markings"};
@@ -192,7 +192,7 @@ class FailingStyleInverseCommand final : public graphscore::Command {
 }
 
 // refresh_layout() relayouts incrementally, reusing every system
-// marking_style_invalidation() did not name, so an under-scoped invalidation
+// marking_edit_invalidation() did not name, so an under-scoped invalidation
 // shows up as a layout that disagrees with a from-scratch pass over the same
 // post-edit project. Comparing the retained layout across a FAILED edit proves
 // nothing about that scope; this is the check that does.
@@ -216,7 +216,14 @@ void prepare(SelectionToolHandler&           handler,
 // Which family's apply route the publication-compensation checks drive. Each
 // one lands on a different domain command, so each proves that command's own
 // snapshot-based compensate_undo/compensate_redo.
-enum class ApplyRoute { kDynamic, kChangeDynamic, kHairpin, kPedalSpan };
+enum class ApplyRoute {
+  kDynamic,
+  kChangeDynamic,
+  kHairpin,
+  kPedalSpan,
+  kTie,
+  kSlur
+};
 
 [[nodiscard]] bool run_apply_route(SelectionToolHandler& handler,
                                    const MarkingFixture& fixture,
@@ -248,6 +255,13 @@ enum class ApplyRoute { kDynamic, kChangeDynamic, kHairpin, kPedalSpan };
       handler.set_committed_selection(
           range_selection(fixture, q(3, 4), q(5, 4)));
       return handler.run_palette_command(PaletteCommandId::kApplyPedalSpan);
+    case ApplyRoute::kTie:
+      handler.set_committed_selection(note_selection(fixture, 0));
+      return handler.run_palette_command(PaletteCommandId::kApplyTie);
+    case ApplyRoute::kSlur:
+      handler.set_committed_selection(
+          range_selection(fixture, q(0, 1), q(1, 2)));
+      return handler.run_palette_command(PaletteCommandId::kApplySlur);
   }
   return false;
 }
@@ -264,6 +278,13 @@ enum class ApplyRoute { kDynamic, kChangeDynamic, kHairpin, kPedalSpan };
     state += "d" + std::to_string(static_cast<int>(dynamic.value));
   for (const auto& hairpin : voice->hairpins())
     state += "h" + std::to_string(static_cast<int>(hairpin.direction));
+  for (const auto& slur : voice->slurs())
+    state += "s" + slur.id.to_string();
+  if (const auto* note =
+          std::get_if<graphscore::Note>(&voice->events().front());
+      note != nullptr && note->tied_to_next) {
+    state += "t";
+  }
   const auto* spans = pedal_spans(handler, fixture);
   if (spans != nullptr)
     state += "p" + std::to_string(spans->size());
@@ -284,7 +305,7 @@ enum class ApplyRoute { kDynamic, kChangeDynamic, kHairpin, kPedalSpan };
         [&shell](const graphscore::NotationLayout& value) {
           return publish_headless_test_surface(value, &shell);
         });
-    undo.set_event_style_command_wrapper(
+    undo.set_marking_edit_command_wrapper(
         [](std::unique_ptr<graphscore::Command> command) {
           return std::make_unique<FailingStyleInverseCommand>(
               std::move(command), 0, 1);
@@ -324,7 +345,7 @@ enum class ApplyRoute { kDynamic, kChangeDynamic, kHairpin, kPedalSpan };
         [&shell](const graphscore::NotationLayout& value) {
           return publish_headless_test_surface(value, &shell);
         });
-    redo.set_event_style_command_wrapper(
+    redo.set_marking_edit_command_wrapper(
         [](std::unique_ptr<graphscore::Command> command) {
           return std::make_unique<FailingStyleInverseCommand>(
               std::move(command), 2, 0);
@@ -462,7 +483,7 @@ int marking_style_edit_test() {
       return 1;
     }
     // The [3/4, 5/4) range straddles the measure boundary, so this is the
-    // cross-measure invalidation marking_style_invalidation() must widen to.
+    // cross-measure invalidation marking_edit_invalidation() must widen to.
     if (!layout_matches_fresh(handler, *fixture, metrics)) {
       std::fprintf(stderr,
                    "marking-style-edit-test: hairpin invalidation scope\n");
@@ -547,11 +568,105 @@ int marking_style_edit_test() {
     }
   }
 
+  // Ties preserve the selected notehead and round-trip as one transaction.
+  {
+    auto fixture = build_fixture(metrics);
+    if (!fixture.has_value())
+      return 1;
+    SelectionToolHandler handler(std::move(fixture->project),
+                                 std::move(fixture->layout), &shell);
+    prepare(handler, metrics);
+    const auto selected = note_selection(*fixture, 0);
+    handler.set_committed_selection(selected);
+    if (!handler.palette_command_available(PaletteCommandId::kApplyTie) ||
+        !handler.run_palette_command(PaletteCommandId::kApplyTie) ||
+        !std::get<graphscore::Note>(
+             content(handler, *fixture)->events().front())
+             .tied_to_next ||
+        handler.drag_state().committed_selection() != selected ||
+        !handler.test_undo() || !handler.test_redo() ||
+        handler.palette_command_available(PaletteCommandId::kApplyTie) ||
+        !handler.palette_command_available(PaletteCommandId::kRemoveTie) ||
+        !handler.run_palette_command(PaletteCommandId::kRemoveTie) ||
+        std::get<graphscore::Note>(content(handler, *fixture)->events().front())
+            .tied_to_next ||
+        handler.drag_state().committed_selection() != selected) {
+      std::fprintf(stderr, "marking-style-edit-test: tie transaction failed\n");
+      return 1;
+    }
+    handler.set_committed_selection(note_selection(*fixture, 3));
+    const auto tie_invalidation = handler.test_marking_edit_invalidation(true);
+    if (!tie_invalidation.has_value() ||
+        tie_invalidation->kind !=
+            graphscore::NotationInvalidationKind::kCrossMeasureSpan ||
+        tie_invalidation->first_measure != 0u ||
+        tie_invalidation->last_measure != 1u) {
+      std::fprintf(stderr,
+                   "marking-style-edit-test: tie invalidation failed\n");
+      return 1;
+    }
+  }
+
+  // Slur apply preserves the range; removal clears its now-stale marking.
+  {
+    auto fixture = build_fixture(metrics);
+    if (!fixture.has_value())
+      return 1;
+    SelectionToolHandler handler(std::move(fixture->project),
+                                 std::move(fixture->layout), &shell);
+    prepare(handler, metrics);
+    const auto range = range_selection(*fixture, q(0, 1), q(1, 2));
+    handler.set_committed_selection(range);
+    if (!handler.palette_command_available(PaletteCommandId::kApplySlur) ||
+        !handler.run_palette_command(PaletteCommandId::kApplySlur) ||
+        content(handler, *fixture)->slurs().size() != 1u ||
+        handler.drag_state().committed_selection() != range ||
+        !handler.test_undo() || !handler.test_redo()) {
+      std::fprintf(stderr, "marking-style-edit-test: slur apply failed\n");
+      return 1;
+    }
+    const auto marking = content(handler, *fixture)->slurs().front().id;
+    const auto selected =
+        marking_selection(*fixture, graphscore::MarkingKind::kSlur, marking);
+    if (!selected.has_value())
+      return 1;
+    handler.set_committed_selection(*selected);
+    if (!handler.palette_command_available(PaletteCommandId::kRemoveSlur) ||
+        !handler.run_palette_command(PaletteCommandId::kRemoveSlur) ||
+        !content(handler, *fixture)->slurs().empty() ||
+        handler.drag_state().committed_selection().has_value()) {
+      std::fprintf(stderr, "marking-style-edit-test: slur remove failed\n");
+      return 1;
+    }
+  }
+
+  // A half-open range ending exactly at the next measure's boundary remains a
+  // local-content invalidation in the preceding measure.
+  {
+    auto fixture = build_fixture(metrics);
+    if (!fixture.has_value())
+      return 1;
+    SelectionToolHandler handler(std::move(fixture->project),
+                                 std::move(fixture->layout), &shell);
+    prepare(handler, metrics);
+    handler.set_committed_selection(
+        range_selection(*fixture, q(0, 1), q(1, 1)));
+    const auto invalidation = handler.test_marking_edit_invalidation();
+    if (!invalidation.has_value() ||
+        invalidation->kind !=
+            graphscore::NotationInvalidationKind::kLocalContent ||
+        invalidation->first_measure != 0u || invalidation->last_measure != 0u) {
+      std::fprintf(stderr,
+                   "marking-style-edit-test: half-open invalidation failed\n");
+      return 1;
+    }
+  }
+
   // Undo and redo publication compensation bypasses a failing normal inverse
   // on every marking command this phase routes through the palette.
   for (const ApplyRoute route :
        {ApplyRoute::kDynamic, ApplyRoute::kChangeDynamic, ApplyRoute::kHairpin,
-        ApplyRoute::kPedalSpan}) {
+        ApplyRoute::kPedalSpan, ApplyRoute::kTie, ApplyRoute::kSlur}) {
     if (check_publication_compensation(metrics, shell, route) != 0)
       return 1;
   }
@@ -619,6 +734,17 @@ int marking_style_edit_test() {
             std::vector<std::string>{
                 "pedal span: requires one live pedal span marking"}) {
       std::fprintf(stderr, "marking-style-edit-test: pedal diagnostic\n");
+      return 1;
+    }
+    if (handler.run_palette_command(PaletteCommandId::kRemoveTie) ||
+        handler.take_diagnostics() !=
+            std::vector<std::string>{"tie: notehead has no tie to remove"} ||
+        handler.run_palette_command(PaletteCommandId::kApplySlur) ||
+        handler.take_diagnostics() !=
+            std::vector<std::string>{
+                "slur: requires a range of complete events on one staff and "
+                "voice"}) {
+      std::fprintf(stderr, "marking-style-edit-test: tie/slur diagnostic\n");
       return 1;
     }
     handler.set_committed_selection(std::nullopt);

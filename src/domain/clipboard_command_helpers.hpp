@@ -868,9 +868,8 @@ struct LaneRestoreBundle {
 // referential integrity.
 //
 // Also runs validate_lane_references (pedal spans, cross-voice references)
-// against the full lane.  This is the permissive analogue of
-// validate_lane_candidate in marking_command_helpers.hpp, which rejects
-// empty voices.
+// against the full lane. Unlike addressed-stave pedal-command validation,
+// clipboard restoration owns the complete lane and accepts empty voices.
 [[nodiscard]] inline Result validate_clipboard_lane_candidate(
     const TrackLane& lane, Rational node_end) {
   try {

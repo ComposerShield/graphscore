@@ -107,6 +107,8 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   bool edit_selected_hairpin(graphscore::MarkingEdit      edit,
                              graphscore::HairpinDirection direction);
   bool edit_selected_pedal_span(graphscore::MarkingEdit edit);
+  bool edit_selected_tie(graphscore::MarkingEdit edit);
+  bool edit_selected_slur(graphscore::MarkingEdit edit);
 
   // Toolkit-neutral parameter-entry handoff established by the palette row.
   // A platform dialog/AT can observe this and call apply_tuplet_ratio().
@@ -164,11 +166,11 @@ class SelectionToolHandler final : public graphscore::InputHandler {
 
   void set_accidental_command_factory(AccidentalCommandFactory factory);
 
-  using EventStyleCommandWrapper =
+  using MarkingEditCommandWrapper =
       std::function<std::unique_ptr<graphscore::Command>(
           std::unique_ptr<graphscore::Command>)>;
 
-  void set_event_style_command_wrapper(EventStyleCommandWrapper wrapper);
+  void set_marking_edit_command_wrapper(MarkingEditCommandWrapper wrapper);
 
   // Builds the retained incremental layout cache from the current project and
   // layout, so a later refresh_layout() reuses unaffected systems.
@@ -315,6 +317,9 @@ class SelectionToolHandler final : public graphscore::InputHandler {
 
   [[nodiscard]] const graphscore::NotationLayoutWork& test_last_layout_work()
       const noexcept;
+
+  [[nodiscard]] std::optional<graphscore::NotationInvalidation>
+  test_marking_edit_invalidation(bool include_following_event = false) const;
 
   [[nodiscard]] std::size_t test_undo_stack_size() const noexcept;
 
@@ -493,10 +498,10 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // apply over a range spans that range's own bounds. A multi-measure result
   // is a kCrossMeasureSpan invalidation, a single-measure one kLocalContent.
   [[nodiscard]] std::optional<graphscore::NotationInvalidation>
-  marking_style_invalidation() const;
+  marking_edit_invalidation(bool include_following_event = false) const;
 
   // The shared tail every dynamic/hairpin/pedal-span edit runs once its own
-  // family's factory has produced `built`: marking_style_invalidation(), the
+  // family's factory has produced `built`: marking_edit_invalidation(), the
   // optional test wrapper, one provisional history transaction around
   // refresh_layout(), and -- on success -- clearing the committed selection
   // when `clears_selection`. Every failure path posts
@@ -507,7 +512,8 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // their reasons name the selection each family accepts.
   bool run_marking_edit(std::string_view                      label,
                         graphscore::NotationEditCommandResult built,
-                        bool                                  clears_selection);
+                        bool                                  clears_selection,
+                        bool include_following_event = false);
 
   // The start of the node's measure `measure_index`, or nullopt when the
   // node/track/stave is absent, the track is archived, or the index is out
@@ -623,7 +629,7 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // tests replace it with a deterministic failing wrapper.
   AccidentalCommandFactory accidental_command_factory_ =
       &graphscore::make_step_accidental_command;
-  EventStyleCommandWrapper event_style_command_wrapper_;
+  MarkingEditCommandWrapper marking_edit_command_wrapper_;
   // Glyph metrics used to refresh the retained layout after a move; see
   // set_metrics() and refresh_layout().
   const graphscore::GlyphMetrics* metrics_ = nullptr;
