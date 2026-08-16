@@ -204,6 +204,241 @@ TEST(ViewportTransformTest, RejectsAbsorbedZoomFactorWithoutReanchoring) {
   EXPECT_EQ(transform.zoom(), zoom);
 }
 
+// The writer's render pass maps the notation surface (world rect (0,0)-(W,H))
+// through to_viewport on every frame. A pinch gesture sweeps zoom through a
+// continuum of ordinary, non-power-of-two scales, and a pan shifts both
+// anchors. The round-trip exactness check in map_forward/map_inverse must not
+// reject any of these ordinary states: a nullopt here made the render pass
+// skip the notation surface entirely, which is the observed intermediate-zoom
+// flicker. This test sweeps representative incremental zoom values and
+// combined pan offsets and asserts every surface corner maps (and
+// inverse-maps) without collapse across the whole sweep.
+TEST(ViewportTransformTest, OrdinaryZoomAndPanSweepNeverCollapses) {
+  constexpr double kSurfaceWidth  = 800.0;
+  constexpr double kSurfaceHeight = 600.0;
+  constexpr double kWindowWidth   = 1280.0;
+  constexpr double kWindowHeight  = 800.0;
+
+  for (int zoom_step = -600; zoom_step <= 600; ++zoom_step) {
+    // exp(step*0.005) sweeps roughly 0.05x .. 20x, the ordinary range a
+    // physical two-finger pinch produces (and beyond), without entering the
+    // resolution-collapse extremes the transform is meant to reject.
+    const double zoom = std::exp(static_cast<double>(zoom_step) * 0.005);
+    for (int pan_x = -3; pan_x <= 3; ++pan_x) {
+      for (int pan_y = -3; pan_y <= 3; ++pan_y) {
+        ViewportTransform transform;
+        // A pinch anchored at the window center: world_anchor and
+        // viewport_anchor both sit at the focal point, then a pan offsets the
+        // viewport anchor away from it.
+        const ViewportPosition focal{kWindowWidth / 2.0 + 37.0 * pan_x,
+                                     kWindowHeight / 2.0 + 53.0 * pan_y};
+        ASSERT_TRUE(transform.set_anchor(
+            {focal.x, focal.y},
+            {focal.x + 100.0 * pan_x, focal.y + 100.0 * pan_y}));
+        ASSERT_TRUE(transform.zoom_to(zoom, focal));
+
+        const GraphPosition corners[] = {
+            {0.0, 0.0},
+            {kSurfaceWidth, 0.0},
+            {0.0, kSurfaceHeight},
+            {kSurfaceWidth, kSurfaceHeight},
+        };
+        for (const GraphPosition corner : corners) {
+          const auto viewport = transform.to_viewport(corner);
+          ASSERT_TRUE(viewport)
+              << "to_viewport collapsed at zoom=" << zoom << " pan=(" << pan_x
+              << ',' << pan_y << ") corner=(" << corner.x << ',' << corner.y
+              << ')';
+          const auto world = transform.to_world(*viewport);
+          ASSERT_TRUE(world) << "to_world collapsed at zoom=" << zoom
+                             << " pan=(" << pan_x << ',' << pan_y << ')';
+        }
+      }
+    }
+  }
+}
+
+// A world anchor of 1e200 at scale 1 forward-maps both 0 and 1 to -1e200:
+// the subtraction `value - input_anchor` absorbs `value`'s bits, so the
+// inverse recovers both as 0. Zero round-trips faithfully (0 -> -1e200 -> 0)
+// and must be accepted, but 1 (and 2) collapse onto the same image *away from*
+// the output anchor 0 and must be rejected. This is the many-to-one collapse
+// the round-trip criterion must not let a giant anchor's tolerance swallow.
+TEST(ViewportTransformTest, RejectsForwardCollapseAwayFromOutputAnchor) {
+  ViewportTransform transform;
+  constexpr double  kLarge = 1.0e200;
+  ASSERT_TRUE(transform.set_anchor({kLarge, 0.0}, {0.0, 0.0}));
+
+  EXPECT_TRUE(transform.to_viewport({0.0, 0.0}).has_value());
+  EXPECT_FALSE(transform.to_viewport({1.0, 0.0}).has_value());
+  EXPECT_FALSE(transform.to_viewport({2.0, 0.0}).has_value());
+}
+
+// The inverse twin: a viewport anchor of 1e200 at scale 1 inverse-maps both 0
+// and 1 to -1e200 world, recovering both as 0. Zero is faithful; 1 and 2 are
+// collapsed and must be rejected.
+TEST(ViewportTransformTest, RejectsInverseCollapseAwayFromOutputAnchor) {
+  ViewportTransform transform;
+  constexpr double  kLarge = 1.0e200;
+  ASSERT_TRUE(transform.set_anchor({0.0, 0.0}, {kLarge, 0.0}));
+
+  EXPECT_TRUE(transform.to_world({0.0, 0.0}).has_value());
+  EXPECT_FALSE(transform.to_world({1.0, 0.0}).has_value());
+  EXPECT_FALSE(transform.to_world({2.0, 0.0}).has_value());
+}
+
+// The reviewer's large-value many-to-one counterexample (forward direction):
+// at input_anchor 2^622, scale 1, output_anchor 0 the values 2^600 and
+// 2^600 + 2^568 forward-map to the same image — the subtraction absorbs the
+// 2^568 term, which is below the rounding resolution of the ~2^622 result —
+// so the inverse recovers both as 2^600. The second loses 2^20 ULPs and must
+// be rejected, not admitted by a percentage tolerance (its relative error
+// ~2.33e-10 sits inside a 1e-9 bound).
+TEST(ViewportTransformTest, RejectsForwardCollapseOfNearbyLargeValues) {
+  ViewportTransform transform;
+  constexpr double  kAnchor = 0x1.0p+622;  // 2^622
+  constexpr double  kValue  = 0x1.0p+600;  // 2^600
+  constexpr double  kDelta  = 0x1.0p+568;  // 2^568
+  ASSERT_TRUE(transform.set_anchor({kAnchor, 0.0}, {0.0, 0.0}));
+
+  EXPECT_TRUE(transform.to_viewport({kValue, 0.0}).has_value());
+  EXPECT_FALSE(transform.to_viewport({kValue + kDelta, 0.0}).has_value());
+}
+
+// The inverse twin of the large-value collapse: a viewport anchor of 2^622 at
+// scale 1 inverse-maps both 2^600 and 2^600 + 2^568 to the same world image
+// and recovers both as 2^600. The second is collapsed and must be rejected.
+TEST(ViewportTransformTest, RejectsInverseCollapseOfNearbyLargeValues) {
+  ViewportTransform transform;
+  constexpr double  kAnchor = 0x1.0p+622;  // 2^622
+  constexpr double  kValue  = 0x1.0p+600;  // 2^600
+  constexpr double  kDelta  = 0x1.0p+568;  // 2^568
+  ASSERT_TRUE(transform.set_anchor({0.0, 0.0}, {kAnchor, 0.0}));
+
+  EXPECT_TRUE(transform.to_world({kValue, 0.0}).has_value());
+  EXPECT_FALSE(transform.to_world({kValue + kDelta, 0.0}).has_value());
+}
+
+// The reviewer's zero-collapse counterexample (forward direction): at
+// input_anchor 3*2^1000, scale 2^-100, output_anchor 2^954 the values 0 and
+// -2^1000 forward-map to the same image (the fma rounds the 0.25-ULP
+// difference into the shared result) and inverse-recover as -2^1000. The
+// zero's recovery is a meaningful nonzero value and must be rejected; a floor
+// scaled by the anchors would reach infinity (2^954 / 2^-100 overflows) and
+// admit it.
+TEST(ViewportTransformTest, RejectsForwardZeroRecoveredAsCollapsedLargeValue) {
+  ViewportTransform transform;
+  constexpr double  kInputAnchor  = 3.0 * 0x1.0p+1000;  // 3*2^1000
+  constexpr double  kScale        = 0x1.0p-100;         // 2^-100
+  constexpr double  kOutputAnchor = 0x1.0p+954;         // 2^954
+  constexpr double  kCollapsed    = -0x1.0p+1000;       // -2^1000
+  ASSERT_TRUE(transform.set_anchor({kInputAnchor, 0.0}, {kOutputAnchor, 0.0}));
+  ASSERT_TRUE(transform.zoom_to(kScale, {kOutputAnchor, 0.0}));
+
+  EXPECT_FALSE(transform.to_viewport({0.0, 0.0}).has_value());
+  EXPECT_TRUE(transform.to_viewport({kCollapsed, 0.0}).has_value());
+}
+
+// The inverse twin of the zero-collapse counterexample: a viewport anchor of
+// 3*2^1000 at scale 2^100 inverse-maps both 0 and -2^1000 to the same world
+// image and recovers both as -2^1000. The zero's recovery is rejected; the
+// value it collapsed onto is its own faithful round-trip and is accepted.
+TEST(ViewportTransformTest, RejectsInverseZeroRecoveredAsCollapsedLargeValue) {
+  ViewportTransform transform;
+  constexpr double  kInputAnchor  = 3.0 * 0x1.0p+1000;  // 3*2^1000
+  constexpr double  kScale        = 0x1.0p+100;         // 2^100
+  constexpr double  kOutputAnchor = 0x1.0p+954;         // 2^954
+  constexpr double  kCollapsed    = -0x1.0p+1000;       // -2^1000
+  ASSERT_TRUE(transform.set_anchor({kOutputAnchor, 0.0}, {kInputAnchor, 0.0}));
+  ASSERT_TRUE(transform.zoom_to(kScale, {kInputAnchor, 0.0}));
+
+  EXPECT_FALSE(transform.to_world({0.0, 0.0}).has_value());
+  EXPECT_TRUE(transform.to_world({kCollapsed, 0.0}).has_value());
+}
+
+// The ordinary canvas origin round-trips in both directions under a
+// window-sized anchored transform (the case the absolute zero floor must keep
+// accepting), and a near-zero nonzero value round-trips exactly under an
+// identity transform, exercising the nonzero ULP branch at the smallest
+// magnitudes rather than the zero branch.
+TEST(ViewportTransformTest, OrdinaryOriginAndNearZeroRoundTrip) {
+  ViewportTransform transform;
+  ASSERT_TRUE(transform.set_anchor({640.0, 360.0}, {640.0, 360.0}));
+  ASSERT_TRUE(transform.zoom_to(1.5, {640.0, 360.0}));
+  ASSERT_TRUE(transform.pan_by({120.0, -60.0}));
+
+  const auto origin_viewport = transform.to_viewport({0.0, 0.0});
+  ASSERT_TRUE(origin_viewport);
+  const auto origin_world = transform.to_world(*origin_viewport);
+  ASSERT_TRUE(origin_world);
+  EXPECT_NEAR(origin_world->x, 0.0, 1e-9);
+  EXPECT_NEAR(origin_world->y, 0.0, 1e-9);
+
+  const auto viewport_origin = transform.to_world({0.0, 0.0});
+  ASSERT_TRUE(viewport_origin);
+  ASSERT_TRUE(transform.to_viewport(*viewport_origin).has_value());
+
+  ViewportTransform identity;
+  const double      smallest = std::numeric_limits<double>::denorm_min();
+  const auto        tiny     = identity.to_viewport({smallest, -1e-12});
+  ASSERT_TRUE(tiny);
+  const auto recovered = identity.to_world(*tiny);
+  ASSERT_TRUE(recovered);
+  EXPECT_EQ(recovered->x, smallest);
+  EXPECT_EQ(recovered->y, -1e-12);
+}
+
+// The maximum-magnitude many-to-one collapse (forward direction): a world
+// coordinate of ±DBL_MAX, world anchor 0, zoom ≈1.4·2^-76, and a viewport
+// anchor of ±2^1000 forward-map DBL_MAX to ~2^1000 + 2^948 — the value's
+// bits are absorbed into the rounding of the fma — so the inverse recovers a
+// value ~29% smaller rather than DBL_MAX. A ULP budget whose one-ULP step is
+// computed as nextafter(DBL_MAX, +∞) − DBL_MAX would be infinity and admit the
+// loss; the finite predecessor spacing must reject it (the recovery is
+// ~2.6e15 ULPs off).
+TEST(ViewportTransformTest, RejectsForwardCollapseAtMaximumFiniteMagnitude) {
+  constexpr double kMaximum = std::numeric_limits<double>::max();
+  constexpr double kScale   = 0x1.6666666666666p-76;  // ≈1.4·2^-76
+  constexpr double kAnchor  = 0x1.0p+1000;            // 2^1000
+
+  {
+    ViewportTransform transform;
+    ASSERT_TRUE(transform.set_anchor({0.0, 0.0}, {kAnchor, 0.0}));
+    ASSERT_TRUE(transform.zoom_to(kScale, {kAnchor, 0.0}));
+    EXPECT_FALSE(transform.to_viewport({kMaximum, 0.0}).has_value());
+  }
+  {
+    ViewportTransform transform;
+    ASSERT_TRUE(transform.set_anchor({0.0, 0.0}, {-kAnchor, 0.0}));
+    ASSERT_TRUE(transform.zoom_to(kScale, {-kAnchor, 0.0}));
+    EXPECT_FALSE(transform.to_viewport({-kMaximum, 0.0}).has_value());
+  }
+}
+
+// The inverse twin: a viewport coordinate of ±DBL_MAX, viewport anchor 0,
+// zoom ≈1.4·2^76, and a world anchor of ∓2^1000 inverse-map DBL_MAX to
+// ~2^1000 ± 2^947, and the forward recovery loses the value's bits. The
+// recovered value is ~30% smaller in magnitude and must be rejected by the
+// finite ULP budget, not admitted by an infinite one-ULP step.
+TEST(ViewportTransformTest, RejectsInverseCollapseAtMaximumFiniteMagnitude) {
+  constexpr double kMaximum      = std::numeric_limits<double>::max();
+  constexpr double kInverseScale = 0x1.6666666666666p+76;  // ≈1.4·2^76
+  constexpr double kAnchor       = 0x1.0p+1000;            // 2^1000
+
+  {
+    ViewportTransform transform;
+    ASSERT_TRUE(transform.set_anchor({-kAnchor, 0.0}, {0.0, 0.0}));
+    ASSERT_TRUE(transform.zoom_to(kInverseScale, {0.0, 0.0}));
+    EXPECT_FALSE(transform.to_world({kMaximum, 0.0}).has_value());
+  }
+  {
+    ViewportTransform transform;
+    ASSERT_TRUE(transform.set_anchor({kAnchor, 0.0}, {0.0, 0.0}));
+    ASSERT_TRUE(transform.zoom_to(kInverseScale, {0.0, 0.0}));
+    EXPECT_FALSE(transform.to_world({-kMaximum, 0.0}).has_value());
+  }
+}
+
 TEST(ViewportTransformTest, RetainsCanvasVersionCompatibility) {
   EXPECT_EQ(graphscore::canvas_version(), 1);
 }

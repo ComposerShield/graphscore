@@ -76,12 +76,12 @@ set(GRAPHSCORE_SDL3_OPTIONS
   SDL_HIDAPI_LIBUSB=OFF
 
   # Graphics APIs still deferred everywhere (ADR 0002 §A5: SDL_VULKAN and
-  # SDL_OPENGLES are unaffected by the presentation-path decision; SDL_METAL
-  # stays OFF even on macOS because SDL_RENDER_METAL is auto-enabled by
-  # SDL_RENDER=ON alone, not by the separate SDL_METAL windowing flag).
+  # SDL_OPENGLES are unaffected by the presentation-path decision).
+  # SDL_METAL is deliberately absent from this common list: it is decided per
+  # platform below — ON on macOS (required for the Metal render driver at
+  # runtime), OFF elsewhere. See the APPLE block and its comment.
   SDL_VULKAN=OFF
   SDL_OPENGLES=OFF
-  SDL_METAL=OFF
   SDL_OPENVR=OFF
 
   # Video drivers that are not real windowing paths.
@@ -97,9 +97,21 @@ set(GRAPHSCORE_SDL3_OPTIONS
 if (APPLE)
   list(APPEND GRAPHSCORE_SDL3_OPTIONS
     SDL_COCOA=ON
-    # ADR 0002 §A5: SDL_RENDER=ON (above) auto-enables SDL_RENDER_METAL via
-    # the existing "SDL_RENDER;APPLE" dep_option guard; no other graphics
-    # API flag is needed or wanted on macOS.
+    # ADR 0002 §A5 (empirically corrected): SDL_RENDER=ON alone compiles the
+    # Metal *render driver* (SDL_RENDER_METAL auto-enabled by the
+    # "SDL_RENDER;APPLE" dep_option guard), but that driver cannot create a
+    # renderer at runtime without SDL_METAL=ON as well. SDL_METAL gates
+    # SDL_VIDEO_METAL (SDL CMakeLists ~2865), which is the only thing that
+    # wires the Cocoa video driver's Metal_CreateView/Metal_GetLayer function
+    # pointers (SDL_cocoavideo.m, `#ifdef SDL_VIDEO_METAL`); the Metal render
+    # driver obtains its CAMetalLayer through SDL_Metal_CreateView, which
+    # returns SDL_Unsupported() ("That operation is not supported") when that
+    # pointer is NULL. With SDL_METAL=OFF the Metal render driver therefore
+    # compiles but fails at runtime on a Metal-capable Mac. SDL_METAL's own
+    # dep_option default is already ON on APPLE; this entry states it
+    # explicitly so the readback gate below verifies it like every other
+    # reviewed option.
+    SDL_METAL=ON
     SDL_OPENGL=OFF
     SDL_DIRECTX=OFF
   )
@@ -289,6 +301,14 @@ endif()
 # platform (ADR 0002 §A7.3). HAVE_OPENGL/HAVE_D3D11_H/HAVE_FRAMEWORK_METAL
 # are written as CACHE entries by check_c_source_compiles/
 # check_objc_source_compiles and so survive into this scope.
+#
+# On macOS the readable chain for the Metal render driver is the readback of
+# SDL_METAL=ON (declared above) AND this HAVE_FRAMEWORK_METAL probe: together
+# they are SDL's own `SDL_METAL AND HAVE_FRAMEWORK_METAL` condition for
+# SDL_VIDEO_METAL, without which the compiled Metal render driver fails at
+# runtime (see the APPLE block above). SDL_VIDEO_METAL itself is a plain
+# directory-scope set() and is not readable here, exactly like
+# SDL_VIDEO_RENDER_METAL.
 set(gs_sdl_derived_mismatches "")
 set(gs_sdl_derived_evidence
 "\nDerived-result assertions (ADR 0002 §A5, §A7.3)\n")

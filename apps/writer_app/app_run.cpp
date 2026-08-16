@@ -4,6 +4,7 @@
 
 #include "app_project.hpp"
 #include "app_shell_report.hpp"
+#include "canvas_gesture_handler.hpp"
 #include "selection_tool_handler.hpp"
 
 #include <graphscore/domain/graphscore_domain.hpp>
@@ -126,16 +127,28 @@ int run(bool smoke_test) {
         return publish_notation_surface(layout, *font, &shell, raster_opts);
       });
   handler.set_active_tool(graphscore::ActiveTool::kSelection);
-  shell.set_input_handler(&handler);
 
   graphscore::WindowOptions options;
   options.run_event_loop = !smoke_test;
+
+  // M6-phase-5: the trackpad gesture controller sits in front of the
+  // notation handler — gesture events pan/zoom the canvas viewport, every
+  // non-gesture event is inverse-mapped to notation coordinates and
+  // forwarded to the selection tool. The gesture handler's transform is the
+  // authoritative viewport: the shell renders the notation surface through it
+  // and the pinch focal fallback (window center) is derived from the actual
+  // logical window size the shell reports on creation and resize.
+  CanvasGestureHandler gestures;
+  gestures.set_delegate(&handler);
+  shell.set_input_handler(&gestures);
+  shell.set_viewport_transform(&gestures.transform());
 
   const graphscore::ShellResult result = shell.open_window(options);
   const int                     status = report(result, smoke_test);
 
   // Deregister before handler destruction so the shell does not hold a
   // dangling pointer during its own destruction.
+  shell.set_viewport_transform(nullptr);
   shell.set_input_handler(nullptr);
 
   if (result.ok()) {

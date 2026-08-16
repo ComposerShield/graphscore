@@ -2,6 +2,7 @@
 
 add_executable(graphscore_canvas_test
   viewport_transform_test.cpp
+  trackpad_gesture_test.cpp
 )
 
 target_compile_features(graphscore_canvas_test PRIVATE cxx_std_23)

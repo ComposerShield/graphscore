@@ -6,6 +6,7 @@
 
 #include <graphscore/writer_shell/graphscore_writer_shell.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -32,6 +33,48 @@ namespace graphscore {
 [[nodiscard]] ShellResult validate_surface_dimensions(
     const RasterSurface& surface);
 
+// Converts a notation destination rect (doubles) to the float rectangle the
+// render pass submits, rejecting it when the float corners are not finite and
+// strictly advancing. SDL draws from an SDL_FRect, so `float(x)` and
+// `float(x) + float(width)` must remain distinct and finite: a width absorbed
+// into the float origin (right edge == left edge) or a right/bottom edge that
+// overflows to infinity would make SDL draw a degenerate or clipped rectangle.
+// map_rect_to_viewport's double-width check is not sufficient — a double rect
+// can be strictly positive while its float corners collapse. Returns the
+// float-rounded rect (as doubles) so the check is SDL-free; the SDL-only
+// notation_rect_to_sdl_frect wrapper re-casts it to SDL_FRect.
+[[nodiscard]] std::optional<NotationRect> notation_rect_to_float_rect(
+    const NotationRect& rect) noexcept;
+
+// Maps a world-space rectangle through the viewport transform into logical
+// viewport coordinates. A null transform (identity) returns the rect
+// unchanged. Returns nullopt when the transform cannot map the corners
+// (non-finite), or when the resulting rectangle is not a drawable destination
+// — any coordinate or dimension non-finite, or a width/height that is not
+// strictly positive (collapsed). The render pass must then surface the defect
+// rather than silently draw nothing.
+[[nodiscard]] std::optional<NotationRect> map_rect_to_viewport(
+    const NotationRect& rect, const ViewportTransform* transform) noexcept;
+
+// ADR 0002 §A5 fixes the writer's presentation backend per platform: Metal
+// on macOS, D3D11 on Windows, OpenGL on Linux. These are the SDL render
+// driver names (the `name` field each driver registers in SDL_render.c):
+// "metal" (SDL_render_metal.m), "direct3d11" (SDL_render_d3d11.c), "opengl"
+// (SDL_render_gl.c). The shell selects this driver by name rather than using
+// SDL's unnamed auto-selection, which silently tries every compiled driver,
+// discards each backend's specific error, and reports only the generic
+// "Couldn't find matching render driver" after all candidates fail. Named
+// selection makes SDL preserve the selected backend's own SDL error.
+[[nodiscard]] const char* renderer_driver_name() noexcept {
+#if defined(__APPLE__)
+  return "metal";
+#elif defined(_WIN32)
+  return "direct3d11";
+#else
+  return "opengl";
+#endif
+}
+
 #ifdef GRAPHSCORE_HAVE_SDL3
 
 struct WriterShell::Impl {
@@ -47,6 +90,14 @@ struct WriterShell::Impl {
 
   InputHandler* input_handler     = nullptr;
   bool          text_input_active = false;
+
+  // The authoritative viewport transform the render pass applies (non-owning;
+  // owned by the app's input handler). Null renders at native scale.
+  const ViewportTransform* viewport_transform = nullptr;
+
+  // Test-only: when true, a pinch event carrying a focal point is dropped as
+  // though SDL_RenderCoordinatesFromWindow had failed.
+  bool test_force_pinch_conversion_failure = false;
 
   // Written by set_highlight_rects, consumed by the event loop's render
   // pass. Cleared when the window is closed.
@@ -73,6 +124,20 @@ struct WriterShell::Impl {
   // validation but before the old texture is touched, proving prior state
   // survives.  The injected error surface is kRenderingSetupFailed.
   bool test_inject_texture_failure = false;
+
+  // Test-only: when true, the next render_frame with present=true reports a
+  // failure as though SDL_FlushRenderer had returned false, before
+  // SDL_RenderPresent is reached. This surfaces the observable queued
+  // command-execution flush/API failure without presenting; it does not —
+  // and cannot at this SDL pin — model a backend failure that occurs only at
+  // the present step itself.  One-shot; reset after consumption.
+  bool test_force_flush_failure = false;
+
+  // Test-only: the number of SDL_RenderPresent calls actually reached.
+  // Incremented at the sole present call site; a test asserts the forced
+  // flush failure returns before incrementing it (so the flush gate skipped
+  // presentation) and that a subsequent present advances it (recovery).
+  std::uint64_t test_present_call_count = 0;
 
   // Test-only: notation-texture lifetime accounting.  Stored in a
   // shared_ptr so a TextureStatsHandle can observe counter updates
@@ -118,7 +183,25 @@ bool WriterShell::backend_compiled_in() {
 
 // Forward-declared: defined after sdl_button_to_pointer_button below.
 void dispatch_sdl_event(InputHandler* handler, SDL_Renderer* renderer,
-                        SDL_Event event);
+                        SDL_Event event,
+                        bool      force_pinch_conversion_failure = false);
+
+// Deliver the current logical window size to the handler's viewport-size
+// callback, which derives size-dependent fallbacks (e.g. the pinch focal
+// window center) from it. Called on window creation and on resize; a failed
+// size query leaves the handler's prior fallback untouched.
+void deliver_viewport_size(SDL_Window* window, InputHandler* handler) {
+  if (window == nullptr || handler == nullptr) {
+    return;
+  }
+  int width  = 0;
+  int height = 0;
+  if (!SDL_GetWindowSize(window, &width, &height)) {
+    return;
+  }
+  handler->on_viewport_size_changed(static_cast<double>(width),
+                                    static_cast<double>(height));
+}
 
 // Recompute DPI scale factors from the window's current pixel and logical
 // sizes, then reapply SDL_SetRenderScale.  Returns kRenderingSetupFailed
@@ -234,6 +317,134 @@ void dispatch_sdl_event(InputHandler* handler, SDL_Renderer* renderer,
   return ShellResult{};
 }
 
+// Converts a validated notation destination rect to the SDL_FRect the render
+// pass submits. Delegates the float-corner validation to the SDL-free
+// notation_rect_to_float_rect helper below (so the check is testable headlessly
+// and compiles in writer-OFF builds), then re-casts the float-rounded result.
+[[nodiscard]] std::optional<SDL_FRect> notation_rect_to_sdl_frect(
+    const NotationRect& rect) noexcept {
+  const auto rounded = notation_rect_to_float_rect(rect);
+  if (!rounded.has_value()) {
+    return std::nullopt;
+  }
+  return SDL_FRect{
+      static_cast<float>(rounded->x), static_cast<float>(rounded->y),
+      static_cast<float>(rounded->width), static_cast<float>(rounded->height)};
+}
+
+// Renders one complete frame — clear, notation surface through the viewport
+// transform, highlight rects, and (when `present`) present — checking every
+// SDL result. Any failure returns kRenderingSetupFailed WITHOUT presenting a
+// cleared or partial frame, so a transient subcommand failure can never put a
+// blank background on screen: the last valid presentation survives. `present`
+// is false only for the test seam, which reads the composed back buffer back
+// without presenting.
+//
+// Presentation checking at the pinned SDL SHA (08b9c553): SDL_RenderPresent
+// records a backend present failure in an internal `presented` flag but
+// returns true unconditionally (SDL_render.c), so its return value cannot
+// detect a failed present, and a backend failure that occurs only at the
+// present step is unobservable at this pin. What IS observable and checked
+// here is the queued draw-command flush: SDL_FlushRenderer returns false when
+// FlushRenderCommands fails, so a queued command-execution failure is surfaced
+// before SDL_RenderPresent rather than silently presented. SDL_GetError is not
+// used as a portable present result, and a failed present is not assumed to
+// preserve the prior frame. Physical presentation itself is manual/smoke
+// evidence only: the automated present tests assert the flush/API gate, not
+// that pixels reached the display.
+[[nodiscard]] ShellResult WriterShell::render_frame(bool present) {
+  SDL_Renderer* renderer = impl_->renderer;
+  if (renderer == nullptr) {
+    return ShellResult{};
+  }
+
+  const auto fail = [](const char* operation) {
+    return ShellResult{
+        ShellError::kRenderingSetupFailed,
+        std::string(operation).append(" failed: ").append(SDL_GetError())};
+  };
+
+  if (!SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255)) {
+    return fail("SDL_SetRenderDrawColor (clear color)");
+  }
+  if (!SDL_RenderClear(renderer)) {
+    return fail("SDL_RenderClear");
+  }
+
+  if (impl_->notation_texture != nullptr) {
+    const auto notation_dst = map_rect_to_viewport(
+        NotationRect{0.0, 0.0,
+                     static_cast<double>(impl_->notation_surface.width),
+                     static_cast<double>(impl_->notation_surface.height)},
+        impl_->viewport_transform);
+    if (!notation_dst.has_value()) {
+      return ShellResult{ShellError::kRenderingSetupFailed,
+                         "notation destination geometry is not a valid "
+                         "viewport rectangle"};
+    }
+    const auto dst = notation_rect_to_sdl_frect(*notation_dst);
+    if (!dst.has_value()) {
+      return ShellResult{ShellError::kRenderingSetupFailed,
+                         "notation destination geometry is not representable "
+                         "as a positive SDL_FRect"};
+    }
+    if (!SDL_RenderTexture(renderer, impl_->notation_texture,
+                           /*srcrect=*/nullptr, &*dst)) {
+      return fail("SDL_RenderTexture");
+    }
+  }
+
+  if (!SDL_SetRenderDrawColor(renderer, 80, 130, 210, 90)) {
+    return fail("SDL_SetRenderDrawColor (highlight color)");
+  }
+  for (const NotationRect& rect : impl_->highlight_rects) {
+    const auto highlight_dst =
+        map_rect_to_viewport(rect, impl_->viewport_transform);
+    if (!highlight_dst.has_value()) {
+      // A highlight rect the transform cannot map is skipped: it is
+      // decorative, and the notation surface above is the load-bearing frame.
+      continue;
+    }
+    const auto dst = notation_rect_to_sdl_frect(*highlight_dst);
+    if (!dst.has_value()) {
+      continue;
+    }
+    if (!SDL_RenderFillRect(renderer, &*dst)) {
+      return fail("SDL_RenderFillRect");
+    }
+  }
+
+  if (!present) {
+    return ShellResult{};
+  }
+
+  // Flush the queued draw commands and surface any execution failure before
+  // presenting. This is the observable failure gate at the pinned SHA: see the
+  // comment above for why SDL_RenderPresent's return value alone cannot detect
+  // a backend present failure. The flush injection below returns before
+  // SDL_RenderPresent, so the test-only present-call counter does not advance
+  // and independently proves presentation was skipped.
+  if (impl_->test_force_flush_failure) {
+    impl_->test_force_flush_failure = false;  // one-shot; never leaks
+    return ShellResult{ShellError::kRenderingSetupFailed,
+                       "test-injected render flush failure"};
+  }
+  if (!SDL_FlushRenderer(renderer)) {
+    return fail("SDL_FlushRenderer");
+  }
+  // Test-only accounting at the actual present call site: a test asserts this
+  // does not advance when the flush gate above returns early, and does advance
+  // once presentation is reached again.
+  ++impl_->test_present_call_count;
+  if (!SDL_RenderPresent(renderer)) {
+    // Not reached in practice at the pinned SHA, where SDL_RenderPresent
+    // returns true unconditionally; retained for a future pin that reports
+    // present failure through its return value again.
+    return fail("SDL_RenderPresent");
+  }
+  return ShellResult{};
+}
+
 ShellResult WriterShell::open_window(const WindowOptions& options) {
   if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
     // No display: a headless CI runner, an SSH session, a container. The
@@ -258,13 +469,21 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
   const char* const driver = SDL_GetCurrentVideoDriver();
   impl_->backend           = driver != nullptr ? driver : "";
 
-  // A null renderer on a machine whose InitSubSystem succeeded means the
-  // GPU-accelerated backend is unavailable (software-only, headless GPU,
-  // driver mismatch). Surface this as an explicit error so the caller can
-  // decide whether to proceed with an input-only session.
-  impl_->renderer = SDL_CreateRenderer(impl_->window, nullptr);
+  // Create the renderer against the ADR 0002 §A5-fixed backend for this
+  // platform (see renderer_driver_name above). A null renderer here means
+  // the selected GPU backend failed on a machine whose video subsystem
+  // initialised — a real defect, not a headless skip (a genuinely headless
+  // host already returned kBackendUnavailable above). Surface the backend
+  // name and its own SDL error so the failure is diagnosable rather than
+  // SDL's generic auto-selection error. No software fallback: ADR 0002 §A5
+  // chooses the GPU path explicitly.
+  impl_->renderer = SDL_CreateRenderer(impl_->window, renderer_driver_name());
   if (impl_->renderer == nullptr) {
-    return ShellResult{ShellError::kRendererUnavailable, SDL_GetError()};
+    return ShellResult{ShellError::kRendererUnavailable,
+                       std::string("renderer '")
+                           .append(renderer_driver_name())
+                           .append("' failed: ")
+                           .append(SDL_GetError())};
   }
 
   // A text-consuming app focus may have been established before the native
@@ -285,6 +504,10 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
   if (!scale_result.ok()) {
     return scale_result;
   }
+
+  // Derive size-dependent fallbacks (the pinch focal window center) from the
+  // actual logical size now that the window is realized.
+  deliver_viewport_size(impl_->window, impl_->input_handler);
 
   // Enable alpha blending so semi-transparent highlight rects and
   // notation-surface alpha compose correctly.
@@ -351,34 +574,22 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
         if (!scale_refresh.ok()) {
           return scale_refresh;
         }
+        // The logical size may have changed: refresh the size-derived
+        // fallbacks (the pinch focal window center) from the actual size.
+        deliver_viewport_size(impl_->window, impl_->input_handler);
       }
 
       dispatch_sdl_event(impl_->input_handler, impl_->renderer, event);
 
-      // Render the frame: notation surface first, then highlight rects
-      // on top as a semi-transparent blue overlay.
+      // Render the frame: notation surface first, then highlight rects on
+      // top as a semi-transparent blue overlay. Any SDL failure is a
+      // rendering-setup defect and terminates the loop — without presenting a
+      // cleared or partial frame, so the last valid presentation survives.
       if (impl_->renderer != nullptr) {
-        SDL_SetRenderDrawColor(impl_->renderer, 30, 30, 30, 255);
-        SDL_RenderClear(impl_->renderer);
-
-        // Render the notation surface at its native size.
-        if (impl_->notation_texture != nullptr) {
-          const SDL_FRect src_rect{
-              0.0F, 0.0F, static_cast<float>(impl_->notation_surface.width),
-              static_cast<float>(impl_->notation_surface.height)};
-          SDL_RenderTexture(impl_->renderer, impl_->notation_texture,
-                            /*srcrect=*/nullptr, &src_rect);
+        ShellResult frame_result = render_frame(/*present=*/true);
+        if (!frame_result.ok()) {
+          return frame_result;
         }
-
-        SDL_SetRenderDrawColor(impl_->renderer, 80, 130, 210, 90);
-        for (const NotationRect& rect : impl_->highlight_rects) {
-          const SDL_FRect dst{
-              static_cast<float>(rect.x), static_cast<float>(rect.y),
-              static_cast<float>(rect.width), static_cast<float>(rect.height)};
-          SDL_RenderFillRect(impl_->renderer, &dst);
-        }
-
-        SDL_RenderPresent(impl_->renderer);
       }
     }
   } else {
@@ -393,15 +604,13 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
       dispatch_sdl_event(impl_->input_handler, impl_->renderer, event);
     }
     // Render one frame so the window shows content even without an event
-    // loop.
+    // loop. Any SDL failure is a rendering-setup defect and is surfaced
+    // without presenting a cleared or partial frame.
     if (impl_->renderer != nullptr) {
-      SDL_SetRenderDrawColor(impl_->renderer, 30, 30, 30, 255);
-      SDL_RenderClear(impl_->renderer);
-      if (impl_->notation_texture != nullptr) {
-        SDL_RenderTexture(impl_->renderer, impl_->notation_texture,
-                          /*srcrect=*/nullptr, /*dstrect=*/nullptr);
+      ShellResult frame_result = render_frame(/*present=*/true);
+      if (!frame_result.ok()) {
+        return frame_result;
       }
-      SDL_RenderPresent(impl_->renderer);
     }
   }
 
@@ -563,7 +772,7 @@ ShellResult WriterShell::open_window(const WindowOptions& options) {
 }
 
 void dispatch_sdl_event(InputHandler* handler, SDL_Renderer* renderer,
-                        SDL_Event event) {
+                        SDL_Event event, bool force_pinch_conversion_failure) {
   if (handler == nullptr) {
     return;
   }
@@ -635,6 +844,86 @@ void dispatch_sdl_event(InputHandler* handler, SDL_Renderer* renderer,
       handler->on_text_input(te);
       break;
     }
+    case SDL_EVENT_MOUSE_WHEEL: {
+      // The native two-finger trackpad pan stream on macOS arrives as a
+      // mouse-wheel event (ADR 0004 §8); this is the sole pan route, so no
+      // zoom and no modifier semantics are attached here. The x/y fields are
+      // subpixel floats in scroll units and are NOT touched by
+      // SDL_ConvertEventToRenderCoordinates (which converts only the
+      // mouse_x/mouse_y pointer position); they are delivered as double
+      // deltas verbatim. SDL_MOUSEWHEEL_FLIPPED means the platform inverts
+      // the direction; the shell negates so the handler always receives
+      // content-relative motion.
+      ScrollDelta delta;
+      delta.x = static_cast<double>(event.wheel.x);
+      delta.y = static_cast<double>(event.wheel.y);
+      if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
+        delta.x = -delta.x;
+        delta.y = -delta.y;
+      }
+      handler->on_scroll(delta);
+      break;
+    }
+    case SDL_EVENT_PINCH_UPDATE: {
+      // Pinch zoom is driven exclusively by this event (ADR 0004 §8). The
+      // scale field is the multiplicative change since the previous update;
+      // it is handed through verbatim and must be applied exactly once by
+      // the consumer — never re-derived from per-finger distance.
+      PinchUpdate update;
+      update.scale = static_cast<double>(event.pinch.scale);
+      if (event.pinch.focus_x >= 0.0F && event.pinch.focus_y >= 0.0F) {
+        // focus_x/focus_y are window-space and are NOT converted by
+        // SDL_ConvertEventToRenderCoordinates (unlike pointer/finger
+        // events), so convert them here to logical viewport coordinates.
+        float focus_x = event.pinch.focus_x;
+        float focus_y = event.pinch.focus_y;
+        if (force_pinch_conversion_failure) {
+          // Test-injected: simulate SDL_RenderCoordinatesFromWindow failing.
+          // A failed conversion would dispatch window-space coordinates as
+          // though they were logical, so drop the event transactionally —
+          // identical to the real failure path below.
+          return;
+        }
+        if (renderer != nullptr &&
+            !SDL_RenderCoordinatesFromWindow(renderer, focus_x, focus_y,
+                                             &focus_x, &focus_y)) {
+          // Conversion failure: the focal point cannot be mapped to logical
+          // space, so no handler callback must be dispatched with mislabeled
+          // coordinates (mirroring the pointer conversion path above).
+          return;
+        }
+        update.focal_point = ViewportPosition{static_cast<double>(focus_x),
+                                              static_cast<double>(focus_y)};
+      }
+      handler->on_pinch(update);
+      break;
+    }
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_FINGER_MOTION: {
+      // Diagnostic/optional two-finger tracking. When a renderer exists,
+      // SDL_ConvertEventToRenderCoordinates has already scaled tfinger.x/y
+      // from normalized (0..1) to logical (render) coordinates; without one
+      // they remain normalized, which only affects a no-renderer test seam.
+      // These events never synthesize viewport motion; the handler uses them
+      // solely to maintain the pinch centroid fallback.
+      FingerContact finger;
+      finger.finger_id = static_cast<std::uint64_t>(event.tfinger.fingerID);
+      finger.position  = ViewportPosition{static_cast<double>(event.tfinger.x),
+                                         static_cast<double>(event.tfinger.y)};
+      if (event.type == SDL_EVENT_FINGER_DOWN) {
+        handler->on_finger_down(finger);
+      } else {
+        handler->on_finger_move(finger);
+      }
+      break;
+    }
+    case SDL_EVENT_FINGER_UP:
+      handler->on_finger_up(static_cast<std::uint64_t>(event.tfinger.fingerID));
+      break;
+    case SDL_EVENT_FINGER_CANCELED:
+      handler->on_finger_canceled(
+          static_cast<std::uint64_t>(event.tfinger.fingerID));
+      break;
     default:
       break;
   }
@@ -650,14 +939,24 @@ WriterShell::test_read_notation_pixel(std::uint32_t x, std::uint32_t y) {
     return std::nullopt;
   }
 
-  // Save-and-restore render target and texture blend mode so the test
-  // seam does not perturb the production state.
+  // Save-and-restore render target, texture blend mode, and render scale so
+  // the test seam does not perturb the production state. The readback forces
+  // the render scale to 1.0 so each notation texel occupies exactly one
+  // window pixel: SDL_RenderReadPixels addresses its rect in pixel
+  // coordinates, so with the production render scale (2.0 on a Retina host)
+  // the rect's render-coordinate values would select a different, linearly
+  // filtered texel. At 1.0 the rect {x, y, 1, 1} is exactly texel (x, y).
   SDL_Texture* saved_target = SDL_GetRenderTarget(impl_->renderer);
   SDL_SetRenderTarget(impl_->renderer, nullptr);  // back to window
 
   SDL_BlendMode saved_blend = SDL_BLENDMODE_NONE;
   SDL_GetTextureBlendMode(impl_->notation_texture, &saved_blend);
   SDL_SetTextureBlendMode(impl_->notation_texture, SDL_BLENDMODE_NONE);
+
+  float saved_scale_x = 1.0F;
+  float saved_scale_y = 1.0F;
+  SDL_GetRenderScale(impl_->renderer, &saved_scale_x, &saved_scale_y);
+  SDL_SetRenderScale(impl_->renderer, 1.0F, 1.0F);
 
   // Clear to black before rendering, so the readback pixel comes only from
   // the texture — no prior frame content bleeds in.
@@ -669,6 +968,7 @@ WriterShell::test_read_notation_pixel(std::uint32_t x, std::uint32_t y) {
                            static_cast<float>(impl_->notation_surface.height)};
   if (!SDL_RenderTexture(impl_->renderer, impl_->notation_texture,
                          /*srcrect=*/nullptr, &dst_rect)) {
+    SDL_SetRenderScale(impl_->renderer, saved_scale_x, saved_scale_y);
     SDL_SetTextureBlendMode(impl_->notation_texture, saved_blend);
     SDL_SetRenderTarget(impl_->renderer, saved_target);
     return std::nullopt;
@@ -679,6 +979,7 @@ WriterShell::test_read_notation_pixel(std::uint32_t x, std::uint32_t y) {
 
   SDL_Surface* surface = SDL_RenderReadPixels(impl_->renderer, &read_rect);
   if (surface == nullptr) {
+    SDL_SetRenderScale(impl_->renderer, saved_scale_x, saved_scale_y);
     SDL_SetTextureBlendMode(impl_->notation_texture, saved_blend);
     SDL_SetRenderTarget(impl_->renderer, saved_target);
     return std::nullopt;
@@ -688,6 +989,7 @@ WriterShell::test_read_notation_pixel(std::uint32_t x, std::uint32_t y) {
   if (!SDL_ReadSurfacePixel(surface, 0, 0, &pixel[0], &pixel[1], &pixel[2],
                             &pixel[3])) {
     SDL_DestroySurface(surface);
+    SDL_SetRenderScale(impl_->renderer, saved_scale_x, saved_scale_y);
     SDL_SetTextureBlendMode(impl_->notation_texture, saved_blend);
     SDL_SetRenderTarget(impl_->renderer, saved_target);
     return std::nullopt;
@@ -695,8 +997,63 @@ WriterShell::test_read_notation_pixel(std::uint32_t x, std::uint32_t y) {
 
   SDL_DestroySurface(surface);
 
+  SDL_SetRenderScale(impl_->renderer, saved_scale_x, saved_scale_y);
   SDL_SetTextureBlendMode(impl_->notation_texture, saved_blend);
   SDL_SetRenderTarget(impl_->renderer, saved_target);
+  return pixel;
+}
+
+ShellResult WriterShell::test_render_frame() {
+  if (impl_->renderer == nullptr) {
+    return ShellResult{ShellError::kRendererUnavailable, "no renderer"};
+  }
+  // Run the production render pass — clear, notation through the viewport
+  // transform, highlight rects — but do NOT present, so a caller can read the
+  // composed back buffer back (SDL's Metal readback commits the command
+  // buffer itself). This is the composition-proof seam; it does not exercise
+  // the flush/present gate — see test_present_frame() for that.
+  return render_frame(/*present=*/false);
+}
+
+ShellResult WriterShell::test_present_frame() {
+  if (impl_->renderer == nullptr) {
+    return ShellResult{ShellError::kRendererUnavailable, "no renderer"};
+  }
+  // Run the production render pass with present=true — the same helper the
+  // event loop and one-frame paths call — so a test can assert the observable
+  // queued-command flush/API gate and the pre-present flush-failure injection
+  // without reading the back buffer. A presented frame's back buffer is
+  // invalidated, so this seam makes no readback claim; physical presentation
+  // is manual/smoke evidence only.
+  return render_frame(/*present=*/true);
+}
+
+std::optional<std::array<std::uint8_t, 4>>
+WriterShell::test_read_backbuffer_pixel(std::uint32_t x, std::uint32_t y) {
+  if (impl_->renderer == nullptr) {
+    return std::nullopt;
+  }
+  // Read one pixel from the window (null) render target in pixel coordinates.
+  // The composed frame rendered by test_render_frame() lives there; the
+  // readback commits the pending command buffer, so no present is required.
+  SDL_Texture* saved_target = SDL_GetRenderTarget(impl_->renderer);
+  SDL_SetRenderTarget(impl_->renderer, nullptr);
+
+  const SDL_Rect read_rect{static_cast<int>(x), static_cast<int>(y), 1, 1};
+  SDL_Surface*   surface = SDL_RenderReadPixels(impl_->renderer, &read_rect);
+
+  SDL_SetRenderTarget(impl_->renderer, saved_target);
+  if (surface == nullptr) {
+    return std::nullopt;
+  }
+
+  std::array<std::uint8_t, 4> pixel{};
+  const bool ok = SDL_ReadSurfacePixel(surface, 0, 0, &pixel[0], &pixel[1],
+                                       &pixel[2], &pixel[3]);
+  SDL_DestroySurface(surface);
+  if (!ok) {
+    return std::nullopt;
+  }
   return pixel;
 }
 
@@ -711,6 +1068,10 @@ struct WriterShell::Impl {
 
   InputHandler* input_handler     = nullptr;
   bool          text_input_active = false;
+
+  // The authoritative viewport transform (non-owning). No rendering occurs in
+  // this configuration, but the test seam still reports the mapped rect.
+  const ViewportTransform* viewport_transform = nullptr;
 
   // No-op storage: the writer-OFF path never renders, but setters
   // still compile and are safe to call.
@@ -741,6 +1102,20 @@ ShellResult WriterShell::open_window(const WindowOptions& /*options*/) {
 std::optional<std::array<std::uint8_t, 4>>
 WriterShell::test_read_notation_pixel(std::uint32_t /*x*/,
                                       std::uint32_t /*y*/) {
+  return std::nullopt;
+}
+
+ShellResult WriterShell::test_render_frame() {
+  return ShellResult{ShellError::kBackendNotCompiledIn, "no renderer"};
+}
+
+ShellResult WriterShell::test_present_frame() {
+  return ShellResult{ShellError::kBackendNotCompiledIn, "no renderer"};
+}
+
+std::optional<std::array<std::uint8_t, 4>>
+WriterShell::test_read_backbuffer_pixel(std::uint32_t /*x*/,
+                                        std::uint32_t /*y*/) {
   return std::nullopt;
 }
 
@@ -794,6 +1169,61 @@ WriterShell::test_read_notation_pixel(std::uint32_t /*x*/,
   return ShellResult{};
 }
 
+// Maps a world-space rectangle through the viewport transform into logical
+// viewport coordinates. A null transform (identity) returns the rect
+// unchanged. Returns nullopt when the transform cannot map the corners; the
+// render pass must then surface the defect rather than drawing nothing.
+std::optional<NotationRect> map_rect_to_viewport(
+    const NotationRect& rect, const ViewportTransform* transform) noexcept {
+  if (transform == nullptr) {
+    if (!std::isfinite(rect.x) || !std::isfinite(rect.y) ||
+        !std::isfinite(rect.width) || !std::isfinite(rect.height) ||
+        rect.width <= 0.0 || rect.height <= 0.0) {
+      return std::nullopt;
+    }
+    return rect;
+  }
+  const auto top_left = transform->to_viewport(GraphPosition{rect.x, rect.y});
+  const auto bottom_right = transform->to_viewport(
+      GraphPosition{rect.x + rect.width, rect.y + rect.height});
+  if (!top_left || !bottom_right) {
+    return std::nullopt;
+  }
+  const double width  = bottom_right->x - top_left->x;
+  const double height = bottom_right->y - top_left->y;
+  if (!std::isfinite(top_left->x) || !std::isfinite(top_left->y) ||
+      !std::isfinite(width) || !std::isfinite(height) || width <= 0.0 ||
+      height <= 0.0) {
+    return std::nullopt;
+  }
+  return NotationRect{top_left->x, top_left->y, width, height};
+}
+
+std::optional<NotationRect> notation_rect_to_float_rect(
+    const NotationRect& rect) noexcept {
+  const float x      = static_cast<float>(rect.x);
+  const float y      = static_cast<float>(rect.y);
+  const float width  = static_cast<float>(rect.width);
+  const float height = static_cast<float>(rect.height);
+  if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(width) ||
+      !std::isfinite(height) || width <= 0.0F || height <= 0.0F) {
+    return std::nullopt;
+  }
+  // Distinct, finite float corners: the right/bottom edge must advance
+  // strictly past the origin in float. A width absorbed into the float origin
+  // (right == left) or an edge that overflows to infinity would make SDL draw
+  // a degenerate or clipped rectangle. This also covers negative origins,
+  // where `x + width > x` is exactly the advancement condition.
+  const float right  = x + width;
+  const float bottom = y + height;
+  if (!std::isfinite(right) || !std::isfinite(bottom) || !(right > x) ||
+      !(bottom > y)) {
+    return std::nullopt;
+  }
+  return NotationRect{static_cast<double>(x), static_cast<double>(y),
+                      static_cast<double>(width), static_cast<double>(height)};
+}
+
 WriterShell::WriterShell() : impl_(std::make_unique<Impl>()) {}
 
 WriterShell::~WriterShell() = default;
@@ -805,6 +1235,10 @@ std::string_view WriterShell::backend_name() const {
   return impl_->backend;
 }
 
+std::string_view WriterShell::test_renderer_driver_name() {
+  return renderer_driver_name();
+}
+
 void WriterShell::set_input_handler(InputHandler* handler) {
   // Unregistration severs the only consumer of composed text. Stop platform
   // generation first so no queued/future text can target a stale handler.
@@ -812,6 +1246,10 @@ void WriterShell::set_input_handler(InputHandler* handler) {
     set_text_input_active(false);
   }
   impl_->input_handler = handler;
+}
+
+void WriterShell::set_viewport_transform(const ViewportTransform* transform) {
+  impl_->viewport_transform = transform;
 }
 
 void WriterShell::set_text_input_active(bool active) {
@@ -932,6 +1370,16 @@ void WriterShell::dispatch_test_text_input(TextInputEvent event) {
   handler->on_text_input(std::move(event));
 }
 
+void WriterShell::dispatch_test_viewport_resize(double width, double height) {
+  InputHandler* handler = impl_->input_handler;
+  if (handler == nullptr) {
+    return;
+  }
+  // Headless seam for the size change the shell delivers on window creation
+  // and resize; the handler derives size-dependent fallbacks from it.
+  handler->on_viewport_size_changed(width, height);
+}
+
 void WriterShell::dispatch_sdl_test_pointer_event(std::uint8_t kind,
                                                   PointerEvent event) {
 #ifdef GRAPHSCORE_HAVE_SDL3
@@ -939,31 +1387,38 @@ void WriterShell::dispatch_sdl_test_pointer_event(std::uint8_t kind,
   if (handler == nullptr) {
     return;
   }
-  // Construct a synthetic SDL event in pixel space and route it through
-  // the production dispatch_sdl_event path, which applies
-  // SDL_ConvertEventToRenderCoordinates using the current render scale.
-  // This exercises the exact SDL conversion that production mouse events
-  // undergo, unlike dispatch_test_pointer_event (the headless seam).
-  SDL_Event sdl_event{};
+  // Construct a synthetic SDL event in window-coordinate units (points) —
+  // the same units real SDL mouse events carry, NOT pixels — and tag it with
+  // the shell's own window ID, then route it through the production
+  // dispatch_sdl_event path. dispatch_sdl_event applies
+  // SDL_ConvertEventToRenderCoordinates, which converts only when the
+  // event's windowID matches the renderer's window (a zero/unset windowID
+  // would silently skip conversion), so the test exercises the exact
+  // window→render coordinate conversion that production mouse events undergo.
+  const SDL_WindowID window_id = SDL_GetWindowID(impl_->window);
+  SDL_Event          sdl_event{};
   switch (kind) {
     case 0:  // press
-      sdl_event.type          = SDL_EVENT_MOUSE_BUTTON_DOWN;
-      sdl_event.button.x      = static_cast<float>(event.x);
-      sdl_event.button.y      = static_cast<float>(event.y);
-      sdl_event.button.button = 1;  // SDL_BUTTON_LEFT
-      sdl_event.button.down   = true;
+      sdl_event.type            = SDL_EVENT_MOUSE_BUTTON_DOWN;
+      sdl_event.button.windowID = window_id;
+      sdl_event.button.x        = static_cast<float>(event.x);
+      sdl_event.button.y        = static_cast<float>(event.y);
+      sdl_event.button.button   = 1;  // SDL_BUTTON_LEFT
+      sdl_event.button.down     = true;
       break;
     case 1:  // move
-      sdl_event.type     = SDL_EVENT_MOUSE_MOTION;
-      sdl_event.motion.x = static_cast<float>(event.x);
-      sdl_event.motion.y = static_cast<float>(event.y);
+      sdl_event.type            = SDL_EVENT_MOUSE_MOTION;
+      sdl_event.motion.windowID = window_id;
+      sdl_event.motion.x        = static_cast<float>(event.x);
+      sdl_event.motion.y        = static_cast<float>(event.y);
       break;
     case 2:  // release
-      sdl_event.type          = SDL_EVENT_MOUSE_BUTTON_UP;
-      sdl_event.button.x      = static_cast<float>(event.x);
-      sdl_event.button.y      = static_cast<float>(event.y);
-      sdl_event.button.button = 1;  // SDL_BUTTON_LEFT
-      sdl_event.button.down   = false;
+      sdl_event.type            = SDL_EVENT_MOUSE_BUTTON_UP;
+      sdl_event.button.windowID = window_id;
+      sdl_event.button.x        = static_cast<float>(event.x);
+      sdl_event.button.y        = static_cast<float>(event.y);
+      sdl_event.button.button   = 1;  // SDL_BUTTON_LEFT
+      sdl_event.button.down     = false;
       break;
     case 3:  // cancel
       handler->on_cancel();
@@ -975,6 +1430,66 @@ void WriterShell::dispatch_sdl_test_pointer_event(std::uint8_t kind,
 #else
   (void)kind;
   (void)event;
+#endif
+}
+
+std::optional<ViewportPosition> WriterShell::test_window_to_render_point(
+    double x, double y) const {
+#ifdef GRAPHSCORE_HAVE_SDL3
+  if (impl_->renderer == nullptr) {
+    return std::nullopt;
+  }
+  float render_x = 0.0F;
+  float render_y = 0.0F;
+  if (!SDL_RenderCoordinatesFromWindow(impl_->renderer, static_cast<float>(x),
+                                       static_cast<float>(y), &render_x,
+                                       &render_y)) {
+    return std::nullopt;
+  }
+  return ViewportPosition{static_cast<double>(render_x),
+                          static_cast<double>(render_y)};
+#else
+  (void)x;
+  (void)y;
+  return std::nullopt;
+#endif
+}
+
+std::optional<ViewportPosition> WriterShell::test_render_to_window_point(
+    double x, double y) const {
+#ifdef GRAPHSCORE_HAVE_SDL3
+  if (impl_->renderer == nullptr) {
+    return std::nullopt;
+  }
+  float window_x = 0.0F;
+  float window_y = 0.0F;
+  if (!SDL_RenderCoordinatesToWindow(impl_->renderer, static_cast<float>(x),
+                                     static_cast<float>(y), &window_x,
+                                     &window_y)) {
+    return std::nullopt;
+  }
+  return ViewportPosition{static_cast<double>(window_x),
+                          static_cast<double>(window_y)};
+#else
+  (void)x;
+  (void)y;
+  return std::nullopt;
+#endif
+}
+
+double WriterShell::test_dpi_scale_x() const noexcept {
+#ifdef GRAPHSCORE_HAVE_SDL3
+  return impl_->dpi_scale_x;
+#else
+  return 1.0;
+#endif
+}
+
+double WriterShell::test_dpi_scale_y() const noexcept {
+#ifdef GRAPHSCORE_HAVE_SDL3
+  return impl_->dpi_scale_y;
+#else
+  return 1.0;
 #endif
 }
 
@@ -1030,6 +1545,101 @@ void WriterShell::dispatch_sdl_test_text_input(std::string_view text) {
 #endif
 }
 
+void WriterShell::dispatch_sdl_test_scroll_event(double x, double y,
+                                                 std::uint32_t direction) {
+#ifdef GRAPHSCORE_HAVE_SDL3
+  InputHandler* handler = impl_->input_handler;
+  if (handler == nullptr) {
+    return;
+  }
+  // Build a real SDL_EVENT_MOUSE_WHEEL and route it through the production
+  // dispatch_sdl_event, so a test asserts the actual forward translation
+  // (wheel x/y delta + FLIPPED negation → ScrollDelta) rather than a mapping
+  // written only for the test. No window or renderer is required: without a
+  // renderer dispatch_sdl_event skips SDL_ConvertEventToRenderCoordinates and
+  // the wheel delta is delivered verbatim.
+  SDL_Event sdl_event{};
+  sdl_event.type            = SDL_EVENT_MOUSE_WHEEL;
+  sdl_event.wheel.x         = static_cast<float>(x);
+  sdl_event.wheel.y         = static_cast<float>(y);
+  sdl_event.wheel.direction = static_cast<SDL_MouseWheelDirection>(direction);
+  dispatch_sdl_event(handler, impl_->renderer, sdl_event);
+#else
+  (void)x;
+  (void)y;
+  (void)direction;
+#endif
+}
+
+void WriterShell::dispatch_sdl_test_pinch_event(double scale, double focus_x,
+                                                double focus_y) {
+#ifdef GRAPHSCORE_HAVE_SDL3
+  InputHandler* handler = impl_->input_handler;
+  if (handler == nullptr) {
+    return;
+  }
+  // Build a real SDL_EVENT_PINCH_UPDATE and route it through the production
+  // dispatch_sdl_event, so a test asserts the actual forward translation
+  // (scale + focus_x/focus_y → PinchUpdate) rather than a mapping written
+  // only for the test. No window or renderer is required; without a renderer
+  // the focus coordinates pass through un-converted (the same behaviour a
+  // pinch on a windowless/no-renderer host would show).
+  SDL_Event sdl_event{};
+  sdl_event.type          = SDL_EVENT_PINCH_UPDATE;
+  sdl_event.pinch.scale   = static_cast<float>(scale);
+  sdl_event.pinch.focus_x = static_cast<float>(focus_x);
+  sdl_event.pinch.focus_y = static_cast<float>(focus_y);
+  dispatch_sdl_event(handler, impl_->renderer, sdl_event,
+                     impl_->test_force_pinch_conversion_failure);
+#else
+  (void)scale;
+  (void)focus_x;
+  (void)focus_y;
+#endif
+}
+
+void WriterShell::dispatch_sdl_test_finger_event(std::uint32_t kind,
+                                                 std::uint64_t finger_id,
+                                                 double x, double y) {
+#ifdef GRAPHSCORE_HAVE_SDL3
+  InputHandler* handler = impl_->input_handler;
+  if (handler == nullptr) {
+    return;
+  }
+  // Build a real SDL_EVENT_FINGER_* and route it through the production
+  // dispatch_sdl_event. `kind` selects down(0)/move(1)/up(2)/canceled(3);
+  // x/y are SDL's normalized 0..1 coordinates, matching what SDL reports
+  // before a renderer rescales them (none exists here, so the handler sees
+  // them verbatim). Unknown kinds are a no-op.
+  SDL_Event sdl_event{};
+  switch (kind) {
+    case 0:
+      sdl_event.type = SDL_EVENT_FINGER_DOWN;
+      break;
+    case 1:
+      sdl_event.type = SDL_EVENT_FINGER_MOTION;
+      break;
+    case 2:
+      sdl_event.type = SDL_EVENT_FINGER_UP;
+      break;
+    case 3:
+      sdl_event.type = SDL_EVENT_FINGER_CANCELED;
+      break;
+    default:
+      return;
+  }
+  sdl_event.tfinger.fingerID = static_cast<SDL_FingerID>(finger_id);
+  sdl_event.tfinger.x        = static_cast<float>(x);
+  sdl_event.tfinger.y        = static_cast<float>(y);
+  dispatch_sdl_event(handler, impl_->renderer, sdl_event);
+#else
+  (void)kind;
+  (void)finger_id;
+  (void)x;
+  (void)y;
+#endif
+}
+
 void WriterShell::set_test_dpi_scale(double scale) {
   impl_->test_dpi_scale = scale;
 #ifdef GRAPHSCORE_HAVE_SDL3
@@ -1056,6 +1666,45 @@ void WriterShell::set_test_force_texture_failure(bool force) {
 #else
   (void)force;
 #endif
+}
+
+void WriterShell::set_test_force_pinch_conversion_failure(bool force) {
+#ifdef GRAPHSCORE_HAVE_SDL3
+  impl_->test_force_pinch_conversion_failure = force;
+#else
+  (void)force;
+#endif
+}
+
+void WriterShell::set_test_force_render_flush_failure(bool force) {
+#ifdef GRAPHSCORE_HAVE_SDL3
+  impl_->test_force_flush_failure = force;
+#else
+  (void)force;
+#endif
+}
+
+std::uint64_t WriterShell::test_present_call_count() const noexcept {
+#ifdef GRAPHSCORE_HAVE_SDL3
+  return impl_->test_present_call_count;
+#else
+  return 0;
+#endif
+}
+
+std::optional<NotationRect> WriterShell::test_notation_destination() const {
+  if (impl_->notation_surface.width == 0U &&
+      impl_->notation_surface.height == 0U) {
+    return std::nullopt;
+  }
+  return map_rect_to_viewport(
+      NotationRect{0.0, 0.0, static_cast<double>(impl_->notation_surface.width),
+                   static_cast<double>(impl_->notation_surface.height)},
+      impl_->viewport_transform);
+}
+
+std::optional<NotationRect> WriterShell::test_float_rect(NotationRect rect) {
+  return notation_rect_to_float_rect(rect);
 }
 
 WriterShell::NotationTextureStats WriterShell::test_notation_texture_stats()

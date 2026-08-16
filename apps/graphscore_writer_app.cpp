@@ -63,21 +63,31 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::kMeasureEditTestFlag;
   using graphscore::writer_app::kNoteheadDeleteTestFlag;
   using graphscore::writer_app::kNoteheadMoveTestFlag;
+  using graphscore::writer_app::kRendererBackendTestFlag;
+  using graphscore::writer_app::kRendererPresentTestFlag;
+  using graphscore::writer_app::kRendererZoomTestFlag;
+  using graphscore::writer_app::kRenderGeometryTestFlag;
   using graphscore::writer_app::kSelectionToolShellTestFlag;
   using graphscore::writer_app::kSelectionToolTestFlag;
   using graphscore::writer_app::kSmokeTestFlag;
   using graphscore::writer_app::kStaffStepTestFlag;
   using graphscore::writer_app::kStepEntryTestFlag;
+  using graphscore::writer_app::kTrackpadGestureTestFlag;
   using graphscore::writer_app::kTupletEditTestFlag;
   using graphscore::writer_app::marking_style_edit_test;
   using graphscore::writer_app::measure_edit_test;
   using graphscore::writer_app::notehead_delete_test;
   using graphscore::writer_app::notehead_move_test;
+  using graphscore::writer_app::render_geometry_test;
+  using graphscore::writer_app::renderer_backend_test;
+  using graphscore::writer_app::renderer_present_test;
+  using graphscore::writer_app::renderer_zoom_test;
   using graphscore::writer_app::run;
   using graphscore::writer_app::selection_tool_shell_test;
   using graphscore::writer_app::selection_tool_test;
   using graphscore::writer_app::staff_step_test;
   using graphscore::writer_app::step_entry_test;
+  using graphscore::writer_app::trackpad_gesture_test;
   using graphscore::writer_app::tuplet_edit_test;
 
   bool smoke_test                    = false;
@@ -101,6 +111,11 @@ int main(int argc, char** argv) {
   bool run_tuplet_edit_test          = false;
   bool run_event_style_edit_test     = false;
   bool run_marking_style_edit_test   = false;
+  bool run_trackpad_gesture_test     = false;
+  bool run_renderer_backend_test     = false;
+  bool run_renderer_zoom_test        = false;
+  bool run_renderer_present_test     = false;
+  bool run_render_geometry_test      = false;
   for (int i = 1; i < argc; ++i) {
     if (kSmokeTestFlag == argv[i]) {
       smoke_test = true;
@@ -165,6 +180,21 @@ int main(int argc, char** argv) {
     if (kMarkingStyleEditTestFlag == argv[i]) {
       run_marking_style_edit_test = true;
     }
+    if (kTrackpadGestureTestFlag == argv[i]) {
+      run_trackpad_gesture_test = true;
+    }
+    if (kRendererBackendTestFlag == argv[i]) {
+      run_renderer_backend_test = true;
+    }
+    if (kRendererZoomTestFlag == argv[i]) {
+      run_renderer_zoom_test = true;
+    }
+    if (kRendererPresentTestFlag == argv[i]) {
+      run_renderer_present_test = true;
+    }
+    if (kRenderGeometryTestFlag == argv[i]) {
+      run_render_geometry_test = true;
+    }
   }
 
   try {
@@ -227,6 +257,21 @@ int main(int argc, char** argv) {
     }
     if (run_marking_style_edit_test) {
       return marking_style_edit_test();
+    }
+    if (run_trackpad_gesture_test) {
+      return trackpad_gesture_test();
+    }
+    if (run_renderer_backend_test) {
+      return renderer_backend_test();
+    }
+    if (run_renderer_zoom_test) {
+      return renderer_zoom_test();
+    }
+    if (run_renderer_present_test) {
+      return renderer_present_test();
+    }
+    if (run_render_geometry_test) {
+      return render_geometry_test();
     }
     return run(smoke_test);
   } catch (const std::exception& error) {

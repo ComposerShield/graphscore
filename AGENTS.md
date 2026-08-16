@@ -323,6 +323,14 @@ rationale.
   native CMake subprojects.
 - SDL3 at the pinned SHA needs three macOS frameworks linked that it does not
   link itself; `cmake/SDL3.cmake` documents why. Revisit when the pin moves.
+- At the pinned SDL SHA (`cmake/SDL3.cmake`), `SDL_RenderPresent` records a
+  backend present failure in an internal flag but returns `true`
+  unconditionally, so its return value cannot detect a failed present. The
+  writer surfaces queued command-execution failures via `SDL_FlushRenderer`
+  before presenting (see `render_frame` in `src/writer_shell/writer_shell.cpp`);
+  do not rely on `SDL_RenderPresent`'s return value, do not read `SDL_GetError`
+  as a portable present result, and do not assume a failed present preserves
+  the prior frame. Revisit when the pin moves.
 - The VST3 SDK requires an explicit build type at configure time (its
   `fdebug.h` errors on an empty `CMAKE_BUILD_TYPE`) and both `ENV{XCODE_VERSION}`
   and the plain `XCODE_VERSION` CMake variable set, even on a Command Line

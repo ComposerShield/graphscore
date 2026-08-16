@@ -6,18 +6,22 @@
 # --smoke-test creates the window, pumps the already-queued events, and
 # exits, so the test does not block waiting for someone to close a window.
 #
-# On a headless runner the executable reports "no display available" and
-# exits 0 under --smoke-test: reaching the backend is what is being tested,
-# and no display is a property of the machine rather than of the writer. The
-# PASS_REGULAR_EXPRESSION below accepts either outcome but requires the
-# writer to have got far enough to say which.
+# A genuinely headless runner (no display) reports "no display available"
+# and exits 0 under --smoke-test: SDL video initialisation itself fails, and
+# reaching that far is what the smoke test verifies — no display is a
+# property of the machine, not of the writer. "renderer unavailable" is
+# deliberately NOT accepted: video initialisation succeeded and the window
+# was created, so the ADR 0002 §A5 GPU renderer failed on a display-capable
+# machine — a real defect (and on the display-attached dev machine the
+# renderer must initialise). The PASS_REGULAR_EXPRESSION below accepts only
+# the genuine success and genuine-no-display outcomes.
 
 add_test(NAME graphscore_writer_window_smoke
   COMMAND graphscore_writer_app --smoke-test
 )
 
 set_tests_properties(graphscore_writer_window_smoke PROPERTIES
-  PASS_REGULAR_EXPRESSION "window opened via|no display available|renderer unavailable"
+  PASS_REGULAR_EXPRESSION "window opened via|no display available"
   TIMEOUT 60
 )
 
@@ -78,6 +82,12 @@ endif()
 # The shell test exercises the full SDL path: real window creation, real
 # renderer, and real event-dispatch integration.  It requires GRAPHSCORE_
 # BUILD_WRITER=ON because there is no SDL backend in a writer-OFF build.
+#
+# The PASS regex accepts only genuine success and genuine-no-display
+# ("no display available" = kBackendUnavailable). A renderer failure
+# (kRendererUnavailable) means video initialised and the window was created
+# but the ADR 0002 §A5 GPU renderer failed — a real defect on a
+# display-capable machine — and must fail the test, not skip it.
 if (GRAPHSCORE_BUILD_WRITER)
   add_test(NAME graphscore_writer_selection_tool_shell_test
     COMMAND graphscore_writer_app --test-selection-tool-shell
@@ -85,7 +95,7 @@ if (GRAPHSCORE_BUILD_WRITER)
 
   set_tests_properties(graphscore_writer_selection_tool_shell_test PROPERTIES
     PASS_REGULAR_EXPRESSION
-      "selection-tool-shell-test: ok|no display or renderer"
+      "selection-tool-shell-test: ok|no display available"
     TIMEOUT 30
   )
 
@@ -388,3 +398,107 @@ set_tests_properties(graphscore_writer_action_table_test PROPERTIES
   PASS_REGULAR_EXPRESSION "action-table-test: ok"
   TIMEOUT 30
 )
+
+# M6-phase-5: exercise the production SDL trackpad translation seam — the
+# native two-finger pan stream (SDL_EVENT_MOUSE_WHEEL), pinch zoom
+# (SDL_EVENT_PINCH_UPDATE), and diagnostic finger tracking
+# (SDL_EVENT_FINGER_*) — plus the app-level CanvasGestureHandler wiring,
+# through the writer executable's own --test-trackpad-gesture path. This is
+# headless (no window, no renderer): the SDL test seams build real SDL
+# events and route them through dispatch_sdl_event, which skips
+# SDL_ConvertEventToRenderCoordinates when no renderer exists. It requires
+# GRAPHSCORE_BUILD_WRITER=ON because the SDL seams are no-ops in a writer-OFF
+# build, exactly like key_events_shell_test.
+if (GRAPHSCORE_BUILD_WRITER)
+  add_test(NAME graphscore_writer_trackpad_gesture_test
+    COMMAND graphscore_writer_app --test-trackpad-gesture
+  )
+
+  set_tests_properties(graphscore_writer_trackpad_gesture_test PROPERTIES
+    PASS_REGULAR_EXPRESSION "trackpad-gesture-test: ok"
+    TIMEOUT 30
+  )
+endif()
+
+# M6-phase-5: assert the writer shell's production renderer-backend selection
+# (ADR 0002 §A5: Metal on macOS, D3D11 on Windows, OpenGL on Linux) through
+# the writer executable's own --test-renderer-backend path. This is headless
+# and build-config-independent: it asserts the ADR-locked selection string the
+# shell passes to SDL_CreateRenderer, not the presence of a display or SDL
+# itself, so it runs in both writer-ON and writer-OFF configurations and
+# guards against a regression to unnamed SDL auto-selection on every build
+# host.
+add_test(NAME graphscore_writer_renderer_backend_test
+  COMMAND graphscore_writer_app --test-renderer-backend
+)
+
+set_tests_properties(graphscore_writer_renderer_backend_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "renderer-backend-test: ok"
+  TIMEOUT 30
+)
+
+# M6-phase-5: the intermediate-zoom flicker regression — a real-renderer sweep
+# of representative incremental zoom values and combined pan offsets through
+# the production render path (set_viewport_transform → render_frame →
+# SDL_RenderReadPixels readback), asserting a non-background sentinel pixel
+# remains visible after every increment. This opens a real window and reads
+# back actual framebuffer pixels, so it is display-attached: only a genuinely
+# absent display ("no display available" = kBackendUnavailable) is a benign
+# headless skip; a renderer or rendering-setup failure is a hard test failure.
+# Requires GRAPHSCORE_BUILD_WRITER=ON (no SDL backend in a writer-OFF build).
+if (GRAPHSCORE_BUILD_WRITER)
+  add_test(NAME graphscore_writer_renderer_zoom_test
+    COMMAND graphscore_writer_app --test-renderer-zoom
+  )
+
+  set_tests_properties(graphscore_writer_renderer_zoom_test PROPERTIES
+    PASS_REGULAR_EXPRESSION "renderer-zoom-test: ok|no display available"
+    TIMEOUT 60
+  )
+endif()
+
+# M6-phase-5: the render-destination float-corner validation — a double
+# notation rect can be strictly positive while its float corners collapse (a
+# width absorbed into the float origin, or a right/bottom edge that overflows
+# to infinity). This headless test drives WriterShell::test_float_rect (the
+# SDL-free form of the exact check notation_rect_to_sdl_frect applies) across
+# the boundary cases, so it runs in both writer-ON and writer-OFF builds and
+# guards against a regression to per-field-only validation on every build host.
+add_test(NAME graphscore_writer_render_geometry_test
+  COMMAND graphscore_writer_app --test-render-geometry
+)
+
+set_tests_properties(graphscore_writer_render_geometry_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "render-geometry-test: ok"
+  TIMEOUT 30
+)
+
+# M6-phase-5: the real-renderer present smoke and flush-failure gate. Opens a
+# real window, runs the observable queued-command flush/API gate, injects an
+# SDL_FlushRenderer failure and asserts it surfaces as kRenderingSetupFailed
+# without reaching SDL_RenderPresent (a backend-only present failure is
+# unobservable at the pinned SHA, where SDL_RenderPresent returns true
+# unconditionally; physical presentation is manual/smoke evidence only), then
+# verifies the injection is one-shot and that the test-only present-call
+# counter did not advance on the injected failure and does advance on recovery.
+# Display-attached: only a genuinely absent display is a benign skip. Requires
+# GRAPHSCORE_BUILD_WRITER=ON (no SDL backend in a writer-OFF build).
+if (GRAPHSCORE_BUILD_WRITER)
+  add_test(NAME graphscore_writer_renderer_present_test
+    COMMAND graphscore_writer_app --test-renderer-present
+  )
+
+  set_tests_properties(graphscore_writer_renderer_present_test PROPERTIES
+    PASS_REGULAR_EXPRESSION "renderer-present-test: ok|no display available"
+    TIMEOUT 60
+  )
+
+  if (WIN32)
+    # SDL3's window creation on headless Windows runners can hang inside a
+    # kernel call; the same Windows caveat that disables the window smoke
+    # test applies here.
+    set_tests_properties(graphscore_writer_renderer_present_test PROPERTIES
+      DISABLED TRUE
+    )
+  endif()
+endif()
