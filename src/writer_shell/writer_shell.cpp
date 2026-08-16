@@ -588,24 +588,27 @@ void dispatch_sdl_event(InputHandler* handler, SDL_Renderer* renderer,
   switch (event.type) {
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
       PointerEvent pe;
-      pe.x      = static_cast<double>(event.button.x);
-      pe.y      = static_cast<double>(event.button.y);
-      pe.button = sdl_button_to_pointer_button(event.button.button);
+      pe.x                 = static_cast<double>(event.button.x);
+      pe.y                 = static_cast<double>(event.button.y);
+      pe.button            = sdl_button_to_pointer_button(event.button.button);
+      pe.measure_selection = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
       handler->on_pointer_press(pe);
       break;
     }
     case SDL_EVENT_MOUSE_MOTION: {
       PointerEvent pe;
-      pe.x = static_cast<double>(event.motion.x);
-      pe.y = static_cast<double>(event.motion.y);
+      pe.x                 = static_cast<double>(event.motion.x);
+      pe.y                 = static_cast<double>(event.motion.y);
+      pe.measure_selection = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
       handler->on_pointer_move(pe);
       break;
     }
     case SDL_EVENT_MOUSE_BUTTON_UP: {
       PointerEvent pe;
-      pe.x      = static_cast<double>(event.button.x);
-      pe.y      = static_cast<double>(event.button.y);
-      pe.button = sdl_button_to_pointer_button(event.button.button);
+      pe.x                 = static_cast<double>(event.button.x);
+      pe.y                 = static_cast<double>(event.button.y);
+      pe.button            = sdl_button_to_pointer_button(event.button.button);
+      pe.measure_selection = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
       handler->on_pointer_release(pe);
       break;
     }

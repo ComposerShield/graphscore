@@ -300,9 +300,10 @@ struct FragmentExtraction {
 // Preconditions (each failing kInvalidArgument, leaving no fragment):
 //   - validate_selection(project, selection) returns no diagnostics.
 //   - Every item shares one NodeId.
-//   - FullMeasureSet: every item shares one measure_index; the copied
-//     span is [measure_start(index), measure_start(index) +
-//     measure_length(index)); all four voices of each selected stave are
+//   - FullMeasureSet: every item shares one measure_index and positive
+//     measure_count; the copied span is the complete half-open measure
+//     range [measure_index, measure_index + measure_count); all four voices
+//     of each selected stave are
 //     copied -- an unpopulated or shorter-than-span voice is rest-filled
 //     to the span, not rejected (a stave normally holds four voices of
 //     which only one is written).

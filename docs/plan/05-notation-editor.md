@@ -93,7 +93,7 @@ and the collision-free interval rule — lives in
   - [x] M5-phase-30c Edit ties and slurs.
   - [x] M5-phase-30d Edit beam breaks and joins.
 - [x] M5-phase-31 Create the final pickdown through an explicit node-end duration setting and show the transition boundary distinctly.
-- [ ] M5-phase-32 Copy/paste one or more complete selected measures to an explicitly chosen destination measure and staff/track scope.
+- [x] M5-phase-32 Copy/paste one or more complete selected measures to an explicitly chosen destination measure and staff/track scope.
 - [ ] M5-phase-33 Cut/copy/paste arbitrary non-measure-aligned selections, including partial beats and multi-staff fragments, while preserving valid rhythm.
 - [ ] M5-phase-34 Show a translucent paste preview at the destination caret/range before commit, including affected staves and duration.
 - [ ] M5-phase-35 Default paste replaces only the corresponding destination time/staff/voice range, preserves all material outside it, fills uncovered time with normalized rests, and commits as one undoable transaction.

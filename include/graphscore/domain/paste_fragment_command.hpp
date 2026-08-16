@@ -14,16 +14,44 @@
 
 namespace graphscore {
 
+struct PasteScope {
+  TrackId track;
+  StaveId stave;
+
+  [[nodiscard]] bool operator==(const PasteScope&) const = default;
+};
+
 // Where a paste writes: a node, a track, a stave, and a musical-time
 // position. Voice is deliberately NOT part of the anchor -- a fragment
 // part's voice is preserved exactly at the destination (fragment voice V
 // always writes destination voice V), since a stave's four voices are a
 // fixed set, not a sequence to be remapped by ordinal.
 struct PasteAnchor {
+  PasteAnchor(NodeId node_id, TrackId track_id, StaveId stave_id,
+              Rational anchor_position)
+      : node(node_id),
+        track(track_id),
+        stave(stave_id),
+        position(anchor_position) {}
+
+  PasteAnchor(NodeId node_id, TrackId track_id, StaveId stave_id,
+              Rational anchor_position, std::vector<PasteScope> selected_scopes)
+      : node(node_id),
+        track(track_id),
+        stave(stave_id),
+        position(anchor_position),
+        scopes(std::move(selected_scopes)) {}
+
   NodeId   node;
   TrackId  track;
   StaveId  stave;
   Rational position;
+  // When non-empty, maps the fragment's distinct source staves in sorted
+  // (track ordinal, stave ordinal) order to these explicitly selected
+  // destination scopes in stored order. Cardinality must match exactly.
+  // Empty preserves the original anchor-plus-project-order mapping used by
+  // arbitrary-range and legacy single-scope paste.
+  std::vector<PasteScope> scopes;
 
   [[nodiscard]] bool operator==(const PasteAnchor&) const = default;
 };
@@ -69,12 +97,13 @@ struct PasteAnchor {
 // colliding with "paste never grows the node" above and shifting every
 // track's later material, contradicting "modify no music outside the
 // destination range". Paste therefore never applies a time signature, and
-// instead validates compatibility before touching anything: the set of
-// distinct TimeSignature values across fragment.measure_contexts() and the
-// set of distinct TimeSignature values of the destination measures
-// overlapping [anchor.position, range_end) must each contain exactly one
-// value, and those two values must be equal, or execute() fails
-// kInvalidArgument with the project completely unmutated. A destination
+// instead validates compatibility before touching anything. When both the
+// fragment and destination use one distinct meter, equality is the fast path.
+// For a changing-meter fragment, every FragmentMeasureContext must have an
+// exact destination counterpart: the same position relative to the paste
+// origin and the same TimeSignature, with the same context count and order.
+// Otherwise execute() fails kInvalidArgument with the project completely
+// unmutated. A destination
 // range extending into the pickdown region (where MeasureMap has no
 // containing measure) is governed there by the last main-region measure's
 // time signature, matching NotationFragment's own pickdown-origin

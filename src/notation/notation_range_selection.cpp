@@ -473,8 +473,10 @@ void SelectionDragState::set_committed_selection(
 std::vector<NotationRect> build_range_highlight_rects(
     const Selection& selection, const Project& project,
     const NotationLayout& layout) {
-  const auto* range_set = std::get_if<ArbitraryRangeSet>(&selection);
-  if (range_set == nullptr || range_set->items().empty()) {
+  const auto* range_set   = std::get_if<ArbitraryRangeSet>(&selection);
+  const auto* measure_set = std::get_if<FullMeasureSet>(&selection);
+  if ((range_set == nullptr || range_set->items().empty()) &&
+      (measure_set == nullptr || measure_set->items().empty())) {
     return {};
   }
 
@@ -487,6 +489,38 @@ std::vector<NotationRect> build_range_highlight_rects(
     return {};
   }
   const MeasureMap& measures = timeline->measures();
+
+  struct ScopeSpan {
+    TrackId     track;
+    StaveId     stave;
+    MusicalSpan span;
+  };
+
+  std::vector<ScopeSpan> selected_spans;
+  if (range_set != nullptr) {
+    selected_spans.reserve(range_set->items().size());
+    for (const ArbitraryRangeItem& item : range_set->items()) {
+      if (item.node == layout.node_id) {
+        selected_spans.push_back(ScopeSpan{item.track, item.stave, item.span});
+      }
+    }
+  } else {
+    selected_spans.reserve(measure_set->items().size());
+    for (const FullMeasureItem& item : measure_set->items()) {
+      if (item.node != layout.node_id ||
+          item.measure_index >= measures.measure_count() ||
+          item.measure_count > measures.measure_count() - item.measure_index) {
+        continue;
+      }
+      const std::size_t end_index = item.measure_index + item.measure_count;
+      selected_spans.push_back(
+          ScopeSpan{item.track, item.stave,
+                    MusicalSpan{measures.measure_start(item.measure_index),
+                                end_index == measures.measure_count()
+                                    ? measures.total_length()
+                                    : measures.measure_start(end_index)}});
+    }
+  }
 
   // Accumulate span intervals per (system, staff, measure).  Multiple items
   // (e.g. two voices on the same staff, both selected) project through the
@@ -501,10 +535,7 @@ std::vector<NotationRect> build_range_highlight_rects(
     for (std::size_t staff_idx = 0; staff_idx < system.staves.size();
          ++staff_idx) {
       const StaffSystemLayout& staff = system.staves[staff_idx];
-      for (const ArbitraryRangeItem& item : range_set->items()) {
-        if (item.node != layout.node_id) {
-          continue;
-        }
+      for (const ScopeSpan& item : selected_spans) {
         if (item.track != staff.track_id || item.stave != staff.stave_id) {
           continue;
         }

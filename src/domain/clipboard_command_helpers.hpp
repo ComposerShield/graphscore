@@ -51,28 +51,24 @@ namespace internal {
 // naming only the bass stave (ordinal 1) consumes exactly one destination
 // stave.
 struct PasteMapping {
-  std::vector<TrackId>              tracks;
-  std::vector<std::vector<StaveId>> staves;
-  // Per track_ordinal: source stave_ordinal -> compacted index into
-  // staves[track_ordinal].
-  std::vector<std::unordered_map<std::size_t, std::size_t>> ordinal_to_compact;
+  std::vector<std::unordered_map<std::size_t, PasteScope>> scopes;
 
-  [[nodiscard]] TrackId track_id(std::size_t track_ordinal) const {
-    return tracks[track_ordinal];
+  [[nodiscard]] std::optional<PasteScope> scope(
+      std::size_t track_ordinal, std::size_t stave_ordinal) const {
+    if (track_ordinal >= scopes.size())
+      return std::nullopt;
+    const auto it = scopes[track_ordinal].find(stave_ordinal);
+    if (it == scopes[track_ordinal].end())
+      return std::nullopt;
+    return it->second;
   }
 
   [[nodiscard]] std::optional<StaveId> stave_id(
       std::size_t track_ordinal, std::size_t stave_ordinal) const {
-    if (track_ordinal >= ordinal_to_compact.size())
-      return std::nullopt;
-    const auto& ord_map = ordinal_to_compact[track_ordinal];
-    const auto  it      = ord_map.find(stave_ordinal);
-    if (it == ord_map.end())
-      return std::nullopt;
-    const std::size_t compact_idx = it->second;
-    if (compact_idx >= staves[track_ordinal].size())
-      return std::nullopt;
-    return staves[track_ordinal][compact_idx];
+    const std::optional<PasteScope> resolved =
+        scope(track_ordinal, stave_ordinal);
+    return resolved.has_value() ? std::optional<StaveId>(resolved->stave)
+                                : std::nullopt;
   }
 };
 
@@ -136,18 +132,47 @@ struct PasteMapping {
   }
 
   PasteMapping mapping;
-  mapping.tracks.reserve(fragment.tracks().size());
-  mapping.staves.reserve(fragment.tracks().size());
-  mapping.ordinal_to_compact.resize(fragment.tracks().size());
+  mapping.scopes.resize(fragment.tracks().size());
+
+  std::size_t used_count = 0;
+  for (const auto& ordinals : used)
+    used_count += ordinals.size();
+  if (!anchor.scopes.empty()) {
+    if (anchor.scopes.size() != used_count)
+      return std::nullopt;
+    for (std::size_t i = 0; i < anchor.scopes.size(); ++i) {
+      const PasteScope& candidate = anchor.scopes[i];
+      const Track* destination    = project.find_active_track(candidate.track);
+      if (destination == nullptr)
+        return std::nullopt;
+      const auto& staves = destination->layout().staves();
+      if (std::none_of(staves.begin(), staves.end(), [&](const auto& stave) {
+            return stave.id == candidate.stave;
+          })) {
+        return std::nullopt;
+      }
+      for (std::size_t earlier = 0; earlier < i; ++earlier) {
+        if (anchor.scopes[earlier] == candidate)
+          return std::nullopt;
+      }
+    }
+    std::size_t destination_index = 0;
+    for (std::size_t t = 0; t < used.size(); ++t) {
+      for (const std::size_t source_stave : used[t]) {
+        mapping.scopes[t].emplace(source_stave,
+                                  anchor.scopes[destination_index]);
+        ++destination_index;
+      }
+    }
+    return mapping;
+  }
 
   for (std::size_t t = 0; t < fragment.tracks().size(); ++t) {
     const std::size_t dest_pos = *anchor_track_pos + t;
     if (dest_pos >= active.size())
       return std::nullopt;
-    const Track& dest_track = active[dest_pos];
-    mapping.tracks.push_back(dest_track.id());
-
-    const std::size_t base = (t == 0) ? *anchor_stave_ordinal : 0;
+    const Track&      dest_track = active[dest_pos];
+    const std::size_t base       = (t == 0) ? *anchor_stave_ordinal : 0;
     const std::vector<StaveDefinition>& dest_staves =
         dest_track.layout().staves();
 
@@ -156,18 +181,14 @@ struct PasteMapping {
     std::vector<std::size_t> sorted(used[t].begin(), used[t].end());
     std::sort(sorted.begin(), sorted.end());
 
-    std::vector<StaveId>                         stave_ids;
-    std::unordered_map<std::size_t, std::size_t> ordinal_map;
-    stave_ids.reserve(sorted.size());
     for (std::size_t i = 0; i < sorted.size(); ++i) {
       const std::size_t dest_stave_pos = base + i;
       if (dest_stave_pos >= dest_staves.size())
         return std::nullopt;
-      stave_ids.push_back(dest_staves[dest_stave_pos].id);
-      ordinal_map[sorted[i]] = i;
+      mapping.scopes[t].emplace(
+          sorted[i],
+          PasteScope{dest_track.id(), dest_staves[dest_stave_pos].id});
     }
-    mapping.staves.push_back(std::move(stave_ids));
-    mapping.ordinal_to_compact[t] = std::move(ordinal_map);
   }
 
   return mapping;

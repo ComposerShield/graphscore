@@ -1320,6 +1320,124 @@ int clipboard_test() {
     shell.set_input_handler(nullptr);
   }
 
+  // --- test 18: a contiguous complete-measure range copies with its full
+  //     span, pastes through the explicitly selected destination scope as one
+  //     undoable command, and remains ineligible for cut. -------------------
+  {
+    auto fixture = build_clipboard_fixture(metrics);
+    if (!fixture.has_value()) {
+      std::fprintf(stderr, "clipboard-test: fixture build failed (18)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler    handler(std::move(fixture->project),
+                                    std::move(fixture->layout), &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    const auto&              staff = handler.layout().systems[0].staves[0];
+    graphscore::PointerEvent press{
+        staff.measure_bounds[0].x + staff.measure_bounds[0].width * 0.5,
+        staff.bounds.y + staff.bounds.height * 0.5,
+        graphscore::PointerButton::kPrimary, true};
+    graphscore::PointerEvent release{
+        staff.measure_bounds[1].x + staff.measure_bounds[1].width * 0.5,
+        staff.bounds.y + staff.bounds.height * 0.5,
+        graphscore::PointerButton::kPrimary, true};
+    shell.dispatch_test_pointer_event(0, press);
+    shell.dispatch_test_pointer_event(1, release);
+    shell.dispatch_test_pointer_event(2, release);
+    const auto& committed = handler.drag_state().committed_selection();
+    const auto* measures =
+        committed.has_value()
+            ? std::get_if<graphscore::FullMeasureSet>(&*committed)
+            : nullptr;
+    if (measures == nullptr || measures->items().size() != 1u ||
+        measures->items().front().measure_index != 0u ||
+        measures->items().front().measure_count != 2u) {
+      std::fprintf(stderr, "clipboard-test: routed range failed (18)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto voice_before = voice_of(handler, *fixture);
+    if (!handler.copy_selection() || !handler.clipboard_has_fragment() ||
+        handler.clipboard()->span_length() != graphscore::Rational(2)) {
+      std::fprintf(stderr, "clipboard-test: range copy failed (18)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto clipboard_before = *handler.clipboard();
+    if (!handler.paste_clipboard() || handler.test_undo_stack_size() != 1u ||
+        !handler.clipboard_has_fragment() ||
+        !handler.clipboard()->operator==(clipboard_before)) {
+      std::fprintf(stderr, "clipboard-test: range paste failed (18)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!handler.test_undo() ||
+        !(voice_of(handler, *fixture) == voice_before)) {
+      std::fprintf(stderr, "clipboard-test: range paste undo failed (18)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto selection_before = handler.drag_state().committed_selection();
+    if (handler.cut_selection() ||
+        !(voice_of(handler, *fixture) == voice_before) ||
+        handler.drag_state().committed_selection() != selection_before ||
+        !handler.clipboard()->operator==(clipboard_before)) {
+      std::fprintf(stderr, "clipboard-test: range cut not rejected (18)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 19: a destination range whose start is live but whose end is
+  //     stale is rejected before anchor derivation, even when the clipboard
+  //     span itself would fit from that start. --------------------------------
+  {
+    auto fixture = build_clipboard_fixture(metrics);
+    if (!fixture.has_value()) {
+      std::fprintf(stderr, "clipboard-test: fixture build failed (19)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler    handler(std::move(fixture->project),
+                                    std::move(fixture->layout), &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+    if (!select_full_measure(handler, *fixture, 0) ||
+        !handler.copy_selection()) {
+      std::fprintf(stderr, "clipboard-test: source copy failed (19)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto stale =
+        graphscore::FullMeasureSet::create({graphscore::FullMeasureItem{
+            fixture->node_id, fixture->track_id, fixture->stave_id, 1, 2}});
+    if (!stale.has_value()) {
+      std::fprintf(stderr, "clipboard-test: stale range build failed (19)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.set_committed_selection(graphscore::Selection{*stale});
+    const auto voice_before       = voice_of(handler, *fixture);
+    const auto clipboard_before   = *handler.clipboard();
+    const auto selection_before   = handler.drag_state().committed_selection();
+    const auto diagnostics_before = handler.diagnostics().size();
+    const auto undo_before        = handler.test_undo_stack_size();
+    if (handler.paste_clipboard() ||
+        !(voice_of(handler, *fixture) == voice_before) ||
+        !handler.clipboard()->operator==(clipboard_before) ||
+        handler.drag_state().committed_selection() != selection_before ||
+        handler.test_undo_stack_size() != undo_before ||
+        handler.diagnostics().size() != diagnostics_before + 1u) {
+      std::fprintf(stderr, "clipboard-test: stale end not atomic (19)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
   std::printf("clipboard-test: ok\n");
   return 0;
 }

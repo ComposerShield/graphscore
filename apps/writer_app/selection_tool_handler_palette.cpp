@@ -238,7 +238,7 @@ bool SelectionToolHandler::staff_step_available(
       .has_value();
 }
 
-bool SelectionToolHandler::copy_cut_available() const {
+bool SelectionToolHandler::copy_available() const {
   const auto& committed = drag_.committed_selection();
   if (!committed.has_value()) {
     return false;
@@ -250,11 +250,25 @@ bool SelectionToolHandler::copy_cut_available() const {
   if (!is_measure && !is_range) {
     return false;
   }
-  // The exact extraction copy/cut will perform: a pure, non-mutating query
+  // The exact extraction copy will perform: a pure, non-mutating query
   // whose failure (stale entities, archived track, multi-node, mixed span,
   // mixed measure index, straddling tuplet, ...) is the same set
   // extract_fragment rejects.
   return graphscore::extract_fragment(project_, *committed).status.ok();
+}
+
+bool SelectionToolHandler::cut_available() const {
+  const auto& committed = drag_.committed_selection();
+  if (!committed.has_value() || !copy_available()) {
+    return false;
+  }
+  const auto* measures = std::get_if<graphscore::FullMeasureSet>(&*committed);
+  if (measures == nullptr) {
+    return true;
+  }
+  return std::ranges::all_of(measures->items(), [](const auto& item) {
+    return item.measure_count == 1u;
+  });
 }
 
 // M5-phase-28b: exact make_insert_measure_command/make_delete_measure_command
@@ -678,8 +692,9 @@ bool SelectionToolHandler::palette_command_available(
     case PaletteCommandId::kStaffStepNext:
       return staff_step_available(graphscore::StaffStepDirection::kNext);
     case PaletteCommandId::kCut:
+      return cut_available();
     case PaletteCommandId::kCopy:
-      return copy_cut_available();
+      return copy_available();
     case PaletteCommandId::kPaste:
       return paste_available();
     case PaletteCommandId::kUndo:
@@ -895,7 +910,20 @@ std::string SelectionToolHandler::palette_command_unavailable_reason(
       return active_tool_ == graphscore::ActiveTool::kNoteEntry
                  ? "no eligible step-entry cursor or adjacent staff"
                  : "no eligible selection";
-    case PaletteCommandId::kCut:
+    case PaletteCommandId::kCut: {
+      const auto& committed = drag_.committed_selection();
+      if (committed.has_value()) {
+        if (const auto* measures =
+                std::get_if<graphscore::FullMeasureSet>(&*committed);
+            measures != nullptr &&
+            std::ranges::any_of(measures->items(), [](const auto& item) {
+              return item.measure_count != 1u;
+            })) {
+          return "multiple-measure cut is not supported";
+        }
+      }
+      return "requires a full-measure or range selection";
+    }
     case PaletteCommandId::kCopy:
       return "requires a full-measure or range selection";
     case PaletteCommandId::kPaste:

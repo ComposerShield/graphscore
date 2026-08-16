@@ -128,6 +128,10 @@ struct FullMeasureItem {
   TrackId     track;
   StaveId     stave;
   std::size_t measure_index = 0;
+  // A half-open contiguous range [measure_index,
+  // measure_index + measure_count). One preserves the original single-
+  // measure representation and aggregate initialization compatibility.
+  std::size_t measure_count = 1;
 
   [[nodiscard]] bool operator==(const FullMeasureItem&) const = default;
 };
@@ -433,9 +437,8 @@ struct SelectionDiagnostic {
 //                   intrinsic and enforced by MarkingSet::create, so no
 //                   diagnostic exists for them.
 //   full measure  — node/track/stave exists; track is active; lane
-//                   exists; node has timeline; measure_index <
-//                   measure_count() (kNoTimeline otherwise); pickdown
-//                   indices rejected structurally (kMeasureIndexInPickdown)
+//                   exists; node has timeline; the non-empty half-open
+//                   measure range is within measure_count()
 //   range         — node/track/stave/lane exists; track is active;
 //                   node has timeline; classify(span) invoked (pickdown
 //                   ranges are accepted; MusicalSpan validity is

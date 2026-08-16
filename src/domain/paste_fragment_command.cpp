@@ -97,9 +97,40 @@ bool meter_compatible(const NotationFragment& fragment,
   const std::vector<TimeSignature> fragment_sigs = fragment_meter_set(fragment);
   const std::vector<TimeSignature> dest_sigs =
       destination_meter_set(timeline, range_start, range_end);
-  if (fragment_sigs.size() != 1 || dest_sigs.size() != 1)
+  if (fragment_sigs.size() == 1 && dest_sigs.size() == 1)
+    return fragment_sigs.front() == dest_sigs.front();
+  if (fragment_sigs.empty() || dest_sigs.empty())
     return false;
-  return fragment_sigs.front() == dest_sigs.front();
+
+  const MeasureMap&                measures = timeline.measures();
+  const std::optional<std::size_t> first =
+      measures.measure_index_at(range_start);
+  if (!first.has_value())
+    return false;
+  std::vector<FragmentMeasureContext> destination_contexts;
+  destination_contexts.push_back(FragmentMeasureContext{
+      Rational(0), measures.measure(*first).time_signature,
+      measures.measure(*first).key_signature});
+  for (std::size_t index = *first + 1; index < measures.measure_count();
+       ++index) {
+    const Rational position = measures.measure_start(index);
+    if (!(position < range_end))
+      break;
+    destination_contexts.push_back(FragmentMeasureContext{
+        position - range_start, measures.measure(index).time_signature,
+        measures.measure(index).key_signature});
+  }
+  if (destination_contexts.size() != fragment.measure_contexts().size())
+    return false;
+  for (std::size_t i = 0; i < destination_contexts.size(); ++i) {
+    if (destination_contexts[i].position !=
+            fragment.measure_contexts()[i].position ||
+        destination_contexts[i].time_signature !=
+            fragment.measure_contexts()[i].time_signature) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // ---- clef application (interior changes only, contained) ----
@@ -151,13 +182,13 @@ ClefBuildResult build_clef_edits(
   const std::vector<FragmentClefChange>& changes = fragment.clef_changes();
 
   for (const auto& [track_ordinal, stave_ordinal] : clef_staves) {
-    const std::optional<StaveId> dest_stave_opt =
-        mapping.stave_id(track_ordinal, stave_ordinal);
-    if (!dest_stave_opt.has_value()) {
+    const std::optional<PasteScope> destination =
+        mapping.scope(track_ordinal, stave_ordinal);
+    if (!destination.has_value()) {
       result.status = Result(ResultCode::kInvalidArgument);
       return result;
     }
-    const StaveId dest_stave = *dest_stave_opt;
+    const StaveId dest_stave = destination->stave;
 
     const ClefLane*         existing = timeline.clef_lane(dest_stave);
     std::optional<ClefLane> pre =
@@ -167,8 +198,8 @@ ClefBuildResult build_clef_edits(
     if (existing != nullptr) {
       default_clef = existing->default_clef();
     } else {
-      const std::optional<Clef> looked_up = stave_default_clef(
-          project, mapping.track_id(track_ordinal), dest_stave);
+      const std::optional<Clef> looked_up =
+          stave_default_clef(project, destination->track, dest_stave);
       if (!looked_up.has_value()) {
         result.status = Result(ResultCode::kInvalidArgument);
         return result;
@@ -394,13 +425,21 @@ Result PasteFragmentCommand::execute(Project& project) noexcept {
     // must still map to a destination track/stave (Defect 1 fix).
     std::vector<TrackId> touched;
     for (const FragmentVoicePart& part : fragment_.parts()) {
-      const TrackId dest_track = mapping->track_id(part.track_ordinal);
+      const std::optional<PasteScope> destination =
+          mapping->scope(part.track_ordinal, part.stave_ordinal);
+      if (!destination.has_value())
+        return Result(ResultCode::kInvalidArgument);
+      const TrackId dest_track = destination->track;
       if (std::find(touched.begin(), touched.end(), dest_track) ==
           touched.end())
         touched.push_back(dest_track);
     }
     for (const FragmentPedalSpan& span : fragment_.pedal_spans()) {
-      const TrackId dest_track = mapping->track_id(span.track_ordinal);
+      const std::optional<PasteScope> destination =
+          mapping->scope(span.track_ordinal, span.stave_ordinal);
+      if (!destination.has_value())
+        return Result(ResultCode::kInvalidArgument);
+      const TrackId dest_track = destination->track;
       if (std::find(touched.begin(), touched.end(), dest_track) ==
           touched.end())
         touched.push_back(dest_track);
@@ -422,18 +461,19 @@ Result PasteFragmentCommand::execute(Project& project) noexcept {
     // ---- Phase 1: build all modified candidates (may allocate) ----
 
     for (const FragmentVoicePart& part : fragment_.parts()) {
-      const TrackId dest_track = mapping->track_id(part.track_ordinal);
-      const std::optional<StaveId> dest_stave =
-          mapping->stave_id(part.track_ordinal, part.stave_ordinal);
-      if (!dest_stave.has_value())
+      const std::optional<PasteScope> destination =
+          mapping->scope(part.track_ordinal, part.stave_ordinal);
+      if (!destination.has_value())
         return Result(ResultCode::kInvalidArgument);
+      const TrackId dest_track = destination->track;
+      const StaveId dest_stave = destination->stave;
 
       TrackLane* candidate = find_candidate(candidates, dest_track);
       if (candidate == nullptr)
         return Result(ResultCode::kInvalidArgument);
 
-      candidate->ensure_stave(*dest_stave);
-      StaveVoices* stave = candidate->stave(*dest_stave);
+      candidate->ensure_stave(dest_stave);
+      StaveVoices* stave = candidate->stave(dest_stave);
       if (stave == nullptr)
         return Result(ResultCode::kInvalidArgument);
 
@@ -464,11 +504,12 @@ Result PasteFragmentCommand::execute(Project& project) noexcept {
     }
 
     for (const auto& [track_ordinal, stave_ordinal] : distinct_staves) {
-      const TrackId dest_track = mapping->track_id(track_ordinal);
-      const std::optional<StaveId> dest_stave =
-          mapping->stave_id(track_ordinal, stave_ordinal);
-      if (!dest_stave.has_value())
+      const std::optional<PasteScope> destination =
+          mapping->scope(track_ordinal, stave_ordinal);
+      if (!destination.has_value())
         return Result(ResultCode::kInvalidArgument);
+      const TrackId dest_track = destination->track;
+      const StaveId dest_stave = destination->stave;
 
       TrackLane* candidate = find_candidate(candidates, dest_track);
       if (candidate == nullptr)
@@ -476,15 +517,15 @@ Result PasteFragmentCommand::execute(Project& project) noexcept {
 
       // ensure_stave required: add_pedal_span rejects staves not yet in
       // the lane's staves_ map (pedal-only stave fix).
-      candidate->ensure_stave(*dest_stave);
+      candidate->ensure_stave(dest_stave);
 
       Result clip_result = internal::clip_pedal_spans_in_range(
-          *candidate, *dest_stave, anchor_.position, range_end);
+          *candidate, dest_stave, anchor_.position, range_end);
       if (!clip_result.ok())
         return clip_result;
 
       Result add_result = internal::add_offset_fragment_pedal_spans(
-          *candidate, *dest_stave, anchor_.position, fragment_, track_ordinal,
+          *candidate, dest_stave, anchor_.position, fragment_, track_ordinal,
           stave_ordinal);
       if (!add_result.ok())
         return add_result;

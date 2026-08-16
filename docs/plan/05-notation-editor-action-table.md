@@ -233,8 +233,8 @@ listed separately in §7.6.
 |---|---|---|---|---|---|
 | Primary+Up | Staff step to prior staff, wrapping (24) | Both | single `NoteheadSet`/`ChordSet`/`RestSet`/`InsertionCaretSet` | no-op | safe |
 | Primary+Down | Staff step to next staff, wrapping (24) | Both | same as Primary+Up | no-op | safe |
-| Primary+X | Cut selection to in-memory clipboard (27) | Any | `FullMeasureSet` or `ArbitraryRangeSet` (valid) | no-op + diagnostic; clipboard preserved (§10) | once |
-| Primary+C | Copy selection to in-memory clipboard (27) | Any | `FullMeasureSet` or `ArbitraryRangeSet` (valid) | no-op + diagnostic; clipboard preserved (§10) | safe |
+| Primary+X | Cut selection to in-memory clipboard (27) | Any | single-measure `FullMeasureSet` or valid `ArbitraryRangeSet` | no-op + diagnostic; clipboard preserved (§10) | once |
+| Primary+C | Copy selection to in-memory clipboard (27) | Any | contiguous one-or-more-measure `FullMeasureSet` or valid `ArbitraryRangeSet` | no-op + diagnostic; clipboard preserved (§10) | safe |
 | Primary+V | Paste in-memory clipboard at caret/anchor (27) | Any | non-empty clipboard + derivable `PasteAnchor` (§10) | no-op + diagnostic (§10) | once |
 | Primary+Z | Undo (27) | Any | `CommandHistory` (selection-independent) | no-op on empty undo stack | safe |
 | Primary+K | Toggle command palette (27) | Any | — | — | once |
@@ -503,17 +503,20 @@ produced it.
 
 ### 10.1 Copy and cut
 
-- **Eligible selections.** Copy and cut accept exactly the arms
-  `extract_fragment` whitelists: `FullMeasureSet` and `ArbitraryRangeSet`,
-  each satisfying its own preconditions (single node; single measure index or
-  single span). Every other arm — notehead, chord, rest, marking, node,
-  connector, caret — is an ineligible copy/cut target and is a no-op with a
-  diagnostic. (Copying a run of rests is expressed as the `ArbitraryRangeSet`
-  covering them.)
+- **Eligible selections.** Copy accepts exactly the arms `extract_fragment`
+  whitelists: `FullMeasureSet`, including a contiguous multi-measure set, and
+  `ArbitraryRangeSet`, each satisfying its own preconditions (single node;
+  one shared measure range or one shared span). Cut accepts the same
+  `ArbitraryRangeSet` selections but only a single-measure `FullMeasureSet`;
+  multi-measure cut is outside M5-phase-32. Every other arm — notehead, chord,
+  rest, marking, node, connector, caret — is an ineligible copy/cut target and
+  is a no-op with a diagnostic. (Copying a run of rests is expressed as the
+  `ArbitraryRangeSet` covering them.)
 - **Copy (`Primary+C`)** is a pure extraction: on success the extracted
   `NotationFragment` **replaces** the in-memory clipboard and the project is
   unchanged; on failure the clipboard is **preserved** (left exactly as it was)
-  and a diagnostic is reported.
+  and a diagnostic is reported. A contiguous multi-measure `FullMeasureSet`
+  copies its complete measure span.
 - **Cut (`Primary+X`)** is extraction plus range-clearing in one reversible
   command: on success the command's `fragment()` **replaces** the clipboard,
   the selection's range is replaced by normalized rests, the command is pushed
@@ -742,10 +745,12 @@ action in this table, and it is what makes the numpad-only bindings
   tuplet actions, marking-style actions, and pickdown actions), a one-line
   description, and a live **availability** state.
 - **Availability.** A row's availability is derived from the same precondition
-  and fallback logic as its chord row, for a row that has one: "Cut" is
-  available exactly when a valid `FullMeasureSet` or `ArbitraryRangeSet` is
-  committed; "Paste" when the clipboard is non-empty and a `PasteAnchor` can
-  be derived (§10); the duration/rest/dots rows are available exactly when
+  and fallback logic as its chord row, for a row that has one: "Copy" is
+  available for a valid contiguous one-or-more-measure `FullMeasureSet` or
+  valid `ArbitraryRangeSet`; "Cut" accepts the same ranges but only a
+  single-measure `FullMeasureSet`; "Paste" when the clipboard is non-empty and
+  a `PasteAnchor` can be derived (§10); the duration/rest/dots rows are
+  available exactly when
   `kNoteEntry` is active (they are Entry-tool actions). A chord-less row's
   availability is its own precondition: each structural measure-editing row
   is available exactly when the operation it names would succeed, so "Delete

@@ -589,7 +589,9 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // extraction would succeed: a FullMeasureSet or ArbitraryRangeSet sharing
   // one node and one measure index / identical span, passing
   // validate_selection -- the same preconditions extract_fragment enforces.
-  [[nodiscard]] bool copy_cut_available() const;
+  [[nodiscard]] bool copy_available() const;
+
+  [[nodiscard]] bool cut_available() const;
 
   // Exact PasteFragmentCommand eligibility against a project value copy.
   [[nodiscard]] bool paste_available() const;
@@ -683,7 +685,9 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   graphscore::NotationLayoutWork last_layout_work_;
   // True once the pointer has moved during the current drag, so a
   // press-and-release-without-move is distinguished from a genuine range drag.
-  bool                      moved_during_drag_ = false;
+  bool                      moved_during_drag_      = false;
+  bool                      measure_selection_drag_ = false;
+  graphscore::NotationPoint measure_selection_anchor_{};
   graphscore::ActiveTool    active_tool_ = graphscore::ActiveTool::kSelection;
   graphscore::PointerButton initiating_button_ =
       graphscore::PointerButton::kUnknown;

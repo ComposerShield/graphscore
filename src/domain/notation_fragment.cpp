@@ -711,8 +711,10 @@ FragmentExtraction extract_full_measure(const Project&        project,
   const std::vector<FullMeasureItem>& items         = set.items();
   const NodeId                        node_id       = items[0].node;
   const std::size_t                   measure_index = items[0].measure_index;
+  const std::size_t                   measure_count = items[0].measure_count;
   for (const FullMeasureItem& item : items) {
-    if (!(item.node == node_id) || item.measure_index != measure_index)
+    if (!(item.node == node_id) || item.measure_index != measure_index ||
+        item.measure_count != measure_count)
       return fail(ResultCode::kInvalidArgument);
   }
 
@@ -722,12 +724,18 @@ FragmentExtraction extract_full_measure(const Project&        project,
   const NodeTimeline* timeline = node->timeline();
   if (timeline == nullptr)
     return fail(ResultCode::kInvalidArgument);
-  if (measure_index >= timeline->measures().measure_count())
+  const std::size_t timeline_count = timeline->measures().measure_count();
+  if (measure_index >= timeline_count ||
+      measure_count > timeline_count - measure_index)
     return fail(ResultCode::kInvalidArgument);
 
-  const Rational origin = timeline->measures().measure_start(measure_index);
-  const Rational length = timeline->measures().measure_length(measure_index);
-  const Rational end    = origin + length;
+  const MeasureMap& measures  = timeline->measures();
+  const Rational    origin    = measures.measure_start(measure_index);
+  const std::size_t end_index = measure_index + measure_count;
+  const Rational    end       = end_index == timeline_count
+                                    ? measures.total_length()
+                                    : measures.measure_start(end_index);
+  const Rational    length    = end - origin;
 
   std::vector<TrackId> referenced_tracks;
   referenced_tracks.reserve(items.size());

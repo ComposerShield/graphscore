@@ -1138,6 +1138,43 @@ int command_palette_test() {
     shell.set_input_handler(nullptr);
   }
 
+  // --- test 12: contiguous multi-measure selections remain copyable while
+  //     Cut accurately reports the phase-32 single-measure limit. -----------
+  {
+    auto fixture = build_palette_fixture(metrics);
+    if (!fixture.has_value()) {
+      std::fprintf(stderr, "command-palette-test: fixture failed (12)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler    handler(std::move(fixture->project),
+                                    std::move(fixture->layout), &shell);
+    shell.set_input_handler(&handler);
+    const auto measures =
+        graphscore::FullMeasureSet::create({graphscore::FullMeasureItem{
+            fixture->node_id, fixture->track_id, fixture->stave_id, 0, 2}});
+    if (!measures.has_value()) {
+      std::fprintf(stderr, "command-palette-test: measure failed (12)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.set_committed_selection(graphscore::Selection{*measures});
+    if (!handler.palette_command_available(PaletteCommandId::kCopy) ||
+        handler.palette_command_available(PaletteCommandId::kCut) ||
+        handler.palette_command_unavailable_reason(PaletteCommandId::kCut) !=
+            "multiple-measure cut is not supported" ||
+        !handler.run_palette_command(PaletteCommandId::kCopy) ||
+        !handler.clipboard_has_fragment() ||
+        handler.clipboard()->span_length() != graphscore::Rational(2)) {
+      std::fprintf(stderr,
+                   "command-palette-test: multi-measure copy/cut availability "
+                   "wrong (12)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
   std::printf("command-palette-test: ok\n");
   return 0;
 }

@@ -719,6 +719,40 @@ TEST(NotationFragmentTest,
   }
 }
 
+TEST(NotationFragmentTest, ExtractContiguousCompleteMeasuresWithExactSpan) {
+  Fixture fx;
+  fx.assign_measure(fx.track_a, fx.stave_a_treble,
+                    build_voice({make_note(pitch(Letter::kC), whole()),
+                                 make_note(pitch(Letter::kD), whole()),
+                                 make_note(pitch(Letter::kE), whole()),
+                                 make_note(pitch(Letter::kF), whole())}));
+
+  const Selection selection = *FullMeasureSet::create(
+      {FullMeasureItem{fx.node_id, fx.track_a, fx.stave_a_treble, 1, 2}});
+  const FragmentExtraction result = extract_fragment(fx.project, selection);
+  ASSERT_TRUE(result.status.ok());
+  ASSERT_TRUE(result.fragment.has_value());
+  EXPECT_EQ(result.fragment->span_length(), Rational(2));
+  ASSERT_EQ(result.fragment->measure_contexts().size(), 2u);
+  EXPECT_EQ(result.fragment->measure_contexts()[0].position, Rational(0));
+  EXPECT_EQ(result.fragment->measure_contexts()[1].position, Rational(1));
+  const FragmentVoicePart* part = find_part(*result.fragment, 0, 0, kVoice1);
+  ASSERT_NE(part, nullptr);
+  ASSERT_EQ(part->content.events().size(), 2u);
+  EXPECT_EQ(std::get<Note>(part->content.events()[0]).pitch, pitch(Letter::kD));
+  EXPECT_EQ(std::get<Note>(part->content.events()[1]).pitch, pitch(Letter::kE));
+}
+
+TEST(NotationFragmentTest, ExtractRejectsInconsistentMeasureRanges) {
+  Fixture         fx;
+  const Selection selection = *FullMeasureSet::create(
+      {FullMeasureItem{fx.node_id, fx.track_a, fx.stave_a_treble, 0, 2},
+       FullMeasureItem{fx.node_id, fx.track_b, fx.stave_b, 0, 3}});
+  const FragmentExtraction result = extract_fragment(fx.project, selection);
+  EXPECT_EQ(result.status.code(), ResultCode::kInvalidArgument);
+  EXPECT_FALSE(result.fragment.has_value());
+}
+
 TEST(NotationFragmentTest,
      ExtractArbitraryRangeExtendingPastShortVoiceIsRestFilled) {
   Fixture fx;

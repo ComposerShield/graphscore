@@ -362,6 +362,18 @@ TEST(SelectionTest, FullMeasureSetRejectsDuplicate) {
   EXPECT_FALSE(FullMeasureSet::create({a, a}).has_value());
 }
 
+TEST(SelectionTest, FullMeasureSetAcceptsContiguousRangeAndRejectsEmptyRange) {
+  const NodeId  node  = NodeId::generate();
+  const TrackId track = TrackId::generate();
+  const StaveId stave = StaveId::generate();
+  EXPECT_TRUE(
+      FullMeasureSet::create({FullMeasureItem{node, track, stave, 2, 3}})
+          .has_value());
+  EXPECT_FALSE(
+      FullMeasureSet::create({FullMeasureItem{node, track, stave, 2, 0}})
+          .has_value());
+}
+
 TEST(SelectionTest, ArbitraryRangeSetRejectsEmpty) {
   EXPECT_FALSE(ArbitraryRangeSet::create({}).has_value());
 }
@@ -627,6 +639,18 @@ TEST(SelectionTest, ValidateFullMeasureIndexOutOfRange) {
   auto      diags = validate_selection(f.project, sel);
   EXPECT_TRUE(
       has_diag(diags, SelectionDiagnosticCode::kMeasureIndexOutOfRange, 0));
+}
+
+TEST(SelectionTest, ValidateFullMeasureRangeEndOutOfRange) {
+  Fixture f;
+  auto    set = FullMeasureSet::create(
+      {FullMeasureItem{f.node_id, f.track_id, f.stave_id, 0, 2}});
+  ASSERT_TRUE(set.has_value());
+  Selection  selection{*set};
+  const auto diagnostics = validate_selection(f.project, selection);
+  ASSERT_EQ(diagnostics.size(), 1u);
+  EXPECT_EQ(diagnostics[0].code,
+            SelectionDiagnosticCode::kMeasureIndexOutOfRange);
 }
 
 TEST(SelectionTest, ValidateFullMeasureNoTimeline) {

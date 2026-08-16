@@ -80,6 +80,20 @@ TEST(HighlightRectsTest, FullMeasureDragProducesOneRectPerSelectedStaff) {
   }
 }
 
+TEST(HighlightRectsTest, FullMeasureSetShowsEveryContiguousMeasure) {
+  Fixture              fixture(2);
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const auto set = FullMeasureSet::create({FullMeasureItem{
+      fixture.node_id, fixture.track_ids[0], fixture.stave_id(), 0, 2}});
+  ASSERT_TRUE(set.has_value());
+
+  const std::vector<NotationRect> rects =
+      build_range_highlight_rects(Selection{*set}, fixture.project, layout);
+  EXPECT_EQ(rects.size(), 2u);
+}
+
 TEST(HighlightRectsTest, NullProjectIsEmpty) {
   Fixture        fixture(1);
   const Duration whole = *Duration::create(NoteValue::kWhole, 0);
