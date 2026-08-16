@@ -184,6 +184,17 @@ void SelectionToolHandler::update_highlight() {
   } else {
     shell_->set_highlight_rects({});
   }
+
+  const auto& destination = drag_.live_extent().has_value()
+                                ? drag_.live_extent()
+                                : drag_.committed_selection();
+  const auto  placement   = current_paste_placement(destination);
+  if (placement.has_value()) {
+    shell_->set_paste_preview_rects(
+        build_paste_preview_rects(*placement, project_, layout_));
+  } else {
+    shell_->set_paste_preview_rects({});
+  }
 }
 
 // Resolves a non-drag click to the single notehead/chord/rest/marking/caret

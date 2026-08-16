@@ -1781,6 +1781,202 @@ int clipboard_test() {
     shell.set_input_handler(nullptr);
   }
 
+  // --- test 21: a valid clipboard proactively publishes a distinct paste
+  //     preview with exact partial duration and affected staves. It refreshes
+  //     with destination changes, is history/model neutral, matches commit,
+  //     and survives undo/redo without changing their transaction count. ----
+  {
+    auto fixture = build_arbitrary_clipboard_fixture(metrics);
+    if (!fixture.has_value()) {
+      std::fprintf(stderr, "clipboard-test: fixture build failed (21)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler    handler(std::move(fixture->project),
+                                    std::move(fixture->layout), &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+
+    const graphscore::MusicalSpan source_span{
+        graphscore::Rational(0),
+        graphscore::Rational(1) / graphscore::Rational(2)};
+    const auto source = graphscore::ArbitraryRangeSet::create(
+        {graphscore::ArbitraryRangeItem{fixture->node_id, fixture->track_id,
+                                        fixture->treble_stave, voice_one(),
+                                        source_span},
+         graphscore::ArbitraryRangeItem{fixture->node_id, fixture->track_id,
+                                        fixture->bass_stave, voice_one(),
+                                        source_span}});
+    if (!source.has_value()) {
+      std::fprintf(stderr, "clipboard-test: source range failed (21)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.set_committed_selection(graphscore::Selection{*source});
+    const graphscore::VoiceContent treble_before =
+        arbitrary_voice_of(handler, *fixture, fixture->treble_stave);
+    const graphscore::VoiceContent bass_before =
+        arbitrary_voice_of(handler, *fixture, fixture->bass_stave);
+    if (!handler.copy_selection()) {
+      std::fprintf(stderr, "clipboard-test: source copy failed (21)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto source_preview      = shell.test_snapshot_paste_preview_rects();
+    const auto selection_highlight = shell.test_snapshot_highlight_rects();
+    if (source_preview.size() != 2u || selection_highlight.size() != 2u ||
+        source_preview != selection_highlight ||
+        arbitrary_voice_of(handler, *fixture, fixture->treble_stave) !=
+            treble_before ||
+        arbitrary_voice_of(handler, *fixture, fixture->bass_stave) !=
+            bass_before ||
+        handler.test_undo_stack_size() != 0u) {
+      std::fprintf(stderr,
+                   "clipboard-test: proactive preview not neutral (21)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const auto destination =
+        graphscore::InsertionCaretSet::create({graphscore::InsertionCaretItem{
+            fixture->node_id, fixture->track_id, fixture->treble_stave,
+            voice_one(), graphscore::Rational(1)}});
+    if (!destination.has_value()) {
+      std::fprintf(stderr, "clipboard-test: destination failed (21)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.set_committed_selection(graphscore::Selection{*destination});
+    const auto destination_preview = shell.test_snapshot_paste_preview_rects();
+    if (destination_preview.size() != 2u ||
+        !shell.test_snapshot_highlight_rects().empty() ||
+        destination_preview == source_preview ||
+        arbitrary_voice_of(handler, *fixture, fixture->treble_stave) !=
+            treble_before ||
+        arbitrary_voice_of(handler, *fixture, fixture->bass_stave) !=
+            bass_before ||
+        handler.test_undo_stack_size() != 0u) {
+      std::fprintf(stderr, "clipboard-test: destination preview wrong (21)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const auto invalid =
+        graphscore::InsertionCaretSet::create({graphscore::InsertionCaretItem{
+            fixture->node_id, fixture->track_id, fixture->treble_stave,
+            voice_one(), graphscore::Rational(2)}});
+    if (!invalid.has_value()) {
+      std::fprintf(stderr, "clipboard-test: invalid caret failed (21)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.set_committed_selection(graphscore::Selection{*invalid});
+    if (!shell.test_snapshot_paste_preview_rects().empty()) {
+      std::fprintf(stderr, "clipboard-test: invalid preview survived (21)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.set_committed_selection(graphscore::Selection{*destination});
+    const auto  notehead_x   = notehead_x_positions(handler.layout());
+    const auto& treble_staff = handler.layout().systems[0].staves[0];
+    if (notehead_x.size() < 3u) {
+      std::fprintf(stderr, "clipboard-test: live geometry failed (21)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const graphscore::PointerEvent live_start{
+        notehead_x[0], treble_staff.bounds.y + treble_staff.bounds.height * 0.5,
+        graphscore::PointerButton::kPrimary, false};
+    const graphscore::PointerEvent live_focus{
+        notehead_x[2], treble_staff.bounds.y + treble_staff.bounds.height * 0.5,
+        graphscore::PointerButton::kPrimary, false};
+    shell.dispatch_test_pointer_event(0, live_start);
+    shell.dispatch_test_pointer_event(1, live_focus);
+    const auto live_preview = shell.test_snapshot_paste_preview_rects();
+    if (live_preview.empty() || live_preview == destination_preview) {
+      std::fprintf(stderr,
+                   "clipboard-test: live preview did not refresh (21)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_test_pointer_event(3, {});
+    if (shell.test_snapshot_paste_preview_rects() != destination_preview ||
+        shell.test_snapshot_highlight_rects().size() != 0u ||
+        !handler.paste_clipboard() || handler.test_undo_stack_size() != 1u ||
+        shell.test_snapshot_paste_preview_rects() != destination_preview) {
+      std::fprintf(stderr, "clipboard-test: preview/commit mismatch (21)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    if (!handler.undo_action() || handler.test_undo_stack_size() != 0u ||
+        handler.test_redo_stack_size() != 1u ||
+        shell.test_snapshot_paste_preview_rects() != destination_preview ||
+        !handler.redo_action() || handler.test_undo_stack_size() != 1u ||
+        shell.test_snapshot_paste_preview_rects() != destination_preview) {
+      std::fprintf(stderr, "clipboard-test: preview undo/redo wrong (21)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.on_cancel();
+    if (shell.test_snapshot_paste_preview_rects() != destination_preview) {
+      std::fprintf(stderr, "clipboard-test: cancel stale preview (21)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 22: full-measure destination scopes drive the same arbitrary
+  //     multi-staff mapping as commit, and clipboard replacement refreshes
+  //     the duration from a partial preview to one complete measure. ---------
+  {
+    auto fixture = build_arbitrary_clipboard_fixture(metrics);
+    if (!fixture.has_value()) {
+      std::fprintf(stderr, "clipboard-test: fixture build failed (22)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler    handler(std::move(fixture->project),
+                                    std::move(fixture->layout), &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+
+    const auto source = graphscore::FullMeasureSet::create(
+        {graphscore::FullMeasureItem{fixture->node_id, fixture->track_id,
+                                     fixture->treble_stave, 0},
+         graphscore::FullMeasureItem{fixture->node_id, fixture->track_id,
+                                     fixture->bass_stave, 0}});
+    const auto destination = graphscore::FullMeasureSet::create(
+        {graphscore::FullMeasureItem{fixture->node_id, fixture->track_id,
+                                     fixture->treble_stave, 1},
+         graphscore::FullMeasureItem{fixture->node_id, fixture->track_id,
+                                     fixture->bass_stave, 1}});
+    if (!source.has_value() || !destination.has_value()) {
+      std::fprintf(stderr, "clipboard-test: measure scopes failed (22)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.set_committed_selection(graphscore::Selection{*source});
+    if (!handler.copy_selection() ||
+        handler.clipboard()->span_length() != graphscore::Rational(1)) {
+      std::fprintf(stderr, "clipboard-test: measure copy failed (22)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.set_committed_selection(graphscore::Selection{*destination});
+    const auto preview   = shell.test_snapshot_paste_preview_rects();
+    const auto highlight = shell.test_snapshot_highlight_rects();
+    if (preview.size() != 2u || highlight.size() != 2u ||
+        preview != highlight || !handler.paste_clipboard() ||
+        handler.test_undo_stack_size() != 1u) {
+      std::fprintf(stderr,
+                   "clipboard-test: explicit scope preview failed (22)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
   std::printf("clipboard-test: ok\n");
   return 0;
 }

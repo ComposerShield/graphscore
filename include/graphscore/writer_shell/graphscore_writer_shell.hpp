@@ -387,6 +387,11 @@ class WriterShell {
   // reads the vector inside the event loop without synchronisation.
   void set_highlight_rects(std::vector<NotationRect> rects);
 
+  // Sets the app-computed paste destination overlay independently from the
+  // ordinary selection highlight. Rectangles use layout coordinates and the
+  // render pass applies the same authoritative viewport transform as notation.
+  void set_paste_preview_rects(std::vector<NotationRect> rects);
+
   // Set the rasterised notation surface the shell should render behind the
   // highlight rectangles every frame. The surface is uploaded to a GPU
   // texture once and re-rendered each frame without re-rasterisation.
@@ -588,6 +593,10 @@ class WriterShell {
   // Thread affinity: must be called from the main thread only; the shell
   // reads highlight_rects inside the event loop without synchronisation.
   [[nodiscard]] std::vector<NotationRect> test_snapshot_highlight_rects() const;
+
+  // Test-only: returns the paste-preview overlay separately from selection.
+  [[nodiscard]] std::vector<NotationRect> test_snapshot_paste_preview_rects()
+      const;
 
   // Test-only: return a copy of the last notation surface handed to
   // set_notation_surface() (the surface the shell renders behind the

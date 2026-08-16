@@ -103,6 +103,7 @@ struct WriterShell::Impl {
   // Written by set_highlight_rects, consumed by the event loop's render
   // pass. Cleared when the window is closed.
   std::vector<NotationRect> highlight_rects;
+  std::vector<NotationRect> paste_preview_rects;
 
   // Rasterised notation surface, uploaded to a GPU texture for composition
   // behind the highlight rects. When the surface width is zero the texture
@@ -394,6 +395,24 @@ void deliver_viewport_size(SDL_Window* window, InputHandler* handler) {
     if (!SDL_RenderTexture(renderer, impl_->notation_texture,
                            /*srcrect=*/nullptr, &*dst)) {
       return fail("SDL_RenderTexture");
+    }
+  }
+
+  if (!SDL_SetRenderDrawColor(renderer, 225, 165, 45, 70)) {
+    return fail("SDL_SetRenderDrawColor (paste preview color)");
+  }
+  for (const NotationRect& rect : impl_->paste_preview_rects) {
+    const auto preview_dst =
+        map_rect_to_viewport(rect, impl_->viewport_transform);
+    if (!preview_dst.has_value()) {
+      continue;
+    }
+    const auto dst = notation_rect_to_sdl_frect(*preview_dst);
+    if (!dst.has_value()) {
+      continue;
+    }
+    if (!SDL_RenderFillRect(renderer, &*dst)) {
+      return fail("SDL_RenderFillRect (paste preview)");
     }
   }
 
@@ -1103,6 +1122,7 @@ struct WriterShell::Impl {
   // No-op storage: the writer-OFF path never renders, but setters
   // still compile and are safe to call.
   std::vector<NotationRect> highlight_rects;
+  std::vector<NotationRect> paste_preview_rects;
   RasterSurface             notation_surface;
 
   // Test-only DPI scale override (no-op in writer-OFF builds).
@@ -1303,6 +1323,10 @@ bool WriterShell::test_text_input_active() const noexcept {
 
 void WriterShell::set_highlight_rects(std::vector<NotationRect> rects) {
   impl_->highlight_rects = std::move(rects);
+}
+
+void WriterShell::set_paste_preview_rects(std::vector<NotationRect> rects) {
+  impl_->paste_preview_rects = std::move(rects);
 }
 
 ShellResult WriterShell::set_notation_surface(RasterSurface surface) {
@@ -1812,6 +1836,11 @@ WriterShell::TextureStatsHandle WriterShell::test_acquire_texture_stats_handle()
 
 std::vector<NotationRect> WriterShell::test_snapshot_highlight_rects() const {
   return impl_->highlight_rects;
+}
+
+std::vector<NotationRect> WriterShell::test_snapshot_paste_preview_rects()
+    const {
+  return impl_->paste_preview_rects;
 }
 
 std::optional<RasterSurface> WriterShell::test_snapshot_notation_surface()

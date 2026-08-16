@@ -153,6 +153,37 @@ TEST(HighlightRectsTest, MultiTrackProducesRectsForEachSelectedStaff) {
   EXPECT_EQ(rects.size(), 2u);
 }
 
+TEST(HighlightRectsTest, PastePreviewProjectsExactPartialSpanOnEveryScope) {
+  Fixture              fixture({StaffLayout::single_staff(Clef::kTreble),
+                                StaffLayout::single_staff(Clef::kBass)},
+                               1);
+  const FixedMetrics   metrics;
+  const NotationLayout layout = require_layout(
+      layout_notation(fixture.project, fixture.node_id, metrics));
+  const MusicalSpan span{*Rational::create(1, 4), *Rational::create(3, 4)};
+  const graphscore::PastePlacement placement{
+      fixture.node_id,
+      span,
+      {{fixture.track_ids[0], fixture.stave_id(0)},
+       {fixture.track_ids[1], fixture.stave_id(1)}}};
+
+  const auto rects =
+      build_paste_preview_rects(placement, fixture.project, layout);
+  ASSERT_EQ(rects.size(), 2u);
+  EXPECT_EQ(rects[0].width, rects[1].width);
+  EXPECT_EQ(rects[0].y, layout.systems[0].staves[0].bounds.y);
+  EXPECT_EQ(rects[1].y, layout.systems[0].staves[1].bounds.y);
+
+  const auto full = build_paste_preview_rects(
+      graphscore::PastePlacement{fixture.node_id,
+                                 MusicalSpan{Rational(0), Rational(1)},
+                                 {placement.scopes.front()}},
+      fixture.project, layout);
+  ASSERT_EQ(full.size(), 1u);
+  EXPECT_LT(rects[0].width, full[0].width);
+  EXPECT_EQ(rects[0].x, full[0].x + (full[0].width - rects[0].width) * 0.5);
+}
+
 TEST(HighlightRectsTest, RepeatedStaveIdAcrossTracksIsDisambiguated) {
   // Two tracks, each with one staff. StaveIds are created independently per
   // track and may collide. The highlight projection must use (TrackId,
