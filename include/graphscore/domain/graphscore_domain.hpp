@@ -75,6 +75,7 @@
 #include <graphscore/domain/remove_pedal_span_command.hpp>
 #include <graphscore/domain/remove_slur_command.hpp>
 #include <graphscore/domain/remove_tempo_point_command.hpp>
+#include <graphscore/domain/replace_beam_override_command.hpp>
 #include <graphscore/domain/reset_route_command.hpp>
 #include <graphscore/domain/restore_track_command.hpp>
 #include <graphscore/domain/route_geometry.hpp>

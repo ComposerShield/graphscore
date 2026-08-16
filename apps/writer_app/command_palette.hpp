@@ -130,6 +130,9 @@ enum class PaletteCommandId : std::uint8_t {
   kRemoveTie,
   kApplySlur,
   kRemoveSlur,
+  kApplyBeamBreak,
+  kApplyBeamJoin,
+  kRemoveBeamOverride,
 };
 
 // One palette row: a stable name, its chord hint (empty for the chord-less

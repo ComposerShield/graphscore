@@ -606,11 +606,11 @@ is the greatest power of two strictly below `N` (`3:2`, `5:4`, `7:4`, `9:8`,
 
 ### 10.4 Marking style actions (M5-phase-30)
 
-Articulations, stem overrides, dynamics, hairpins, pedal spans, ties, and slurs are
-chord-less command-palette actions. They consume no key at all — neither a
-letter, which `A`–`G` step entry and `N`/`R` already own, nor a digit, which
-the `2`–`8` interval bindings own — so §7's binding table is unchanged by
-them and the reservations in §7.6/§7.7 stand.
+Articulations, stem overrides, dynamics, hairpins, pedal spans, ties, slurs,
+and beam overrides are chord-less command-palette actions. They consume no key
+at all — neither a letter, which `A`–`G` step entry and `N`/`R` already own,
+nor a digit, which the `2`–`8` interval bindings own — so §7's binding table
+is unchanged by them and the reservations in §7.6/§7.7 stand.
 
 - **Apply articulation** (one row per articulation) requires one selected
   note or chord event and adds that articulation to it. **Change
@@ -662,6 +662,16 @@ them and the reservations in §7.6/§7.7 stand.
   requires exactly one selected slur marking and clears that now-stale marking
   selection. There is no change action because a slur has no style attribute;
   endpoint dragging is future work.
+- **Apply beam break / apply beam join** require an exact, non-empty
+  `ArbitraryRangeSet` of at least two complete contiguous beamable events on
+  one staff and one voice. The ordered selected events define every adjacent
+  pair governed by the override. Applying the kind already present on that
+  exact range is rejected; applying the opposite kind replaces it while
+  preserving its identity and precedence among overlapping overrides.
+  **Remove beam override** removes the override on that exact range. Beam
+  editing remains range-based: beam overrides have no marking selection or hit
+  geometry, and the range selection survives apply, replacement, removal,
+  undo, and redo.
 
 Stale selections, wrong selection arms, grace notes (which carry no
 event-anchored marking of their own), and edits that would change nothing are
@@ -691,8 +701,9 @@ action in this table, and it is what makes the numpad-only bindings
   row per articulation), remove articulation, the three stem-direction rows,
   apply/change dynamic (one row per dynamic), remove dynamic, apply
   crescendo/diminuendo, change hairpin to crescendo/diminuendo, remove
-  hairpin, apply pedal span, remove pedal span, apply/remove tie, and
-  apply/remove slur. Every one of those
+  hairpin, apply pedal span, remove pedal span, apply/remove tie,
+  apply/remove slur, apply beam break, apply beam join, and remove beam
+  override. Every one of those
   chord-less rows — the structural, tuplet, and marking style rows alike —
   carries an **empty chord hint**: they are deliberately **not** bound to any
   key chord (no row in §7 names them), so §7's `(chord, key)` space is

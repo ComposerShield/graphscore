@@ -338,10 +338,11 @@ int command_palette_test() {
   //     PaletteCommandId, Backspace and Delete coalesced into one row, and
   //     the chord-less accessible range controls and M5-phase-28 structural
   //     measure-editing, tuplet, articulation, stem, dynamic, hairpin, pedal,
-  //     tie, and slur rows present. ------------------------------------------
+  //     tie, slur, and beam-override rows present. ---------------------------
   {
     const auto& inventory = palette_inventory();
-    const int   count     = static_cast<int>(PaletteCommandId::kRemoveSlur) + 1;
+    const int   count =
+        static_cast<int>(PaletteCommandId::kRemoveBeamOverride) + 1;
     if (inventory.size() != static_cast<std::size_t>(count)) {
       std::fprintf(stderr,
                    "command-palette-test: inventory size %zu != %d "

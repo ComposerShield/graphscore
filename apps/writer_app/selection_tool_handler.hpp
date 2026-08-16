@@ -109,6 +109,8 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   bool edit_selected_pedal_span(graphscore::MarkingEdit edit);
   bool edit_selected_tie(graphscore::MarkingEdit edit);
   bool edit_selected_slur(graphscore::MarkingEdit edit);
+  bool edit_selected_beam_override(graphscore::MarkingEdit        edit,
+                                   graphscore::BeamOverride::Kind kind);
 
   // Toolkit-neutral parameter-entry handoff established by the palette row.
   // A platform dialog/AT can observe this and call apply_tuplet_ratio().

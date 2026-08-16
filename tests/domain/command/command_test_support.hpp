@@ -98,6 +98,7 @@ using graphscore::RemoveOutputConnectorCommand;
 using graphscore::RemovePedalSpanCommand;
 using graphscore::RemoveSlurCommand;
 using graphscore::RemoveTempoPointCommand;
+using graphscore::ReplaceBeamOverrideCommand;
 using graphscore::ResetRouteCommand;
 using graphscore::Rest;
 using graphscore::RestoreTrackCommand;

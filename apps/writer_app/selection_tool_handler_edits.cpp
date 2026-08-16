@@ -1199,6 +1199,25 @@ bool SelectionToolHandler::edit_selected_slur(graphscore::MarkingEdit edit) {
       edit == graphscore::MarkingEdit::kRemove);
 }
 
+bool SelectionToolHandler::edit_selected_beam_override(
+    graphscore::MarkingEdit edit, graphscore::BeamOverride::Kind kind) {
+  if (history_.poisoned()) {
+    post_diagnostic("beam override: command history is unavailable");
+    return false;
+  }
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value()) {
+    post_diagnostic(
+        "beam override: requires an exact range of complete events on one "
+        "live staff and voice");
+    return false;
+  }
+  return run_marking_edit("beam override",
+                          graphscore::make_beam_override_edit_command(
+                              project_, *selection, edit, kind),
+                          false);
+}
+
 void SelectionToolHandler::request_tuplet_ratio_entry() {
   tuplet_ratio_entry_requested_ = true;
   post_diagnostic("tuplet ratio: enter played N and normal M, then apply N:M");

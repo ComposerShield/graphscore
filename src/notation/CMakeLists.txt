@@ -2,6 +2,7 @@
 
 add_library(graphscore_notation STATIC
   notation_cache.cpp
+  notation_beam_override_edit.cpp
   notation_edit_audition.cpp
   notation_event_style_edit.cpp
   notation_engraving.cpp

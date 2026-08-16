@@ -255,6 +255,12 @@ const std::vector<PaletteCommand> kInventory = [] {
       "Apply a slur across the selected single-voice event range");
   add(PaletteCommandId::kRemoveSlur, "Remove slur", "",
       "Remove the selected slur marking");
+  add(PaletteCommandId::kApplyBeamBreak, "Apply beam break", "",
+      "Apply a manual beam break across the selected event range");
+  add(PaletteCommandId::kApplyBeamJoin, "Apply beam join", "",
+      "Apply a manual beam join across the selected event range");
+  add(PaletteCommandId::kRemoveBeamOverride, "Remove beam override", "",
+      "Remove the manual beam override on the selected exact event range");
 
   return rows;
 }();
