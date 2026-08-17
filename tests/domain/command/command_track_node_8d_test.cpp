@@ -245,6 +245,102 @@ TEST(CommandTest, AddNodeRoundTripPreservesId) {
   EXPECT_EQ(project.nodes().size(), 1u);
 }
 
+TEST(CommandTest, AddNodeUsesProjectTempoAndCompleteActiveTrackStructure) {
+  Project     project       = make_project();
+  const Tempo default_tempo = *Tempo::create(Rational(72), NoteValue::kHalf);
+  project.set_default_tempo(default_tempo);
+  const TrackId single =
+      *project.add_track("Single", StaffLayout::single_staff(Clef::kAlto),
+                         *MidiChannel::create(0));
+  const TrackId grand = *project.add_track("Grand", StaffLayout::grand_staff(),
+                                           *MidiChannel::create(1));
+
+  AddNodeCommand command("Node");
+  ASSERT_TRUE(command.execute(project).ok());
+
+  ASSERT_EQ(project.nodes().size(), 1u);
+  const Node& node = project.nodes().front();
+  ASSERT_NE(node.lane(single), nullptr);
+  ASSERT_NE(node.lane(grand), nullptr);
+  EXPECT_NE(node.lane(single)->stave(
+                project.find_active_track(single)->layout().staves()[0].id),
+            nullptr);
+  for (const graphscore::StaveDefinition& stave :
+       project.find_active_track(grand)->layout().staves()) {
+    EXPECT_NE(node.lane(grand)->stave(stave.id), nullptr);
+  }
+  ASSERT_NE(node.timeline(), nullptr);
+  EXPECT_EQ(node.timeline()->measures().measure_count(), 1u);
+  EXPECT_EQ(node.timeline()->measures().measure(0).time_signature,
+            *TimeSignature::create(4, 4));
+  ASSERT_NE(node.timeline()->tempo(), nullptr);
+  ASSERT_EQ(node.timeline()->tempo()->points().size(), 1u);
+  EXPECT_EQ(node.timeline()->tempo()->points()[0].tempo, default_tempo);
+}
+
+TEST(CommandTest, AddNodeInheritsExactTempoAtSourceMainBoundary) {
+  Project project = make_project();
+  static_cast<void>(project.add_track("Track", StaffLayout::single_staff(),
+                                      *MidiChannel::create(0)));
+  const NodeId source_id = project.add_node("Source");
+  Node* const  source    = project.find_node(source_id);
+  auto         timeline  = *NodeTimeline::create(
+      {Measure{*TimeSignature::create(4, 4), KeySignature{}}}, {});
+  ASSERT_TRUE(timeline.set_pickdown(*Rational::create(1, 4)).ok());
+  const Tempo boundary_tempo =
+      *Tempo::create(Rational(144), NoteValue::kEighth);
+  ASSERT_TRUE(
+      timeline
+          .set_tempo(
+              {TempoPoint{Rational(0),
+                          *Tempo::create(Rational(80), NoteValue::kQuarter),
+                          TempoSegmentKind::kLinear},
+               TempoPoint{Rational(1), boundary_tempo,
+                          TempoSegmentKind::kSmooth},
+               TempoPoint{*Rational::create(9, 8),
+                          *Tempo::create(Rational(200), NoteValue::kHalf),
+                          TempoSegmentKind::kStep}})
+          .ok());
+  source->set_timeline(std::move(timeline));
+
+  AddNodeCommand command("Destination", source_id);
+  ASSERT_TRUE(command.execute(project).ok());
+
+  ASSERT_EQ(project.nodes().size(), 2u);
+  const Node& destination = project.nodes().back();
+  ASSERT_NE(destination.timeline(), nullptr);
+  ASSERT_NE(destination.timeline()->tempo(), nullptr);
+  ASSERT_EQ(destination.timeline()->tempo()->points().size(), 1u);
+  EXPECT_EQ(destination.timeline()->tempo()->points()[0].tempo, boundary_tempo);
+}
+
+TEST(CommandTest, AddNodeRedoRestoresInheritedTempoSnapshot) {
+  Project     project  = make_project();
+  const Tempo original = *Tempo::create(Rational(96), NoteValue::kQuarter);
+  project.set_default_tempo(original);
+  AddNodeCommand command("Node");
+  ASSERT_TRUE(command.execute(project).ok());
+  const NodeId created_id = project.nodes().front().id();
+  ASSERT_TRUE(command.undo(project).ok());
+
+  project.set_default_tempo(*Tempo::create(Rational(180), NoteValue::kEighth));
+  ASSERT_TRUE(command.redo(project).ok());
+
+  const Node* const restored = project.find_node(created_id);
+  ASSERT_NE(restored, nullptr);
+  ASSERT_NE(restored->timeline(), nullptr);
+  ASSERT_NE(restored->timeline()->tempo(), nullptr);
+  EXPECT_EQ(restored->timeline()->tempo()->points()[0].tempo, original);
+}
+
+TEST(CommandTest, AddNodeRejectsMissingSourceWithoutMutation) {
+  Project        project = make_project();
+  AddNodeCommand command("Node", NodeId::generate());
+
+  EXPECT_EQ(command.execute(project).code(), ResultCode::kInvalidArgument);
+  EXPECT_TRUE(project.nodes().empty());
+}
+
 TEST(CommandTest, AddNodeDoubleExecuteRejected) {
   Project project = make_project();
 
