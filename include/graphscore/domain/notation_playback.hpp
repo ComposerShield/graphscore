@@ -12,16 +12,15 @@
 namespace graphscore {
 
 class VoiceContent;
+class Project;
 
 // Thin domain-layer wiring over graphscore/core/playback_mapping.hpp: these
 // functions extract already-attached articulation/duration/grace-note
 // context from this domain's existing Note/Chord/GraceGroup structures and
-// call straight into the core math. The overloads taking VoiceContent below
-// resolve only the grace group's immediate preceding event; all other context
-// (which Dynamic/Hairpin/Slur applies, the gap to the next onset, whether an
-// event is tied) remains an already-resolved parameter, per
-// playback_mapping.hpp's overview, "Scope: math only, not context
-// resolution".
+// call straight into the core math. The VoiceContent overloads resolve the
+// dynamic and hairpin context needed by editor playback; slur, gap, and tie
+// context remain caller-resolved because those spans need the surrounding
+// playback traversal and are not part of this velocity lookup.
 
 // The hairpin/dynamic-span endpoint context event_note_on_velocity()
 // forwards to interpolate_hairpin_velocity() when a Hairpin governs an
@@ -32,6 +31,18 @@ struct HairpinVelocityContext {
   Rational     position;
 
   [[nodiscard]] bool operator==(const HairpinVelocityContext&) const = default;
+};
+
+// The resolved dynamic context for one top-level voice event. Point dynamics
+// are effective on their attached event and every later event until another
+// point dynamic appears. A hairpin includes both endpoint events. Because a
+// Hairpin stores direction rather than an endpoint level, a span with no
+// later point dynamic ramps to fff for crescendo or ppp for diminuendo.
+struct NoteOnVelocityContext {
+  Dynamic                               governing_dynamic = Dynamic::kMf;
+  std::optional<HairpinVelocityContext> hairpin;
+
+  [[nodiscard]] bool operator==(const NoteOnVelocityContext&) const = default;
 };
 
 // This event's final sounded (audible) duration. Reads the event's own
@@ -69,6 +80,26 @@ struct HairpinVelocityContext {
 [[nodiscard]] MidiVelocity event_note_on_velocity(
     const VoiceEvent& event, Dynamic governing_dynamic,
     std::optional<HairpinVelocityContext> hairpin);
+
+// Resolves the project/editor playback context for a top-level event in
+// `voice`. The project default is used until the first applicable dynamic
+// marking. Hairpins are inclusive, use exact musical onset positions for
+// interpolation, and are selected in stored marking order when malformed
+// overlapping spans make more than one applicable. Returns nullopt for an
+// event id that is not a top-level event in the voice.
+[[nodiscard]] std::optional<NoteOnVelocityContext>
+resolve_note_on_velocity_context(const VoiceContent& voice,
+                                 NotationEntityId    event,
+                                 Dynamic             project_default);
+
+// Context-resolving overloads for editor playback. The Project overload is
+// the preferred entry point because it cannot accidentally use a stale copy
+// of the project-wide editable default.
+[[nodiscard]] std::optional<MidiVelocity> event_note_on_velocity(
+    const VoiceContent& voice, NotationEntityId event, Dynamic project_default);
+
+[[nodiscard]] std::optional<MidiVelocity> event_note_on_velocity(
+    const Project& project, const VoiceContent& voice, NotationEntityId event);
 
 // The stolen duration for each grace note in `group`, in `group.notes`
 // order, stolen from `available_duration` (the preceding sounded note's

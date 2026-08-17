@@ -26,17 +26,24 @@ using graphscore::grace_steal_remaining_duration;
 using graphscore::GraceGroup;
 using graphscore::GraceNote;
 using graphscore::GraceNoteType;
+using graphscore::HairpinDirection;
 using graphscore::HairpinVelocityContext;
 using graphscore::interpolate_hairpin_velocity;
 using graphscore::kDefaultSoundedDurationRatio;
 using graphscore::kStaccatoSoundedDurationRatio;
 using graphscore::Letter;
 using graphscore::make_chord;
+using graphscore::make_dynamic_marking;
 using graphscore::make_grace_group;
+using graphscore::make_hairpin;
 using graphscore::make_note;
 using graphscore::MidiVelocity;
+using graphscore::NotationEntityId;
 using graphscore::Note;
+using graphscore::NoteOnVelocityContext;
 using graphscore::NoteValue;
+using graphscore::Project;
+using graphscore::ProjectId;
 using graphscore::Rational;
 using graphscore::sounded_duration_for_articulation;
 using graphscore::SpelledPitch;
@@ -167,6 +174,152 @@ TEST(NotationPlaybackTest, VelocityWithHairpinContextIgnoresGoverningDynamic) {
       event_note_on_velocity(event, Dynamic::kPpp, std::make_optional(hairpin));
   EXPECT_EQ(result, interpolate_hairpin_velocity(hairpin.from, hairpin.to,
                                                  hairpin.position));
+}
+
+TEST(NotationPlaybackTest,
+     VelocityResolutionUsesProjectDefaultAndPointDynamics) {
+  VoiceContent     voice;
+  const VoiceEvent first  = make_note(pitch(Letter::kC), quarter());
+  const VoiceEvent second = make_note(pitch(Letter::kD), quarter());
+  const VoiceEvent third  = make_note(pitch(Letter::kE), quarter());
+  ASSERT_TRUE(voice.append(first).ok());
+  ASSERT_TRUE(voice.append(second).ok());
+  ASSERT_TRUE(voice.append(third).ok());
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(event_id(second), Dynamic::kF))
+          .ok());
+
+  ASSERT_EQ(event_note_on_velocity(voice, event_id(first), Dynamic::kP),
+            velocity_for_dynamic(Dynamic::kP));
+  ASSERT_EQ(event_note_on_velocity(voice, event_id(second), Dynamic::kP),
+            velocity_for_dynamic(Dynamic::kF));
+  ASSERT_EQ(event_note_on_velocity(voice, event_id(third), Dynamic::kP),
+            velocity_for_dynamic(Dynamic::kF));
+}
+
+TEST(NotationPlaybackTest, ProjectOverloadUsesCurrentEditableDefault) {
+  Project          project(ProjectId::generate());
+  VoiceContent     voice;
+  const VoiceEvent event = make_note(pitch(Letter::kC), quarter());
+  ASSERT_TRUE(voice.append(event).ok());
+
+  project.set_default_dynamic(Dynamic::kFf);
+  EXPECT_EQ(event_note_on_velocity(project, voice, event_id(event)),
+            velocity_for_dynamic(Dynamic::kFf));
+}
+
+TEST(NotationPlaybackTest, VelocityResolutionInterpolatesHairpinByMusicalTime) {
+  VoiceContent     voice;
+  const VoiceEvent first  = make_note(pitch(Letter::kC), quarter());
+  const VoiceEvent middle = make_note(pitch(Letter::kD), eighth());
+  const VoiceEvent last   = make_note(pitch(Letter::kE), quarter());
+  ASSERT_TRUE(voice.append(first).ok());
+  ASSERT_TRUE(voice.append(middle).ok());
+  ASSERT_TRUE(voice.append(last).ok());
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(event_id(first), Dynamic::kP))
+          .ok());
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(event_id(last), Dynamic::kF))
+          .ok());
+  ASSERT_TRUE(voice
+                  .add_hairpin(make_hairpin(event_id(first), event_id(last),
+                                            HairpinDirection::kCrescendo))
+                  .ok());
+
+  const std::optional<NoteOnVelocityContext> context =
+      resolve_note_on_velocity_context(voice, event_id(middle), Dynamic::kMf);
+  ASSERT_TRUE(context.has_value());
+  ASSERT_TRUE(context->hairpin.has_value());
+  EXPECT_EQ(context->hairpin->position, *Rational::create(2, 3));
+  EXPECT_EQ(event_note_on_velocity(voice, event_id(middle), Dynamic::kMf),
+            interpolate_hairpin_velocity(velocity_for_dynamic(Dynamic::kP),
+                                         velocity_for_dynamic(Dynamic::kF),
+                                         *Rational::create(2, 3)));
+}
+
+TEST(NotationPlaybackTest, HairpinWithoutTargetDynamicUsesDirectionalEndpoint) {
+  VoiceContent     voice;
+  const VoiceEvent first  = make_note(pitch(Letter::kC), quarter());
+  const VoiceEvent middle = make_note(pitch(Letter::kD), quarter());
+  const VoiceEvent last   = make_note(pitch(Letter::kE), quarter());
+  ASSERT_TRUE(voice.append(first).ok());
+  ASSERT_TRUE(voice.append(middle).ok());
+  ASSERT_TRUE(voice.append(last).ok());
+  ASSERT_TRUE(voice
+                  .add_hairpin(make_hairpin(event_id(first), event_id(last),
+                                            HairpinDirection::kDiminuendo))
+                  .ok());
+
+  const std::optional<NoteOnVelocityContext> context =
+      resolve_note_on_velocity_context(voice, event_id(last), Dynamic::kMf);
+  ASSERT_TRUE(context.has_value());
+  ASSERT_TRUE(context->hairpin.has_value());
+  EXPECT_EQ(context->hairpin->from, velocity_for_dynamic(Dynamic::kMf));
+  EXPECT_EQ(context->hairpin->to, velocity_for_dynamic(Dynamic::kPpp));
+  EXPECT_EQ(context->hairpin->position, Rational(1));
+}
+
+TEST(NotationPlaybackTest,
+     HairpinInteriorDynamicDoesNotReplaceDirectionalEndpoint) {
+  VoiceContent     voice;
+  const VoiceEvent first  = make_note(pitch(Letter::kC), quarter());
+  const VoiceEvent middle = make_note(pitch(Letter::kD), quarter());
+  const VoiceEvent last   = make_note(pitch(Letter::kE), quarter());
+  ASSERT_TRUE(voice.append(first).ok());
+  ASSERT_TRUE(voice.append(middle).ok());
+  ASSERT_TRUE(voice.append(last).ok());
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(event_id(first), Dynamic::kP))
+          .ok());
+  ASSERT_TRUE(
+      voice.add_dynamic(make_dynamic_marking(event_id(middle), Dynamic::kF))
+          .ok());
+  ASSERT_TRUE(voice
+                  .add_hairpin(make_hairpin(event_id(first), event_id(last),
+                                            HairpinDirection::kCrescendo))
+                  .ok());
+
+  const std::optional<NoteOnVelocityContext> context =
+      resolve_note_on_velocity_context(voice, event_id(last), Dynamic::kMf);
+  ASSERT_TRUE(context.has_value());
+  ASSERT_TRUE(context->hairpin.has_value());
+  EXPECT_EQ(context->hairpin->to, velocity_for_dynamic(Dynamic::kFff));
+}
+
+TEST(NotationPlaybackTest, InvalidHairpinDoesNotHideLaterValidHairpin) {
+  VoiceContent     voice;
+  const VoiceEvent first  = make_note(pitch(Letter::kC), quarter());
+  const VoiceEvent middle = make_note(pitch(Letter::kD), quarter());
+  const VoiceEvent last   = make_note(pitch(Letter::kE), quarter());
+  ASSERT_TRUE(voice.append(first).ok());
+  ASSERT_TRUE(voice.append(middle).ok());
+  ASSERT_TRUE(voice.append(last).ok());
+  ASSERT_TRUE(voice
+                  .add_hairpin(make_hairpin(event_id(first), event_id(first),
+                                            HairpinDirection::kCrescendo))
+                  .ok());
+  ASSERT_TRUE(voice
+                  .add_hairpin(make_hairpin(event_id(first), event_id(last),
+                                            HairpinDirection::kCrescendo))
+                  .ok());
+
+  const std::optional<NoteOnVelocityContext> context =
+      resolve_note_on_velocity_context(voice, event_id(middle), Dynamic::kMf);
+  ASSERT_TRUE(context.has_value());
+  ASSERT_TRUE(context->hairpin.has_value());
+  EXPECT_EQ(context->hairpin->position, *Rational::create(1, 2));
+}
+
+TEST(NotationPlaybackTest, VelocityResolutionRejectsNonEventIds) {
+  VoiceContent     voice;
+  const VoiceEvent event = make_note(pitch(Letter::kC), quarter());
+  ASSERT_TRUE(voice.append(event).ok());
+  const NotationEntityId missing = NotationEntityId::generate();
+  EXPECT_FALSE(resolve_note_on_velocity_context(voice, missing, Dynamic::kMf)
+                   .has_value());
+  EXPECT_FALSE(
+      event_note_on_velocity(voice, missing, Dynamic::kMf).has_value());
 }
 
 // -- grace_group_steal_durations / grace_group_remaining_preceding_duration --

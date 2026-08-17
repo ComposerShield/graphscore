@@ -59,11 +59,9 @@ namespace graphscore {
 // exactly the same "spec the math now, wire the traversal later" boundary
 // Adam drew for Phase 7c's simultaneous-MIDI-ordering deliverable, applied
 // narrowly to this one resolution step. graphscore/domain/
-// notation_playback.hpp is the thin domain-layer wiring that applies this
-// module's functions to already-loaded Note/Chord/GraceGroup values; it
-// does not walk TrackLane/VoiceContent either -- resolving governing
-// context across a timeline remains deferred to a future runtime/scheduler
-// phase in both layers.
+// notation_playback.hpp supplies the editor-facing VoiceContent traversal;
+// this core module remains deliberately unaware of that container and only
+// consumes the already-resolved values.
 //
 // == Dynamics and hairpins: base velocity ==
 //

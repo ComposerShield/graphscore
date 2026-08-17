@@ -6,6 +6,7 @@
 #include <optional>
 #include <vector>
 
+#include <graphscore/domain/project.hpp>
 #include <graphscore/domain/voice_content.hpp>
 
 namespace graphscore {
@@ -52,6 +53,56 @@ namespace {
   return nullptr;
 }
 
+[[nodiscard]] std::optional<std::size_t> top_level_event_index(
+    const VoiceContent& voice, NotationEntityId event_id_value) {
+  const std::vector<VoiceEvent>& events = voice.events();
+  for (std::size_t index = 0; index < events.size(); ++index) {
+    if (event_id(events[index]) == event_id_value)
+      return index;
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] Dynamic dynamic_at_or_before(const VoiceContent& voice,
+                                           std::size_t         event_index,
+                                           Dynamic default_dynamic) {
+  Dynamic     result       = default_dynamic;
+  std::size_t result_index = 0;
+  bool        found        = false;
+  for (const DynamicMarking& marking : voice.dynamics()) {
+    const std::optional<std::size_t> marking_index =
+        top_level_event_index(voice, marking.at_event);
+    if (!marking_index.has_value() || *marking_index > event_index)
+      continue;
+    if (!found || *marking_index >= result_index) {
+      result       = marking.value;
+      result_index = *marking_index;
+      found        = true;
+    }
+  }
+  return result;
+}
+
+[[nodiscard]] std::optional<Dynamic> dynamic_at_event(const VoiceContent& voice,
+                                                      std::size_t event_index) {
+  std::optional<Dynamic> result;
+  for (const DynamicMarking& marking : voice.dynamics()) {
+    const std::optional<std::size_t> marking_index =
+        top_level_event_index(voice, marking.at_event);
+    if (marking_index.has_value() && *marking_index == event_index)
+      result = marking.value;
+  }
+  return result;
+}
+
+[[nodiscard]] Rational event_onset(const std::vector<VoiceEvent>& events,
+                                   std::size_t                    index) {
+  Rational onset(0);
+  for (std::size_t prior = 0; prior < index; ++prior)
+    onset = onset + event_duration(events[prior]).resolved();
+  return onset;
+}
+
 }  // namespace
 
 Rational event_sounded_duration(
@@ -75,6 +126,76 @@ MidiVelocity event_note_on_velocity(
   const bool accent  = has_articulation(event, Articulation::kAccent);
   const bool marcato = has_articulation(event, Articulation::kMarcato);
   return apply_emphasis(base, accent, marcato);
+}
+
+std::optional<NoteOnVelocityContext> resolve_note_on_velocity_context(
+    const VoiceContent& voice, NotationEntityId event_id_value,
+    Dynamic project_default) {
+  const std::optional<std::size_t> event_index =
+      top_level_event_index(voice, event_id_value);
+  if (!event_index.has_value())
+    return std::nullopt;
+
+  NoteOnVelocityContext context;
+  context.governing_dynamic =
+      dynamic_at_or_before(voice, *event_index, project_default);
+
+  const std::vector<VoiceEvent>& events = voice.events();
+  for (const Hairpin& hairpin : voice.hairpins()) {
+    const std::optional<std::size_t> start_index =
+        top_level_event_index(voice, hairpin.start_event);
+    const std::optional<std::size_t> end_index =
+        top_level_event_index(voice, hairpin.end_event);
+    if (!start_index.has_value() || !end_index.has_value() ||
+        *start_index >= *end_index || *start_index > *event_index ||
+        *event_index > *end_index)
+      continue;
+
+    const Dynamic from_dynamic =
+        dynamic_at_or_before(voice, *start_index, project_default);
+    const std::optional<Dynamic> endpoint_dynamic =
+        dynamic_at_event(voice, *end_index);
+    const Dynamic to_dynamic =
+        endpoint_dynamic.has_value()
+            ? *endpoint_dynamic
+            : (hairpin.direction == HairpinDirection::kCrescendo
+                   ? Dynamic::kFff
+                   : Dynamic::kPpp);
+
+    const Rational start_position = event_onset(events, *start_index);
+    const Rational end_position   = event_onset(events, *end_index);
+    const Rational event_position = event_onset(events, *event_index);
+    const Rational span           = end_position - start_position;
+    if (span > Rational(0)) {
+      context.hairpin = HairpinVelocityContext{
+          velocity_for_dynamic(from_dynamic), velocity_for_dynamic(to_dynamic),
+          (event_position - start_position) / span};
+    }
+    break;
+  }
+  return context;
+}
+
+std::optional<MidiVelocity> event_note_on_velocity(
+    const VoiceContent& voice, NotationEntityId event_id_value,
+    Dynamic project_default) {
+  const std::optional<std::size_t> event_index =
+      top_level_event_index(voice, event_id_value);
+  if (!event_index.has_value())
+    return std::nullopt;
+  const std::optional<NoteOnVelocityContext> context =
+      resolve_note_on_velocity_context(voice, event_id_value, project_default);
+  if (!context.has_value())
+    return std::nullopt;
+  return event_note_on_velocity(voice.events()[*event_index],
+                                context->governing_dynamic, context->hairpin);
+}
+
+std::optional<MidiVelocity> event_note_on_velocity(
+    const Project& project, const VoiceContent& voice,
+    NotationEntityId event_id_value) {
+  return event_note_on_velocity(voice, event_id_value,
+                                project.default_dynamic());
 }
 
 std::vector<Rational> grace_group_steal_durations(const GraceGroup& group,
