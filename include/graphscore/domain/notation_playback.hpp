@@ -2,7 +2,9 @@
 
 #pragma once
 
+#include <cstdint>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include <graphscore/core/graphscore_core.hpp>
@@ -13,6 +15,31 @@ namespace graphscore {
 
 class VoiceContent;
 class Project;
+
+// The only general MIDI controller emitted by notation playback in 0.1.0.
+// Keeping this as a dedicated value type prevents the sustain-pedal exception
+// from becoming an accidental general-CC API before Milestone 12.
+struct MidiCc64Event {
+  static constexpr std::uint8_t kController = 64;
+  static constexpr std::uint8_t kDownValue  = 127;
+  static constexpr std::uint8_t kUpValue    = 0;
+
+  Rational     position;
+  MidiChannel  channel;
+  std::uint8_t value = kUpValue;
+
+  [[nodiscard]] bool operator==(const MidiCc64Event&) const = default;
+};
+
+// Converts stave-scoped pedal spans into deterministic CC64 transitions.
+// Spans are expected to have already passed notation validation; malformed
+// spans are ignored. Overlapping and endpoint-adjacent spans are combined as
+// one logical pedal state, so a channel receives exactly one down transition
+// when its first span starts and one up transition after its last span ends.
+// Events are sorted by exact musical position and carry no other controller
+// semantics.
+[[nodiscard]] std::vector<MidiCc64Event> pedal_span_cc64_events(
+    std::span<const PedalSpan> spans, MidiChannel channel);
 
 // Thin domain-layer wiring over graphscore/core/playback_mapping.hpp: these
 // functions extract already-attached articulation/duration/grace-note

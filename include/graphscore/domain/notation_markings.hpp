@@ -74,9 +74,9 @@ struct BeamOverride {
 
 // A sustain-pedal (CC64) span over an exact whole-note [start, end) range.
 // Scoped per stave, never per voice (see TrackLane::add_pedal_span): the
-// pedal applies to everything sounding on that staff. CC64 emission and
-// logical-OR ownership across overlapping spans/tails is Phase 6/7; this
-// is structure only.
+// pedal applies to everything sounding on that staff. Domain playback emits
+// the explicit CC64 exception and logical-OR ownership across overlapping
+// spans/tails is handled by MidiOwnershipTracker.
 struct PedalSpan {
   NotationEntityId id;
   Rational         start;

@@ -3,6 +3,7 @@
 #include <graphscore/domain/notation_playback.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <optional>
 #include <vector>
 
@@ -104,6 +105,51 @@ namespace {
 }
 
 }  // namespace
+
+std::vector<MidiCc64Event> pedal_span_cc64_events(
+    std::span<const PedalSpan> spans, MidiChannel channel) {
+  struct Endpoint {
+    Rational position;
+    int      delta = 0;
+  };
+
+  std::vector<Endpoint> endpoints;
+  endpoints.reserve(spans.size() * 2);
+  for (const PedalSpan& span : spans) {
+    if (span.start >= span.end)
+      continue;
+    endpoints.push_back(Endpoint{span.start, 1});
+    endpoints.push_back(Endpoint{span.end, -1});
+  }
+
+  std::sort(endpoints.begin(), endpoints.end(),
+            [](const Endpoint& lhs, const Endpoint& rhs) {
+              return lhs.position < rhs.position;
+            });
+
+  std::vector<MidiCc64Event> events;
+  int                        active_spans = 0;
+  std::size_t                index        = 0;
+  while (index < endpoints.size()) {
+    const Rational position = endpoints[index].position;
+    int            delta    = 0;
+    do {
+      delta += endpoints[index].delta;
+      ++index;
+    } while (index < endpoints.size() && endpoints[index].position == position);
+
+    const bool was_active = active_spans > 0;
+    active_spans += delta;
+    const bool is_active = active_spans > 0;
+    if (was_active == is_active)
+      continue;
+
+    events.push_back(MidiCc64Event{
+        position, channel,
+        is_active ? MidiCc64Event::kDownValue : MidiCc64Event::kUpValue});
+  }
+  return events;
+}
 
 Rational event_sounded_duration(
     const VoiceEvent& event, bool is_tied,

@@ -140,7 +140,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [x] &nbsp;&nbsp;Measure insert/append/delete increment completed
 - [x] &nbsp;&nbsp;Articulation and stem-override editing increment completed
 - [x] &nbsp;&nbsp;Dynamic, hairpin, and pedal-span editing increment completed
-- [ ] Playback semantics in the editor model completed
+- [x] Playback semantics in the editor model completed
 - [ ] Accessibility completed
 - [ ] Acceptance criteria passed
 - [ ] Test focus completed
