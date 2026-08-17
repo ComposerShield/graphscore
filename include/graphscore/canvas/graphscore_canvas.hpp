@@ -398,6 +398,27 @@ struct CanvasNodeGeometry {
   [[nodiscard]] bool operator==(const CanvasNodeGeometry&) const = default;
 };
 
+enum class CanvasPortDirection : std::uint8_t {
+  kInput = 0,
+  kOutput,
+};
+
+// A retained node-local port presentation. ConnectorId is the stable domain
+// identity; names and labels may change without changing that identity. Bounds
+// straddle the appropriate node edge and preserve domain insertion order.
+struct CanvasNodePort {
+  static constexpr double kDiameter = 16.0;
+
+  ConnectorId         connector_id;
+  CanvasPortDirection direction = CanvasPortDirection::kInput;
+  std::string         name;
+  std::string         accessibility_id;
+  std::string         accessibility_label;
+  NotationRect        bounds;
+
+  [[nodiscard]] bool operator==(const CanvasNodePort&) const = default;
+};
+
 // One retained, node-local header and notation layout at its graph-canvas
 // position. Every project node has one record, including nodes that cannot yet
 // be laid out; the error then explains why `layout` is empty and geometry uses
@@ -407,6 +428,7 @@ struct CanvasNodeNotation {
   GraphPosition                 position;
   CanvasNodeHeader              header;
   CanvasNodeGeometry            geometry;
+  std::vector<CanvasNodePort>   ports;
   NotationLayoutError           error = NotationLayoutError::kNone;
   std::optional<NotationLayout> layout;
 

@@ -8,6 +8,7 @@ add_executable(graphscore_canvas_test
   node_notation_test.cpp
   node_header_test.cpp
   node_geometry_test.cpp
+  node_ports_test.cpp
   node_drag_test.cpp
 )
 

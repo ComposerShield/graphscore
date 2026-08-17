@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+#include <graphscore/accessibility/graphscore_accessibility.hpp>
 #include <graphscore/canvas/graphscore_canvas.hpp>
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/project.hpp>
@@ -15,6 +16,7 @@
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace graphscore {
 
@@ -76,6 +78,50 @@ constexpr int kCanvasVersion = 1;
        layout.has_value() ? layout->bounds.height : 0.0}};
 }
 
+[[nodiscard]] AccessibilityConnectorDirection accessibility_direction(
+    CanvasPortDirection direction) noexcept {
+  return direction == CanvasPortDirection::kInput
+             ? AccessibilityConnectorDirection::kInput
+             : AccessibilityConnectorDirection::kOutput;
+}
+
+template <typename Connector>
+void append_ports(std::vector<CanvasNodePort>& ports, NodeId node_id,
+                  const std::vector<Connector>& connectors,
+                  CanvasPortDirection direction, double node_width,
+                  double node_height) {
+  const double x       = direction == CanvasPortDirection::kInput
+                             ? -CanvasNodePort::kDiameter / 2.0
+                             : node_width - CanvasNodePort::kDiameter / 2.0;
+  const double divisor = static_cast<double>(connectors.size() + 1U);
+  const auto   accessible_direction = accessibility_direction(direction);
+  for (std::size_t index = 0; index < connectors.size(); ++index) {
+    const Connector& connector = connectors[index];
+    const double     center_y =
+        node_height * static_cast<double>(index + 1U) / divisor;
+    ports.push_back(CanvasNodePort{
+        connector.id(),
+        direction,
+        connector.name(),
+        connector_accessibility_id(node_id, connector.id(),
+                                   accessible_direction),
+        connector_accessibility_label(connector.name(), accessible_direction),
+        {x, center_y - CanvasNodePort::kDiameter / 2.0,
+         CanvasNodePort::kDiameter, CanvasNodePort::kDiameter}});
+  }
+}
+
+[[nodiscard]] std::vector<CanvasNodePort> node_ports(
+    const Node& node, const CanvasNodeGeometry& geometry) {
+  std::vector<CanvasNodePort> ports;
+  ports.reserve(node.inputs().size() + node.outputs().size());
+  append_ports(ports, node.id(), node.inputs(), CanvasPortDirection::kInput,
+               geometry.bounds.width, geometry.bounds.height);
+  append_ports(ports, node.id(), node.outputs(), CanvasPortDirection::kOutput,
+               geometry.bounds.width, geometry.bounds.height);
+  return ports;
+}
+
 [[nodiscard]] const CanvasNodeNotation* find_scene_node(
     const CanvasNotationScene& scene, NodeId node_id) noexcept {
   const auto found =
@@ -83,18 +129,35 @@ constexpr int kCanvasVersion = 1;
   return found == scene.nodes.end() ? nullptr : &*found;
 }
 
+[[nodiscard]] const CanvasNodePort* find_port(const CanvasNodeNotation& node,
+                                              ConnectorId         connector,
+                                              CanvasPortDirection direction) {
+  const auto found = std::ranges::find_if(
+      node.ports, [connector, direction](const CanvasNodePort& port) {
+        return port.connector_id == connector && port.direction == direction;
+      });
+  return found == node.ports.end() ? nullptr : &*found;
+}
+
 [[nodiscard]] std::optional<CanvasConnectorEndpointLeg> endpoint_leg(
-    const WorldBounds& bounds, bool source) noexcept {
-  const double attachment_x =
-      source ? bounds.origin.x + bounds.width : bounds.origin.x;
-  const double attachment_y = bounds.origin.y + bounds.height / 2.0;
+    const CanvasNodeNotation& node, ConnectorId connector,
+    CanvasPortDirection direction) noexcept {
+  const CanvasNodePort* const port = find_port(node, connector, direction);
+  if (port == nullptr) {
+    return std::nullopt;
+  }
+  const bool   source       = direction == CanvasPortDirection::kOutput;
+  const double local_x      = port->bounds.x + port->bounds.width / 2.0;
+  const double local_y      = port->bounds.y + port->bounds.height / 2.0;
+  const double attachment_x = node.position.x + local_x;
+  const double attachment_y = node.position.y + local_y;
   const double outer_x =
       attachment_x + (source ? CanvasConnectorGeometry::kEndpointClearance
                              : -CanvasConnectorGeometry::kEndpointClearance);
   if (!std::isfinite(attachment_x) || !std::isfinite(attachment_y) ||
       !std::isfinite(outer_x) ||
-      (source && bounds.width != 0.0 && attachment_x == bounds.origin.x) ||
-      (bounds.height != 0.0 && attachment_y == bounds.origin.y) ||
+      (local_x != 0.0 && attachment_x == node.position.x) ||
+      (local_y != 0.0 && attachment_y == node.position.y) ||
       outer_x == attachment_x) {
     return std::nullopt;
   }
@@ -111,8 +174,10 @@ constexpr int kCanvasVersion = 1;
   if (source == nullptr || target == nullptr) {
     return std::nullopt;
   }
-  const auto source_leg      = endpoint_leg(source->geometry.bounds, true);
-  const auto destination_leg = endpoint_leg(target->geometry.bounds, false);
+  const auto source_leg =
+      endpoint_leg(*source, source_connector, CanvasPortDirection::kOutput);
+  const auto destination_leg =
+      endpoint_leg(*target, destination.connector, CanvasPortDirection::kInput);
   if (!source_leg.has_value() || !destination_leg.has_value()) {
     return std::nullopt;
   }
@@ -650,7 +715,8 @@ CanvasNotationScene Canvas::layout_nodes(
                          {CanvasNodeHeaderAction::kEditFreeformNotes},
                          {CanvasNodeHeaderAction::kOpenTempoLane},
                          {CanvasNodeHeaderAction::kPlay}},
-        geometry, result.error, std::move(result.layout)});
+        geometry, node_ports(node, geometry), result.error,
+        std::move(result.layout)});
   }
   for (const Node& node : project.nodes()) {
     for (const OutputConnector& output : node.outputs()) {

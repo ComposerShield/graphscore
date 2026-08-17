@@ -243,11 +243,11 @@ TEST(CanvasNodeDragTest, UpdatesMultipleAttachmentsIncludingASelfLoop) {
   ASSERT_TRUE(drag.update({30.0, 40.0}));
 
   EXPECT_EQ(scene.connectors[0].source_leg.attachment,
-            (graphscore::GraphPosition{350.0, 152.0}));
+            (graphscore::GraphPosition{350.0, 96.0}));
   EXPECT_EQ(scene.connectors[1].source_leg.attachment,
-            scene.connectors[0].source_leg.attachment);
+            (graphscore::GraphPosition{350.0, 152.0}));
   EXPECT_EQ(scene.connectors[2].source_leg.attachment,
-            scene.connectors[0].source_leg.attachment);
+            (graphscore::GraphPosition{350.0, 208.0}));
   EXPECT_EQ(scene.connectors[2].destination_leg.attachment,
             (graphscore::GraphPosition{30.0, 152.0}));
 }

@@ -32,7 +32,7 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 
 ### Connector creation and semantics
 
-- [ ] M6-phase-16 Create any number of named input/output ports with stable identity and accessible labels.
+- [x] M6-phase-16 Create any number of named input/output ports with stable identity and accessible labels.
 - [ ] M6-phase-17 One output attaches to at most one destination input.
 - [ ] M6-phase-18 Author sequential versus vertical type and show redundant color plus line-pattern distinction.
 - [ ] M6-phase-19 Provide connector inspector fields for event binding, priority, random weight, and name, plus linked node/event-listener fields for queue policy/capacity and validation diagnostics.

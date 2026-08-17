@@ -7,6 +7,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <graphscore/domain/graphscore_domain.hpp>
@@ -28,7 +29,23 @@ enum class AccessibilityRole : std::uint8_t {
   kMarking,
   kPalette,
   kSelection,
+  kConnector,
 };
+
+enum class AccessibilityConnectorDirection : std::uint8_t {
+  kInput = 0,
+  kOutput,
+};
+
+// Connector semantic identity never depends on its editable name or visual
+// order. Canvas presentation and the platform bridge share these helpers so
+// visible and virtualized representations announce the same label and ID.
+[[nodiscard]] std::string connector_accessibility_id(
+    NodeId node, ConnectorId connector,
+    AccessibilityConnectorDirection direction);
+
+[[nodiscard]] std::string connector_accessibility_label(
+    std::string_view name, AccessibilityConnectorDirection direction);
 
 enum class AccessibilityState : std::uint8_t {
   kNone     = 0,
