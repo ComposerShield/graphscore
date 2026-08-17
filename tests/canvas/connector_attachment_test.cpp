@@ -241,4 +241,40 @@ TEST(CanvasConnectorAttachmentTest, PermitsASelfLoop) {
   EXPECT_EQ(history.undo_stack_size(), 1U);
 }
 
+TEST(CanvasConnectorAttachmentTest,
+     PermitsAnOrdinaryCycleThroughTheUndoableAuthoringPath) {
+  graphscore::Project      project{graphscore::ProjectId::generate(), "Cycle"};
+  const graphscore::NodeId first_id           = project.add_node("First");
+  const graphscore::NodeId second_id          = project.add_node("Second");
+  graphscore::Node* const  first              = project.find_node(first_id);
+  graphscore::Node* const  second             = project.find_node(second_id);
+  const graphscore::ConnectorId first_output  = first->add_output("To second");
+  const graphscore::ConnectorId first_input   = first->add_input("From second");
+  const graphscore::ConnectorId second_output = second->add_output("To first");
+  const graphscore::ConnectorId second_input  = second->add_input("From first");
+  AttachmentMetrics             metrics;
+  graphscore::CommandHistory    history;
+  auto scene = graphscore::Canvas{}.layout_nodes(project, metrics);
+  graphscore::CanvasConnectorAttachmentController controller{project, history,
+                                                             scene};
+
+  ASSERT_TRUE(controller.begin(first_id, first_output));
+  ASSERT_TRUE(controller.finish(second_id, second_input).ok());
+  ASSERT_TRUE(controller.begin(second_id, second_output));
+  ASSERT_TRUE(controller.finish(first_id, first_input).ok());
+
+  ASSERT_EQ(scene.connectors.size(), 2U);
+  EXPECT_EQ(scene.connectors[0].source_node, first_id);
+  EXPECT_EQ(scene.connectors[0].destination_node, second_id);
+  EXPECT_EQ(scene.connectors[1].source_node, second_id);
+  EXPECT_EQ(scene.connectors[1].destination_node, first_id);
+  EXPECT_EQ(history.undo_stack_size(), 2U);
+
+  ASSERT_TRUE(history.undo(project).ok());
+  EXPECT_FALSE(second->find_output(second_output)->destination().has_value());
+  ASSERT_TRUE(history.redo(project).ok());
+  ASSERT_TRUE(second->find_output(second_output)->destination().has_value());
+  EXPECT_EQ(second->find_output(second_output)->destination()->node, first_id);
+}
+
 }  // namespace

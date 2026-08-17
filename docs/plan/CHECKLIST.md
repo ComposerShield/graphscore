@@ -151,7 +151,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [ ] Dependencies completed
 - [ ] Infinite viewport completed
 - [x] Notation nodes completed
-- [ ] Connector creation and semantics completed
+- [x] Connector creation and semantics completed
 - [ ] Orthogonal route editing completed
 - [ ] Selection and playback affordances completed
 - [ ] Organization operations completed
