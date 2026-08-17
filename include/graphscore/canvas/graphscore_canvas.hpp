@@ -3,6 +3,7 @@
 #pragma once
 
 #include <graphscore/domain/command_history.hpp>
+#include <graphscore/domain/connector.hpp>
 #include <graphscore/domain/graph_position.hpp>
 #include <graphscore/notation/notation_layout.hpp>
 
@@ -449,6 +450,32 @@ struct CanvasConnectorEndpointLeg {
       default;
 };
 
+enum class CanvasConnectorLinePattern : std::uint8_t {
+  kSolid = 0,
+  kDashed,
+};
+
+// Toolkit-neutral route styling. Color uses packed 0xRRGGBBAA so canvas does
+// not depend on the rendering backend; line pattern redundantly communicates
+// the semantic type without relying on color perception.
+struct CanvasConnectorStyle {
+  std::uint32_t              color_rgba   = 0;
+  CanvasConnectorLinePattern line_pattern = CanvasConnectorLinePattern::kSolid;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorStyle&) const = default;
+};
+
+[[nodiscard]] constexpr CanvasConnectorStyle canvas_connector_style(
+    ConnectorType type) noexcept {
+  switch (type) {
+    case ConnectorType::kSequential:
+      return {0x2F80EDFFU, CanvasConnectorLinePattern::kSolid};
+    case ConnectorType::kVertical:
+      return {0xD35400FFU, CanvasConnectorLinePattern::kDashed};
+  }
+  return {};
+}
+
 struct CanvasConnectorGeometry {
   static constexpr double kEndpointClearance = 24.0;
 
@@ -458,6 +485,9 @@ struct CanvasConnectorGeometry {
   ConnectorId                destination_connector;
   CanvasConnectorEndpointLeg source_leg;
   CanvasConnectorEndpointLeg destination_leg;
+  ConnectorType              type = ConnectorType::kSequential;
+  CanvasConnectorStyle       style =
+      canvas_connector_style(ConnectorType::kSequential);
 
   [[nodiscard]] bool operator==(const CanvasConnectorGeometry&) const = default;
 };
@@ -542,6 +572,24 @@ class CanvasConnectorAttachmentController {
   NodeId               source_node_;
   ConnectorId          source_output_;
   bool                 active_ = false;
+};
+
+// Authors an output's semantic transition type through the reversible domain
+// command path and updates any retained connected route immediately. The
+// style is always derived from ConnectorType and is never persisted as a
+// second source of truth.
+class CanvasConnectorTypeController {
+ public:
+  CanvasConnectorTypeController(Project& project, CommandHistory& history,
+                                CanvasNotationScene& scene) noexcept;
+
+  [[nodiscard]] Result set_type(NodeId node_id, ConnectorId output_id,
+                                ConnectorType type) noexcept;
+
+ private:
+  Project&             project_;
+  CommandHistory&      history_;
+  CanvasNotationScene& scene_;
 };
 
 class Canvas {

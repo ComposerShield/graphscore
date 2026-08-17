@@ -6,6 +6,7 @@
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/project.hpp>
 #include <graphscore/domain/set_node_position_command.hpp>
+#include <graphscore/domain/set_output_type_command.hpp>
 #include <graphscore/domain/validation_service.hpp>
 
 #include <algorithm>
@@ -169,7 +170,8 @@ void append_ports(std::vector<CanvasNodePort>& ports, NodeId node_id,
 
 [[nodiscard]] std::optional<CanvasConnectorGeometry> connector_geometry(
     const CanvasNotationScene& scene, NodeId source_node,
-    ConnectorId source_connector, const ConnectorDestination& destination) {
+    ConnectorId source_connector, const ConnectorDestination& destination,
+    ConnectorType type) {
   const CanvasNodeNotation* const source = find_scene_node(scene, source_node);
   const CanvasNodeNotation* const target =
       find_scene_node(scene, destination.node);
@@ -183,9 +185,14 @@ void append_ports(std::vector<CanvasNodePort>& ports, NodeId node_id,
   if (!source_leg.has_value() || !destination_leg.has_value()) {
     return std::nullopt;
   }
-  return CanvasConnectorGeometry{source_node,      source_connector,
-                                 destination.node, destination.connector,
-                                 *source_leg,      *destination_leg};
+  return CanvasConnectorGeometry{source_node,
+                                 source_connector,
+                                 destination.node,
+                                 destination.connector,
+                                 *source_leg,
+                                 *destination_leg,
+                                 type,
+                                 canvas_connector_style(type)};
 }
 
 [[nodiscard]] bool scene_connectors_match_project(
@@ -203,7 +210,9 @@ void append_ports(std::vector<CanvasNodePort>& ports, NodeId node_id,
       if (geometry.source_node != node.id() ||
           geometry.source_connector != output.id() ||
           geometry.destination_node != output.destination()->node ||
-          geometry.destination_connector != output.destination()->connector) {
+          geometry.destination_connector != output.destination()->connector ||
+          geometry.type != output.type() ||
+          geometry.style != canvas_connector_style(output.type())) {
         return false;
       }
       ++scene_index;
@@ -238,8 +247,9 @@ void append_ports(std::vector<CanvasNodePort>& ports, NodeId node_id,
     }
     const ConnectorDestination destination{connector.destination_node,
                                            connector.destination_connector};
-    const auto                 refreshed = connector_geometry(
-        scene, connector.source_node, connector.source_connector, destination);
+    const auto refreshed = connector_geometry(scene, connector.source_node,
+                                              connector.source_connector,
+                                              destination, connector.type);
     if (!refreshed.has_value()) {
       return false;
     }
@@ -783,8 +793,8 @@ Result CanvasConnectorAttachmentController::finish(
   }
 
   const ConnectorDestination destination{destination_node, destination_input};
-  const auto                 geometry =
-      connector_geometry(scene_, source_node_, source_output_, destination);
+  const auto geometry = connector_geometry(scene_, source_node_, source_output_,
+                                           destination, output->type());
   if (!geometry.has_value()) {
     return Result(ResultCode::kInvalidArgument);
   }
@@ -813,6 +823,58 @@ Result CanvasConnectorAttachmentController::finish(
 
 void CanvasConnectorAttachmentController::cancel() noexcept {
   active_ = false;
+}
+
+CanvasConnectorTypeController::CanvasConnectorTypeController(
+    Project& project, CommandHistory& history,
+    CanvasNotationScene& scene) noexcept
+    : project_(project), history_(history), scene_(scene) {}
+
+Result CanvasConnectorTypeController::set_type(NodeId        node_id,
+                                               ConnectorId   output_id,
+                                               ConnectorType type) noexcept {
+  if (type != ConnectorType::kSequential && type != ConnectorType::kVertical) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (!scene_connectors_match_project(scene_, project_)) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  Node* const node = project_.find_node(node_id);
+  if (node == nullptr) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  const OutputConnector* const    output     = node->find_output(output_id);
+  const CanvasNodeNotation* const scene_node = find_scene_node(scene_, node_id);
+  if (output == nullptr || scene_node == nullptr ||
+      find_port(*scene_node, output_id, CanvasPortDirection::kOutput) ==
+          nullptr) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (output->type() == type) {
+    return Result();
+  }
+
+  std::unique_ptr<SetOutputTypeCommand> command;
+  try {
+    command = std::make_unique<SetOutputTypeCommand>(node_id, output_id, type);
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  const Result result = history_.execute_new(std::move(command), project_);
+  if (!result.ok()) {
+    return result;
+  }
+
+  const auto geometry = std::ranges::find_if(
+      scene_.connectors, [node_id, output_id](const auto& connector) {
+        return connector.source_node == node_id &&
+               connector.source_connector == output_id;
+      });
+  if (geometry != scene_.connectors.end()) {
+    geometry->type  = type;
+    geometry->style = canvas_connector_style(type);
+  }
+  return Result();
 }
 
 CanvasNotationScene Canvas::layout_nodes(
@@ -853,8 +915,8 @@ CanvasNotationScene Canvas::layout_nodes(
               nullptr) {
         continue;
       }
-      const auto geometry = connector_geometry(scene, node.id(), output.id(),
-                                               *output.destination());
+      const auto geometry = connector_geometry(
+          scene, node.id(), output.id(), *output.destination(), output.type());
       if (geometry.has_value()) {
         scene.connectors.push_back(*geometry);
       }
