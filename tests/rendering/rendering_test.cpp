@@ -270,6 +270,136 @@ TEST(RasterTest, MissingCodePointHasStructuredWarningAndVisibleFallback) {
   EXPECT_GT(covered_pixels(*raster.surface), 0U);
 }
 
+TEST(RasterTest, SimplifiesGlyphOnlyBelowExactPixelResolution) {
+  const auto font = load_font();
+  if (font == nullptr) {
+    GTEST_SKIP() << "writer rendering backend unavailable";
+  }
+
+  constexpr char32_t kNotehead   = U'\uE0A4';
+  constexpr double   kStaffSpace = 10.0;
+  const auto         metrics     = font->glyph_metrics(kNotehead, kStaffSpace);
+  ASSERT_GT(metrics.bounds.width, 0.0);
+  ASSERT_GT(metrics.bounds.height, 0.0);
+
+  const NotationPoint origin{4.0 - metrics.bounds.x, 4.0 - metrics.bounds.y};
+  const GlyphCommand glyph{NotationId{"glyph"}, kNotehead, origin, kStaffSpace};
+  const PathCommand  exact_bounds = filled_rect(
+      "bounds", 4.0, 4.0, metrics.bounds.width, metrics.bounds.height);
+  const double largest_extent =
+      std::max(metrics.bounds.width, metrics.bounds.height);
+
+  RasterOptions below{12, 12};
+  below.pixels_per_unit = 0.5 / largest_extent;
+  below.origin          = {4.0, 4.0};
+  const auto simplified = graphscore::rasterize_notation({glyph}, *font, below);
+  const auto bounds_raster =
+      graphscore::rasterize_notation({exact_bounds}, *font, below);
+  ASSERT_TRUE(simplified);
+  ASSERT_TRUE(bounds_raster);
+  EXPECT_EQ(*simplified.surface, *bounds_raster.surface);
+
+  RasterOptions perceptible   = below;
+  perceptible.pixels_per_unit = 1.0 / largest_extent;
+  const auto detailed =
+      graphscore::rasterize_notation({glyph}, *font, perceptible);
+  const auto perceptible_bounds =
+      graphscore::rasterize_notation({exact_bounds}, *font, perceptible);
+  ASSERT_TRUE(detailed);
+  ASSERT_TRUE(perceptible_bounds);
+  EXPECT_NE(*detailed.surface, *perceptible_bounds.surface);
+}
+
+TEST(RasterTest, RetainsDetailWhenEitherProjectedGlyphExtentIsPerceptible) {
+  const auto font = load_font();
+  if (font == nullptr) {
+    GTEST_SKIP() << "writer rendering backend unavailable";
+  }
+
+  constexpr char32_t kNotehead   = U'\uE0A4';
+  constexpr double   kStaffSpace = 10.0;
+  const auto         metrics     = font->glyph_metrics(kNotehead, kStaffSpace);
+  ASSERT_GT(metrics.bounds.width, 0.0);
+  ASSERT_GT(metrics.bounds.height, 0.0);
+
+  const NotationPoint origin{4.0 - metrics.bounds.x, 4.0 - metrics.bounds.y};
+  const GlyphCommand glyph{NotationId{"glyph"}, kNotehead, origin, kStaffSpace};
+  const PathCommand  exact_bounds = filled_rect(
+      "bounds", 4.0, 4.0, metrics.bounds.width, metrics.bounds.height);
+
+  RasterOptions options{16, 16};
+  options.pixels_per_unit = 0.5 / metrics.bounds.height;
+  options.transform.xx    = 4.0 * metrics.bounds.height / metrics.bounds.width;
+  options.origin          = {4.0, 4.0};
+  const auto detailed = graphscore::rasterize_notation({glyph}, *font, options);
+  const auto bounds_raster =
+      graphscore::rasterize_notation({exact_bounds}, *font, options);
+  ASSERT_TRUE(detailed);
+  ASSERT_TRUE(bounds_raster);
+  EXPECT_NE(*detailed.surface, *bounds_raster.surface);
+}
+
+TEST(RasterTest, AccountsForSignedShearInBothProjectedGlyphExtents) {
+  const auto font = load_font();
+  if (font == nullptr) {
+    GTEST_SKIP() << "writer rendering backend unavailable";
+  }
+
+  constexpr char32_t kNotehead   = U'\uE0A4';
+  constexpr double   kStaffSpace = 10.0;
+  const auto         metrics     = font->glyph_metrics(kNotehead, kStaffSpace);
+  ASSERT_GT(metrics.bounds.width, 0.0);
+  ASSERT_GT(metrics.bounds.height, 0.0);
+
+  const GlyphCommand glyph{NotationId{"glyph"},
+                           kNotehead,
+                           {-metrics.bounds.x, -metrics.bounds.y},
+                           kStaffSpace};
+  const PathCommand  exact_bounds = filled_rect(
+      "bounds", 0.0, 0.0, metrics.bounds.width, metrics.bounds.height);
+  const auto expect_detail =
+      [&](const graphscore::RenderingTransform& transform,
+          double                                pixels_per_unit) {
+        RasterOptions options{64, 64};
+        options.pixels_per_unit = pixels_per_unit;
+        options.origin          = {32.0, 32.0};
+        options.transform       = transform;
+        const auto detailed =
+            graphscore::rasterize_notation({glyph}, *font, options);
+        const auto bounds_raster =
+            graphscore::rasterize_notation({exact_bounds}, *font, options);
+        ASSERT_TRUE(detailed);
+        ASSERT_TRUE(bounds_raster);
+        EXPECT_NE(*detailed.surface, *bounds_raster.surface);
+      };
+
+  graphscore::RenderingTransform width_shear;
+  width_shear.xy = 8.0;
+  expect_detail(width_shear, 0.25 / metrics.bounds.height);
+  width_shear.xy = -8.0;
+  expect_detail(width_shear, 0.25 / metrics.bounds.height);
+
+  graphscore::RenderingTransform height_shear;
+  height_shear.yx = 8.0;
+  expect_detail(height_shear, 0.25 / metrics.bounds.width);
+  height_shear.yx = -8.0;
+  expect_detail(height_shear, 0.25 / metrics.bounds.width);
+
+  RasterOptions below{64, 64};
+  below.pixels_per_unit =
+      0.1 / std::max(metrics.bounds.width, metrics.bounds.height);
+  below.origin          = {32.0, 32.0};
+  below.transform.xx    = -1.0;
+  below.transform.xy    = 0.5;
+  below.transform.yx    = -0.5;
+  const auto simplified = graphscore::rasterize_notation({glyph}, *font, below);
+  const auto bounds_raster =
+      graphscore::rasterize_notation({exact_bounds}, *font, below);
+  ASSERT_TRUE(simplified);
+  ASSERT_TRUE(bounds_raster);
+  EXPECT_EQ(*simplified.surface, *bounds_raster.surface);
+}
+
 TEST(RasterTest, RepeatedRasterHasIdenticalOwnedBytesAndHash) {
   const auto font = load_font();
   if (font == nullptr) {

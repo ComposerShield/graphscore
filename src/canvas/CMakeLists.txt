@@ -2,6 +2,7 @@
 
 add_library(graphscore_canvas STATIC
   canvas.cpp
+  spatial_index.cpp
 )
 
 target_compile_features(graphscore_canvas PRIVATE cxx_std_23)

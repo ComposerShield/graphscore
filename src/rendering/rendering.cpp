@@ -272,6 +272,33 @@ int outline_cubic(const FT_Vector* control1, const FT_Vector* control2,
   return success;
 }
 
+[[nodiscard]] NotationRect glyph_bounds(const FT_Outline& outline, double scale,
+                                        NotationPoint origin) noexcept {
+  FT_BBox bounds{};
+  FT_Outline_Get_CBox(&outline, &bounds);
+  return NotationRect{origin.x + static_cast<double>(bounds.xMin) * scale,
+                      origin.y - static_cast<double>(bounds.yMax) * scale,
+                      static_cast<double>(bounds.xMax - bounds.xMin) * scale,
+                      static_cast<double>(bounds.yMax - bounds.yMin) * scale};
+}
+
+[[nodiscard]] bool glyph_detail_is_below_pixel_resolution(
+    const NotationRect& bounds, const RasterOptions& options) noexcept {
+  if (bounds.width <= 0.0 || bounds.height <= 0.0) {
+    return false;
+  }
+  const double projected_width =
+      options.pixels_per_unit *
+      (std::abs(options.transform.xx) * bounds.width +
+       std::abs(options.transform.xy) * bounds.height);
+  const double projected_height =
+      options.pixels_per_unit *
+      (std::abs(options.transform.yx) * bounds.width +
+       std::abs(options.transform.yy) * bounds.height);
+  return finite(projected_width) && finite(projected_height) &&
+         projected_width < 1.0 && projected_height < 1.0;
+}
+
 [[nodiscard]] tvg::Shape* make_clip(const NotationRect&  clip,
                                     const RasterOptions& options) {
   tvg::Shape* const shape = tvg::Shape::gen();
@@ -889,7 +916,9 @@ RasterResult rasterize_notation(const std::vector<NotationCommand>& commands,
       ResolvedGlyph resolved;
       bool          ft_ok      = true;
       bool          outline_ok = true;
-      const double  scale      = font_scale(*font.impl_, glyph->staff_space);
+      bool          simplify   = false;
+      NotationRect  exact_bounds;
+      const double  scale = font_scale(*font.impl_, glyph->staff_space);
       {
         // Keep glyph resolution, FT_Load_Glyph, format check, and outline
         // decomposition in one uninterrupted per-font critical section.
@@ -904,11 +933,22 @@ RasterResult rasterize_notation(const std::vector<NotationCommand>& commands,
                                     FT_LOAD_NO_BITMAP) == 0 &&
                   font.impl_->face->glyph->format == FT_GLYPH_FORMAT_OUTLINE;
           if (ft_ok) {
-            OutlineContext         context{shape, scale, glyph->origin, {}};
-            const FT_Outline_Funcs callbacks{
-                outline_move, outline_line, outline_conic, outline_cubic, 0, 0};
-            outline_ok = FT_Outline_Decompose(&font.impl_->face->glyph->outline,
-                                              &callbacks, &context) == 0;
+            exact_bounds = glyph_bounds(font.impl_->face->glyph->outline, scale,
+                                        glyph->origin);
+            simplify =
+                glyph_detail_is_below_pixel_resolution(exact_bounds, options);
+            if (!simplify) {
+              OutlineContext         context{shape, scale, glyph->origin, {}};
+              const FT_Outline_Funcs callbacks{outline_move,
+                                               outline_line,
+                                               outline_conic,
+                                               outline_cubic,
+                                               0,
+                                               0};
+              outline_ok =
+                  FT_Outline_Decompose(&font.impl_->face->glyph->outline,
+                                       &callbacks, &context) == 0;
+            }
           }
         }
       }
@@ -932,7 +972,14 @@ RasterResult rasterize_notation(const std::vector<NotationCommand>& commands,
       } else {
         success = success && ft_ok && outline_ok;
         if (success) {
-          success = style_shape(*shape, options, true, 0.0);
+          if (simplify) {
+            success = tvg_success(
+                shape->appendRect(static_cast<float>(exact_bounds.x),
+                                  static_cast<float>(exact_bounds.y),
+                                  static_cast<float>(exact_bounds.width),
+                                  static_cast<float>(exact_bounds.height)));
+          }
+          success = success && style_shape(*shape, options, true, 0.0);
         }
       }
     } else if (const auto* line = std::get_if<LineCommand>(&retained)) {

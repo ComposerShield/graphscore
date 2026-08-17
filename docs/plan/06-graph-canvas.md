@@ -17,9 +17,9 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 - [x] M6-phase-4 Sparse effectively unbounded coordinates with stable transforms and no persisted page edge.
 - [x] M6-phase-5 Native trackpad two-finger pan and pinch zoom, centered around the gesture focal point.
 - [x] M6-phase-6 Mouse wheel pan, modifier-wheel zoom, middle-button drag pan, and keyboard pan/zoom centered on accessibility focus.
-- [ ] M6-phase-7 Spatial indexing, viewport clipping, and bounded invalidation for nodes, labels, controls, connector segments, and hit regions.
-- [ ] M6-phase-8 Full notation remains conceptually present at every zoom; do not replace it with semantic summaries.
-- [ ] M6-phase-9 Permit raster/detail simplification only when the exact glyph detail is below perceptible resolution.
+- [x] M6-phase-7 Spatial indexing, viewport clipping, and bounded invalidation for nodes, labels, controls, connector segments, and hit regions.
+- [x] M6-phase-8 Full notation remains conceptually present at every zoom; do not replace it with semantic summaries.
+- [x] M6-phase-9 Permit raster/detail simplification only when the exact glyph detail is below perceptible resolution.
 
 ### Notation nodes
 

@@ -14,7 +14,7 @@
 #include <vector>
 
 namespace graphscore::writer_app {
-// ---- M6-phase-5: real-renderer zoom/pan frame sweep ------------------------
+// ---- M6-phase-5/8: real-renderer zoom/pan notation-detail sweep ------------
 //
 // Regression coverage for the intermediate-zoom flicker: at some pinch-zoom
 // increments the notation surface was skipped entirely, leaving only the
@@ -22,11 +22,10 @@ namespace graphscore::writer_app {
 // set_viewport_transform → test_render_frame (the same render_frame helper the
 // event loop calls, with present=false) → SDL_RenderReadPixels readback —
 // across a sweep of representative incremental zoom values and combined pan
-// offsets, and verifies a non-background sentinel pixel remains visible at the
-// expected position after every increment. It does not reverse-map the
-// destination in the test: the expected position comes from the shell's own
-// test_notation_destination(), and the assertion is on actual readback
-// pixels, so a silently blank frame (clear-only) fails immediately.
+// offsets, and verifies four distinguishable notation elements remain visible
+// at their expected positions after every increment. The assertion is on
+// actual readback pixels, so a silently blank frame or zoom-dependent summary
+// substitution fails immediately.
 //
 // This is a composition-readback proof: it proves the composed back buffer is
 // not blank (present=false leaves the composed frame readable). The observable
@@ -44,18 +43,58 @@ namespace graphscore::writer_app {
 int renderer_zoom_test() {
   graphscore::WriterShell shell;
 
-  // A 64×64 notation surface, every texel the same non-background sentinel
-  // green (the clear colour is a dark 30,30,30 gray, so the two are
-  // unambiguously distinguishable after readback).
+  enum class ElementColor : std::uint8_t { kRed, kGreen, kBlue, kYellow };
+
+  struct Element {
+    graphscore::GraphPosition position;
+    ElementColor              color;
+  };
+
+  constexpr std::array<Element, 4> elements{{
+      {{16.0, 16.0}, ElementColor::kRed},
+      {{48.0, 16.0}, ElementColor::kGreen},
+      {{16.0, 48.0}, ElementColor::kBlue},
+      {{48.0, 48.0}, ElementColor::kYellow},
+  }};
+
+  // A textured 64×64 retained notation surface. The four colored blocks stand
+  // in for independently meaningful notation elements; all must survive every
+  // zoom level rather than being replaced by one aggregate marker.
   graphscore::RasterSurface surface;
   surface.width  = 64;
   surface.height = 64;
-  surface.rgba.resize(64 * 64 * 4);
+  surface.rgba.resize(64 * 64 * 4, 0xFF);
   for (std::size_t i = 0; i < surface.rgba.size(); i += 4) {
-    surface.rgba[i + 0] = 0x00;  // R
-    surface.rgba[i + 1] = 0xC8;  // G
-    surface.rgba[i + 2] = 0x00;  // B
-    surface.rgba[i + 3] = 0xFF;  // A (opaque)
+    surface.rgba[i + 0] = 0xC0;
+    surface.rgba[i + 1] = 0xC0;
+    surface.rgba[i + 2] = 0xC0;
+  }
+  const auto paint_block = [&](const Element& element) {
+    for (int y = static_cast<int>(element.position.y) - 6;
+         y < static_cast<int>(element.position.y) + 6; ++y) {
+      for (int x = static_cast<int>(element.position.x) - 6;
+           x < static_cast<int>(element.position.x) + 6; ++x) {
+        const std::size_t offset =
+            (static_cast<std::size_t>(y) * surface.width +
+             static_cast<std::size_t>(x)) *
+            4;
+        surface.rgba[offset + 0] =
+            element.color == ElementColor::kRed ||
+                    element.color == ElementColor::kYellow
+                ? 0xE0
+                : 0x10;
+        surface.rgba[offset + 1] =
+            element.color == ElementColor::kGreen ||
+                    element.color == ElementColor::kYellow
+                ? 0xE0
+                : 0x10;
+        surface.rgba[offset + 2] =
+            element.color == ElementColor::kBlue ? 0xE0 : 0x10;
+      }
+    }
+  };
+  for (const Element& element : elements) {
+    paint_block(element);
   }
   const graphscore::ShellResult set_result =
       shell.set_notation_surface(std::move(surface));
@@ -100,20 +139,34 @@ int renderer_zoom_test() {
     return shell.test_read_backbuffer_pixel(px, py);
   };
 
-  const auto is_sentinel = [](const std::array<std::uint8_t, 4>& pixel) {
-    // Dominantly green, clearly distinct from the dark gray clear colour.
-    return pixel[1] > 0x80 && pixel[1] > pixel[0] + 0x40 &&
-           pixel[1] > pixel[2] + 0x40;
+  const auto matches_element = [](const std::array<std::uint8_t, 4>& pixel,
+                                  ElementColor                       color) {
+    constexpr std::uint8_t kHigh = 0xA0;
+    constexpr std::uint8_t kLow  = 0x60;
+    switch (color) {
+      case ElementColor::kRed:
+        return pixel[0] > kHigh && pixel[1] < kLow && pixel[2] < kLow;
+      case ElementColor::kGreen:
+        return pixel[0] < kLow && pixel[1] > kHigh && pixel[2] < kLow;
+      case ElementColor::kBlue:
+        return pixel[0] < kLow && pixel[1] < kLow && pixel[2] > kHigh;
+      case ElementColor::kYellow:
+        return pixel[0] > kHigh && pixel[1] > kHigh && pixel[2] < kLow;
+    }
+    return false;
+  };
+  const auto is_clear_color = [](const std::array<std::uint8_t, 4>& pixel) {
+    return pixel[0] < 0x50 && pixel[1] < 0x50 && pixel[2] < 0x50;
   };
 
   // The fixed viewport focal point the notation centre is anchored to, well
   // inside the default 1280×800 window on any supported display scale.
-  const graphscore::ViewportPosition focal{160.0, 120.0};
+  const graphscore::ViewportPosition focal{320.0, 240.0};
   // The notation surface's world centre.
   const graphscore::GraphPosition surface_centre{32.0, 32.0};
 
-  // ---- pre-sweep readback sanity: sentinel visible at the anchor, and the
-  //     far corner is the clear colour (proves the readback distinguishes) ----
+  // ---- pre-sweep readback sanity: every element is visible, and the far
+  //     corner is the clear colour (proves readback distinguishes it) ------
   {
     graphscore::ViewportTransform identity;
     if (!identity.set_anchor(surface_centre, focal) ||
@@ -131,18 +184,23 @@ int renderer_zoom_test() {
       shell.set_viewport_transform(nullptr);
       return 1;
     }
-    const auto centre = read_pixel(focal.x, focal.y);
-    if (!centre.has_value() || !is_sentinel(*centre)) {
-      std::fprintf(stderr,
-                   "renderer-zoom-test: sentinel not visible at the anchor "
-                   "during sanity render\n");
-      shell.set_viewport_transform(nullptr);
-      return 1;
+    for (const Element& element : elements) {
+      const auto viewport = identity.to_viewport(element.position);
+      const auto pixel    = viewport.has_value()
+                                ? read_pixel(viewport->x, viewport->y)
+                                : std::nullopt;
+      if (!pixel.has_value() || !matches_element(*pixel, element.color)) {
+        std::fprintf(stderr,
+                     "renderer-zoom-test: notation element missing during "
+                     "sanity render\n");
+        shell.set_viewport_transform(nullptr);
+        return 1;
+      }
     }
     const auto corner = read_pixel(1000.0, 700.0);
-    if (!corner.has_value() || is_sentinel(*corner)) {
+    if (!corner.has_value() || !is_clear_color(*corner)) {
       std::fprintf(stderr,
-                   "renderer-zoom-test: far corner read back as sentinel "
+                   "renderer-zoom-test: far corner did not read as background "
                    "(readback cannot distinguish background)\n");
       shell.set_viewport_transform(nullptr);
       return 1;
@@ -206,17 +264,19 @@ int renderer_zoom_test() {
       return 1;
     }
 
-    // The notation centre after zoom+pan: the anchor focal plus the pan.
-    const double centre_x = focal.x + pan_x;
-    const double centre_y = focal.y + pan_y;
-    const auto   pixel    = read_pixel(centre_x, centre_y);
-    if (!pixel.has_value() || !is_sentinel(*pixel)) {
-      std::fprintf(stderr,
-                   "renderer-zoom-test: sentinel missing at step %d "
-                   "(zoom=%.6f, pan=(%.1f,%.1f))\n",
-                   zoom_step, zoom, pan_x, pan_y);
-      shell.set_viewport_transform(nullptr);
-      return 1;
+    for (const Element& element : elements) {
+      const auto viewport = transform.to_viewport(element.position);
+      const auto pixel    = viewport.has_value()
+                                ? read_pixel(viewport->x, viewport->y)
+                                : std::nullopt;
+      if (!pixel.has_value() || !matches_element(*pixel, element.color)) {
+        std::fprintf(stderr,
+                     "renderer-zoom-test: notation element missing at step "
+                     "%d (zoom=%.6f, pan=(%.1f,%.1f))\n",
+                     zoom_step, zoom, pan_x, pan_y);
+        shell.set_viewport_transform(nullptr);
+        return 1;
+      }
     }
     ++frames_verified;
   }

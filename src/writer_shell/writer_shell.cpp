@@ -392,6 +392,9 @@ void deliver_viewport_size(SDL_Window* window, InputHandler* handler) {
                          "notation destination geometry is not representable "
                          "as a positive SDL_FRect"};
     }
+    // M6-phase-8: zoom changes only the destination geometry. Rendering the
+    // complete source texture keeps every notation element present instead of
+    // cropping or substituting a zoom-dependent semantic summary.
     if (!SDL_RenderTexture(renderer, impl_->notation_texture,
                            /*srcrect=*/nullptr, &*dst)) {
       return fail("SDL_RenderTexture");
