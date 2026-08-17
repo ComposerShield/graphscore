@@ -711,6 +711,20 @@ Both actions address the current editor node (`layout_.node_id`) rather than
 the committed `Selection`; neither requires a musical selection. They add no
 key binding.
 
+### 10.6 Range delete and transpose (M5-phase-37)
+
+The range-edit actions are chord-less palette actions and are available only
+with a committed arbitrary musical range in the selection tool. **Delete
+selected range** replaces the addressed time/staff/voice scopes with
+normalized rests using the same boundary reconnection policy as cut. **Range
+transpose diatonically up/down** moves noteheads one staff step while keeping
+their accidentals; **range transpose chromatically up/down** moves one
+semitone and chooses a deterministic valid enharmonic spelling. Both
+transpose forms preserve rhythm and identities, and move connected ties as a
+unit. An action whose pitch result is out of range, whose selection is stale or
+incoherent, or whose range contains no sounding note is unavailable and does
+not mutate the project. Each successful action is one undoable transaction.
+
 ## 11. Command palette (complete normative route)
 
 The command palette is the universal keyboard and accessibility route to every
@@ -735,14 +749,17 @@ action in this table, and it is what makes the numpad-only bindings
   hairpin, apply pedal span, remove pedal span, apply/remove tie,
   apply/remove slur, apply beam break, apply beam join, and remove beam
   override; and M5-phase-31's two pickdown rows in §10.5 — request a node-end
-  pickdown duration and clear the current pickdown. Every one of those
-  chord-less rows — the structural, tuplet, marking-style, and pickdown rows
-  alike — carries an **empty chord hint**: they are deliberately **not** bound
+  pickdown duration and clear the current pickdown; and M5-phase-37's five
+  range-edit rows in §10.6 — delete the selected range, or transpose it one
+  diatonic step or semitone up/down. Every one of those chord-less rows — the
+  structural, tuplet, marking-style, pickdown, and range-edit rows alike —
+  carries an **empty chord hint**: they are deliberately **not** bound
   to any key chord (no row in §7 names them), so §7's `(chord, key)` space is
   unchanged by their addition and §12's claim that this space is exhaustively
   enumerable still holds. Each row carries a stable **name**, its **chord
   hint** (empty for the chord-less accessible controls, structural actions,
-  tuplet actions, marking-style actions, and pickdown actions), a one-line
+  tuplet actions, marking-style actions, pickdown actions, and range-edit
+  actions), a one-line
   description, and a live **availability** state.
 - **Availability.** A row's availability is derived from the same precondition
   and fallback logic as its chord row, for a row that has one: "Copy" is
@@ -763,7 +780,8 @@ action in this table, and it is what makes the numpad-only bindings
   palette never switches tools or performs a broader operation than the chord).
   A chord-less row performs its own action under its own precondition; like
   the clipboard and history rows of §7.3, the structural measure-editing,
-  tuplet, marking-style, and pickdown rows are ungated by tool. Their own
+  tuplet, marking-style, and pickdown rows are ungated by tool. Range-edit
+  rows are selection-tool gated. Their own
   selection or current-node preconditions apply rather than the active tool.
 - **Search.** The filter matches the name and description, case-insensitively;
   filtering never changes an action's availability or chord hint.

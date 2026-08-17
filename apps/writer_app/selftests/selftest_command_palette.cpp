@@ -372,6 +372,11 @@ int command_palette_test() {
           row.id == PaletteCommandId::kInsertMeasureBefore ||
           row.id == PaletteCommandId::kAppendMeasure ||
           row.id == PaletteCommandId::kDeleteMeasure ||
+          row.id == PaletteCommandId::kDeleteRange ||
+          row.id == PaletteCommandId::kTransposeDiatonicUp ||
+          row.id == PaletteCommandId::kTransposeDiatonicDown ||
+          row.id == PaletteCommandId::kTransposeChromaticUp ||
+          row.id == PaletteCommandId::kTransposeChromaticDown ||
           row.id == PaletteCommandId::kCreateTriplet ||
           row.id == PaletteCommandId::kTupletRatioEntry ||
           row.id == PaletteCommandId::kRemoveTuplet ||
@@ -1099,6 +1104,11 @@ int command_palette_test() {
         PaletteCommandId::kInsertMeasureBefore,
         PaletteCommandId::kAppendMeasure,
         PaletteCommandId::kDeleteMeasure,
+        PaletteCommandId::kDeleteRange,
+        PaletteCommandId::kTransposeDiatonicUp,
+        PaletteCommandId::kTransposeDiatonicDown,
+        PaletteCommandId::kTransposeChromaticUp,
+        PaletteCommandId::kTransposeChromaticDown,
     };
     for (const PaletteCommandId id : mutating_rows) {
       if (handler.palette_command_available(id) ||

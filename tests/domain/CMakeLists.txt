@@ -23,6 +23,7 @@ add_executable(graphscore_domain_test
   command/command_marking_style_test.cpp
   command/command_marking_test.cpp
   command/command_move_notehead_test.cpp
+  command/command_range_edit_test.cpp
   command/command_property_8b_integration_test.cpp
   command/command_property_8b_test.cpp
   command/command_set_event_test.cpp

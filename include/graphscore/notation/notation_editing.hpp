@@ -21,6 +21,7 @@ class Project;
 enum class AccidentalStepDirection : std::uint8_t;
 enum class IntervalDirection : std::uint8_t;
 enum class NoteheadStepDirection : std::uint8_t;
+enum class RangeTransposeKind : std::uint8_t;
 
 // A toolkit-neutral factory result used both for command-palette availability
 // and execution. An unavailable edit carries a composer-facing reason and no
@@ -264,6 +265,17 @@ struct NotationEditCommandResult {
 // convert-to-rest command succeeds.
 [[nodiscard]] std::optional<Selection> selection_after_convert_to_rest(
     const Project& project, const Selection& selection);
+
+// Constructs a reversible edit for a complete full-measure or arbitrary
+// musical range. Delete replaces the range with normalized rests. Transpose
+// changes only notehead pitches and accepts staff-step (diatonic) or semitone
+// (chromatic) amounts; zero is rejected as a no-op.
+[[nodiscard]] std::unique_ptr<Command> make_range_delete_command(
+    const Project& project, const Selection& selection);
+
+[[nodiscard]] std::unique_ptr<Command> make_range_transpose_command(
+    const Project& project, const Selection& selection, RangeTransposeKind kind,
+    std::int32_t amount);
 
 // Which neighbouring staff a keyboard staff step moves to, in the score
 // order score_ordered_staves defines: kPrevious is one position earlier

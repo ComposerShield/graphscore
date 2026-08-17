@@ -268,6 +268,19 @@ const std::vector<PaletteCommand> kInventory = [] {
       "", "Request a node-end pickdown duration, then apply it to the node");
   add(PaletteCommandId::kClearPickdown, "Clear pickdown", "",
       "Clear the node's trailing pickdown region");
+  add(PaletteCommandId::kDeleteRange, "Delete selected range", "",
+      "Replace the selected musical range with normalized rests");
+  add(PaletteCommandId::kTransposeDiatonicUp, "Transpose range diatonically up",
+      "", "Move selected noteheads one staff step up");
+  add(PaletteCommandId::kTransposeDiatonicDown,
+      "Transpose range diatonically down", "",
+      "Move selected noteheads one staff step down");
+  add(PaletteCommandId::kTransposeChromaticUp,
+      "Transpose range chromatically up", "",
+      "Move selected noteheads one semitone up");
+  add(PaletteCommandId::kTransposeChromaticDown,
+      "Transpose range chromatically down", "",
+      "Move selected noteheads one semitone down");
 
   return rows;
 }();
