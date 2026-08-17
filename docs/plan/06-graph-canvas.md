@@ -23,16 +23,16 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 
 ### Notation nodes
 
-- [ ] M6-phase-10 Render every active global track and staff in every node, aligned to the common measure timeline.
-- [ ] M6-phase-11 Node header includes name, custom color, freeform-notes affordance, validation state, tempo-lane affordance, and dedicated play button.
-- [ ] M6-phase-12 Node geometry follows measure/track content and exposes clear resize/layout rules rather than arbitrary clipping.
-- [ ] M6-phase-13 Dragging nodes updates attached connector endpoint legs continuously.
-- [ ] M6-phase-14 New nodes inherit track structure plus the selected/source node's exact tempo value and beat unit at the end of its main region, or project defaults when no source is selected.
-- [ ] M6-phase-15 Track add/remove updates all nodes; removed-track music remains archived and recoverable.
+- [x] M6-phase-10 Render every active global track and staff in every node, aligned to the common measure timeline.
+- [x] M6-phase-11 Node header includes name, custom color, freeform-notes affordance, validation state, tempo-lane affordance, and dedicated play button.
+- [x] M6-phase-12 Node geometry follows measure/track content and exposes clear resize/layout rules rather than arbitrary clipping.
+- [x] M6-phase-13 Dragging nodes updates attached connector endpoint legs continuously.
+- [x] M6-phase-14 New nodes inherit track structure plus the selected/source node's exact tempo value and beat unit at the end of its main region, or project defaults when no source is selected.
+- [x] M6-phase-15 Track add/remove updates all nodes; removed-track music remains archived and recoverable.
 
 ### Connector creation and semantics
 
-- [ ] M6-phase-16 Create any number of named input/output ports with stable identity and accessible labels.
+- [x] M6-phase-16 Create any number of named input/output ports with stable identity and accessible labels.
 - [ ] M6-phase-17 One output attaches to at most one destination input.
 - [ ] M6-phase-18 Author sequential versus vertical type and show redundant color plus line-pattern distinction.
 - [ ] M6-phase-19 Provide connector inspector fields for event binding, priority, random weight, and name, plus linked node/event-listener fields for queue policy/capacity and validation diagnostics.

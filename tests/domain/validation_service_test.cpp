@@ -303,9 +303,7 @@ TEST(ValidationServiceTest,
                                                       *MidiChannel::create(1));
   ASSERT_TRUE(second_track.has_value());
   Node* node = fixture.project.find_node(fixture.node);
-  ASSERT_TRUE(node->timeline()
-                  ->create_clef_lane(second_stave, ClefLane(Clef::kBass))
-                  .ok());
+  ASSERT_TRUE(node->timeline()->has_clef_lane(second_stave));
   TrackLane* second_lane = node->lane(*second_track);
   complete_stave(*second_lane, second_stave, fixture.node_end);
 
@@ -410,14 +408,13 @@ TEST(ValidationServiceTest,
 
 TEST(ValidationServiceTest,
      SameNodeLaneDiagnosticsRetainDistinctTrackOccurrences) {
-  ProjectFixture    fixture = make_clean_project();
-  const StaffLayout shared_layout =
-      *StaffLayout::create({{fixture.stave, Clef::kTreble}});
-  const auto second_track = fixture.project.add_track(
-      "Shared stave", shared_layout, *MidiChannel::create(1));
+  ProjectFixture    fixture       = make_clean_project();
+  const StaffLayout second_layout = StaffLayout::single_staff();
+  const StaveId     second_stave  = second_layout.staves().front().id;
+  const auto second_track = fixture.project.add_track("Second", second_layout,
+                                                      *MidiChannel::create(1));
   ASSERT_TRUE(second_track.has_value());
   Node* node = fixture.project.find_node(fixture.node);
-  node->lane(*second_track)->ensure_stave(fixture.stave);
 
   const NotationEntityId missing_event = NotationEntityId::generate();
   const DynamicMarking   malformed =
@@ -428,7 +425,7 @@ TEST(ValidationServiceTest,
                   .add_dynamic(malformed)
                   .ok());
   ASSERT_TRUE(node->lane(*second_track)
-                  ->stave(fixture.stave)
+                  ->stave(second_stave)
                   ->voice(*Voice::create(1))
                   .add_dynamic(malformed)
                   .ok());
@@ -505,6 +502,8 @@ TEST(ValidationServiceTest,
   const auto        grand_track =
       fixture.project.add_track("Piano", grand, *MidiChannel::create(1));
   ASSERT_TRUE(grand_track.has_value());
+  node->remove_lane(*grand_track);
+  node->ensure_lane(*grand_track);
   TrackLane* grand_lane = node->lane(*grand_track);
   ASSERT_NE(grand_lane, nullptr);
   grand_lane->ensure_stave(grand.staves().front().id);
@@ -525,13 +524,17 @@ TEST(ValidationServiceTest,
   }));
 }
 
-TEST(ValidationServiceTest, TrackAddedAfterTimelineRequiresItsFixedStaves) {
-  ProjectFixture fixture = make_clean_project();
-  const auto     track   = fixture.project.add_track(
-      "Later", StaffLayout::single_staff(), *MidiChannel::create(1));
+TEST(ValidationServiceTest, TrackAddedAfterTimelineAddsItsFixedStaves) {
+  ProjectFixture    fixture = make_clean_project();
+  const StaffLayout layout  = StaffLayout::single_staff();
+  const auto        track =
+      fixture.project.add_track("Later", layout, *MidiChannel::create(1));
   ASSERT_TRUE(track.has_value());
-  EXPECT_TRUE(has_code(ValidationService().validate_complete(fixture.project),
-                       DiagnosticCode::kMissingStave));
+  const Node* const node = fixture.project.find_node(fixture.node);
+  EXPECT_TRUE(node->lane(*track)->has_stave(layout.staves().front().id));
+  EXPECT_TRUE(node->timeline()->has_clef_lane(layout.staves().front().id));
+  EXPECT_FALSE(has_code(ValidationService().validate_complete(fixture.project),
+                        DiagnosticCode::kMissingStave));
 }
 
 TEST(ValidationServiceTest, FreshNoTimelineNodeWithEmptyAlignedLaneIsLegal) {

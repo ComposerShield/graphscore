@@ -2,7 +2,9 @@
 
 #pragma once
 
+#include <graphscore/domain/command_history.hpp>
 #include <graphscore/domain/graph_position.hpp>
+#include <graphscore/notation/notation_layout.hpp>
 
 #include <array>
 #include <compare>
@@ -10,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace graphscore {
@@ -338,9 +341,184 @@ class CanvasNavigationController {
   ViewportTransform& transform_;
 };
 
+enum class CanvasNodeValidationState : std::uint8_t {
+  kValid = 0,
+  kWarning,
+  kError,
+};
+
+enum class CanvasNodeHeaderAction : std::uint8_t {
+  kEditFreeformNotes = 0,
+  kOpenTempoLane,
+  kPlay,
+};
+
+// A distinct toolkit-neutral button identity. Geometry, activation routing,
+// and accessibility behavior are layered onto these stable actions by their
+// dedicated canvas phases.
+struct CanvasNodeHeaderButton {
+  CanvasNodeHeaderAction action = CanvasNodeHeaderAction::kEditFreeformNotes;
+
+  [[nodiscard]] bool operator==(const CanvasNodeHeaderButton&) const = default;
+};
+
+// Header semantics retained independently from notation geometry. The notes
+// and tempo booleans describe current content; their buttons remain present so
+// an empty value can still be opened and edited.
+struct CanvasNodeHeader {
+  std::string               name;
+  std::uint32_t             color              = 0xFFFFFFFF;
+  bool                      has_freeform_notes = false;
+  CanvasNodeValidationState validation     = CanvasNodeValidationState::kValid;
+  bool                      has_tempo_lane = false;
+  CanvasNodeHeaderButton    freeform_notes_button;
+  CanvasNodeHeaderButton    tempo_lane_button{
+      CanvasNodeHeaderAction::kOpenTempoLane};
+  CanvasNodeHeaderButton play_button{CanvasNodeHeaderAction::kPlay};
+
+  [[nodiscard]] bool operator==(const CanvasNodeHeader&) const = default;
+};
+
+// Content-driven node geometry in node-local coordinates, plus the complete
+// world-space bound used by culling and routing. Nodes auto-fit their notation:
+// width is the larger of kMinimumWidth and the notation width, while height is
+// the fixed header followed by the complete notation height. There is no
+// independent crop size. Changing notation wrapping or musical content requires
+// relayout and therefore deterministically resizes the node.
+struct CanvasNodeGeometry {
+  static constexpr double kHeaderHeight          = 64.0;
+  static constexpr double kMinimumWidth          = 320.0;
+  static constexpr double kFallbackContentHeight = 160.0;
+
+  WorldBounds  bounds;
+  NotationRect header_bounds;
+  NotationRect content_bounds;
+  NotationRect notation_bounds;
+
+  [[nodiscard]] bool operator==(const CanvasNodeGeometry&) const = default;
+};
+
+enum class CanvasPortDirection : std::uint8_t {
+  kInput = 0,
+  kOutput,
+};
+
+// A retained node-local port presentation. ConnectorId is the stable domain
+// identity; names and labels may change without changing that identity. Bounds
+// straddle the appropriate node edge and preserve domain insertion order.
+struct CanvasNodePort {
+  static constexpr double kDiameter = 16.0;
+
+  ConnectorId         connector_id;
+  CanvasPortDirection direction = CanvasPortDirection::kInput;
+  std::string         name;
+  std::string         accessibility_id;
+  std::string         accessibility_label;
+  NotationRect        bounds;
+
+  [[nodiscard]] bool operator==(const CanvasNodePort&) const = default;
+};
+
+// One retained, node-local header and notation layout at its graph-canvas
+// position. Every project node has one record, including nodes that cannot yet
+// be laid out; the error then explains why `layout` is empty and geometry uses
+// a deterministic fallback body without hiding unaffected nodes.
+struct CanvasNodeNotation {
+  NodeId                        node_id;
+  GraphPosition                 position;
+  CanvasNodeHeader              header;
+  CanvasNodeGeometry            geometry;
+  std::vector<CanvasNodePort>   ports;
+  NotationLayoutError           error = NotationLayoutError::kNone;
+  std::optional<NotationLayout> layout;
+
+  [[nodiscard]] explicit operator bool() const noexcept {
+    return layout.has_value();
+  }
+};
+
+// The short orthogonal legs that attach one connected output to its source
+// and destination node bounds. Port distribution and complete route finding
+// are separate phases; these retained legs establish the moving endpoint
+// geometry without persisting derived canvas coordinates in the domain model.
+struct CanvasConnectorEndpointLeg {
+  GraphPosition attachment;
+  GraphPosition outer;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorEndpointLeg&) const =
+      default;
+};
+
+struct CanvasConnectorGeometry {
+  static constexpr double kEndpointClearance = 24.0;
+
+  NodeId                     source_node;
+  ConnectorId                source_connector;
+  NodeId                     destination_node;
+  ConnectorId                destination_connector;
+  CanvasConnectorEndpointLeg source_leg;
+  CanvasConnectorEndpointLeg destination_leg;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorGeometry&) const = default;
+};
+
+struct CanvasNotationScene {
+  // Project order is retained so paint and hit-test ordering never depend on
+  // UUIDs or associative-container traversal.
+  std::vector<CanvasNodeNotation> nodes;
+  // Project/output order is retained for the same reason. Only connected
+  // outputs have derived endpoint geometry.
+  std::vector<CanvasConnectorGeometry> connectors;
+
+  [[nodiscard]] bool complete() const noexcept;
+};
+
+// Stages one node drag in retained canvas geometry. Pointer updates move the
+// node and every attached endpoint leg immediately, while the Project remains
+// unchanged. finish() records one SetNodePositionCommand; cancel() (and the
+// destructor safety net) restores the retained scene to its starting state.
+class CanvasNodeDragController {
+ public:
+  CanvasNodeDragController(Project& project, CommandHistory& history,
+                           CanvasNotationScene& scene) noexcept;
+  ~CanvasNodeDragController();
+
+  CanvasNodeDragController(const CanvasNodeDragController&)            = delete;
+  CanvasNodeDragController& operator=(const CanvasNodeDragController&) = delete;
+  CanvasNodeDragController(CanvasNodeDragController&&)                 = delete;
+  CanvasNodeDragController& operator=(CanvasNodeDragController&&)      = delete;
+
+  [[nodiscard]] bool   begin(NodeId node_id, GraphPosition pointer) noexcept;
+  [[nodiscard]] bool   update(GraphPosition pointer) noexcept;
+  [[nodiscard]] Result finish() noexcept;
+  void                 cancel() noexcept;
+
+  [[nodiscard]] bool active() const noexcept { return active_; }
+
+ private:
+  [[nodiscard]] CanvasNodeNotation* dragged_node() noexcept;
+  [[nodiscard]] bool set_preview_position(GraphPosition position) noexcept;
+
+  Project&             project_;
+  CommandHistory&      history_;
+  CanvasNotationScene& scene_;
+  NodeId               node_id_;
+  GraphPosition        pointer_start_;
+  GraphPosition        position_start_;
+  bool                 active_ = false;
+};
+
 class Canvas {
  public:
   Canvas() = default;
+
+  // Produces complete notation for every graph node. layout_notation owns the
+  // active-track/staff traversal and common measure geometry; canvas retains
+  // each result at the node's world position rather than introducing a second
+  // engraving or timeline-alignment algorithm.
+  [[nodiscard]] CanvasNotationScene layout_nodes(
+      const Project& project, const GlyphMetrics& metrics,
+      const NotationLayoutOptions& options = {}) const;
 };
 
 [[nodiscard]] int canvas_version() noexcept;

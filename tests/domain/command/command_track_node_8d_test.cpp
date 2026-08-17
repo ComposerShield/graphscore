@@ -17,8 +17,11 @@
 // =========================================================================
 
 TEST(CommandTest, AddTrackRoundTripPreservesId) {
-  Project project = make_project();
-  NodeId  node_id = project.add_node("Node");
+  Project     project = make_project();
+  NodeId      node_id = project.add_node("Node");
+  Node* const node    = project.find_node(node_id);
+  node->set_timeline(*NodeTimeline::create(
+      {Measure{*TimeSignature::create(4, 4), KeySignature{}}}, {}));
 
   auto cmd = std::make_unique<AddTrackCommand>(
       "Track", StaffLayout::single_staff(), *MidiChannel::create(0));
@@ -26,19 +29,26 @@ TEST(CommandTest, AddTrackRoundTripPreservesId) {
   ASSERT_TRUE(cmd->execute(project).ok());
   ASSERT_EQ(project.active_tracks().size(), 1u);
   const TrackId created_id = project.active_tracks().front().id();
+  const StaveId created_stave =
+      project.active_tracks().front().layout().staves().front().id;
   EXPECT_EQ(project.active_tracks().front().name(), "Track");
-  EXPECT_TRUE(project.find_node(node_id)->has_lane(created_id));
+  EXPECT_TRUE(node->has_lane(created_id));
+  EXPECT_TRUE(node->lane(created_id)->has_stave(created_stave));
+  EXPECT_TRUE(node->timeline()->has_clef_lane(created_stave));
 
   ASSERT_TRUE(cmd->undo(project).ok());
   EXPECT_EQ(project.find_active_track(created_id), nullptr);
   EXPECT_EQ(project.find_archived_track(created_id), nullptr);
   EXPECT_EQ(project.active_tracks().size(), 0u);
-  EXPECT_FALSE(project.find_node(node_id)->has_lane(created_id));
+  EXPECT_FALSE(node->has_lane(created_id));
+  EXPECT_FALSE(node->timeline()->has_clef_lane(created_stave));
 
   ASSERT_TRUE(cmd->redo(project).ok());
   ASSERT_NE(project.find_active_track(created_id), nullptr);
   EXPECT_EQ(project.find_active_track(created_id)->id(), created_id);
-  EXPECT_TRUE(project.find_node(node_id)->has_lane(created_id));
+  EXPECT_TRUE(node->has_lane(created_id));
+  EXPECT_TRUE(node->lane(created_id)->has_stave(created_stave));
+  EXPECT_TRUE(node->timeline()->has_clef_lane(created_stave));
   EXPECT_EQ(project.active_tracks().size(), 1u);
 }
 
@@ -86,6 +96,33 @@ TEST(CommandTest, AddTrackAtCapFailsNoMutation) {
       "Overflow", StaffLayout::single_staff(), *MidiChannel::create(0));
   EXPECT_EQ(cmd->execute(project).code(), ResultCode::kInvalidArgument);
   EXPECT_EQ(project.active_tracks().size(), 64u);
+}
+
+TEST(CommandTest, AddTrackRejectsReusedStaveIdentityWithoutClefDataLoss) {
+  Project           project         = make_project();
+  const StaffLayout existing_layout = StaffLayout::single_staff();
+  const TrackId     existing_track =
+      *project.add_track("Existing", existing_layout, *MidiChannel::create(0));
+  const NodeId node_id = project.add_node("Node");
+  Node* const  node    = project.find_node(node_id);
+  node->set_timeline(*NodeTimeline::create(
+      {Measure{*TimeSignature::create(4, 4), KeySignature{}}},
+      existing_layout.staves()));
+  const StaveId stave_id = existing_layout.staves().front().id;
+  ASSERT_TRUE(
+      node->timeline()
+          ->add_clef_change(stave_id, Rational(1) / Rational(4), Clef::kBass)
+          .ok());
+
+  AddTrackCommand command("Duplicate stave", existing_layout,
+                          *MidiChannel::create(1));
+  EXPECT_EQ(command.execute(project).code(), ResultCode::kInvalidArgument);
+  ASSERT_EQ(project.active_tracks().size(), 1U);
+  EXPECT_EQ(project.active_tracks().front().id(), existing_track);
+  ASSERT_NE(node->timeline()->clef_lane(stave_id), nullptr);
+  ASSERT_EQ(node->timeline()->clef_lane(stave_id)->changes().size(), 1U);
+  EXPECT_EQ(node->timeline()->clef_lane(stave_id)->changes().front().clef,
+            Clef::kBass);
 }
 
 // Linear-history safety: a later command must undo before the AddTrack does,
@@ -243,6 +280,102 @@ TEST(CommandTest, AddNodeRoundTripPreservesId) {
   EXPECT_EQ(project.find_node(created_id)->name(), "Node");
   EXPECT_TRUE(project.find_node(created_id)->has_lane(*track_id));
   EXPECT_EQ(project.nodes().size(), 1u);
+}
+
+TEST(CommandTest, AddNodeUsesProjectTempoAndCompleteActiveTrackStructure) {
+  Project     project       = make_project();
+  const Tempo default_tempo = *Tempo::create(Rational(72), NoteValue::kHalf);
+  project.set_default_tempo(default_tempo);
+  const TrackId single =
+      *project.add_track("Single", StaffLayout::single_staff(Clef::kAlto),
+                         *MidiChannel::create(0));
+  const TrackId grand = *project.add_track("Grand", StaffLayout::grand_staff(),
+                                           *MidiChannel::create(1));
+
+  AddNodeCommand command("Node");
+  ASSERT_TRUE(command.execute(project).ok());
+
+  ASSERT_EQ(project.nodes().size(), 1u);
+  const Node& node = project.nodes().front();
+  ASSERT_NE(node.lane(single), nullptr);
+  ASSERT_NE(node.lane(grand), nullptr);
+  EXPECT_NE(node.lane(single)->stave(
+                project.find_active_track(single)->layout().staves()[0].id),
+            nullptr);
+  for (const graphscore::StaveDefinition& stave :
+       project.find_active_track(grand)->layout().staves()) {
+    EXPECT_NE(node.lane(grand)->stave(stave.id), nullptr);
+  }
+  ASSERT_NE(node.timeline(), nullptr);
+  EXPECT_EQ(node.timeline()->measures().measure_count(), 1u);
+  EXPECT_EQ(node.timeline()->measures().measure(0).time_signature,
+            *TimeSignature::create(4, 4));
+  ASSERT_NE(node.timeline()->tempo(), nullptr);
+  ASSERT_EQ(node.timeline()->tempo()->points().size(), 1u);
+  EXPECT_EQ(node.timeline()->tempo()->points()[0].tempo, default_tempo);
+}
+
+TEST(CommandTest, AddNodeInheritsExactTempoAtSourceMainBoundary) {
+  Project project = make_project();
+  static_cast<void>(project.add_track("Track", StaffLayout::single_staff(),
+                                      *MidiChannel::create(0)));
+  const NodeId source_id = project.add_node("Source");
+  Node* const  source    = project.find_node(source_id);
+  auto         timeline  = *NodeTimeline::create(
+      {Measure{*TimeSignature::create(4, 4), KeySignature{}}}, {});
+  ASSERT_TRUE(timeline.set_pickdown(*Rational::create(1, 4)).ok());
+  const Tempo boundary_tempo =
+      *Tempo::create(Rational(144), NoteValue::kEighth);
+  ASSERT_TRUE(
+      timeline
+          .set_tempo(
+              {TempoPoint{Rational(0),
+                          *Tempo::create(Rational(80), NoteValue::kQuarter),
+                          TempoSegmentKind::kLinear},
+               TempoPoint{Rational(1), boundary_tempo,
+                          TempoSegmentKind::kSmooth},
+               TempoPoint{*Rational::create(9, 8),
+                          *Tempo::create(Rational(200), NoteValue::kHalf),
+                          TempoSegmentKind::kStep}})
+          .ok());
+  source->set_timeline(std::move(timeline));
+
+  AddNodeCommand command("Destination", source_id);
+  ASSERT_TRUE(command.execute(project).ok());
+
+  ASSERT_EQ(project.nodes().size(), 2u);
+  const Node& destination = project.nodes().back();
+  ASSERT_NE(destination.timeline(), nullptr);
+  ASSERT_NE(destination.timeline()->tempo(), nullptr);
+  ASSERT_EQ(destination.timeline()->tempo()->points().size(), 1u);
+  EXPECT_EQ(destination.timeline()->tempo()->points()[0].tempo, boundary_tempo);
+}
+
+TEST(CommandTest, AddNodeRedoRestoresInheritedTempoSnapshot) {
+  Project     project  = make_project();
+  const Tempo original = *Tempo::create(Rational(96), NoteValue::kQuarter);
+  project.set_default_tempo(original);
+  AddNodeCommand command("Node");
+  ASSERT_TRUE(command.execute(project).ok());
+  const NodeId created_id = project.nodes().front().id();
+  ASSERT_TRUE(command.undo(project).ok());
+
+  project.set_default_tempo(*Tempo::create(Rational(180), NoteValue::kEighth));
+  ASSERT_TRUE(command.redo(project).ok());
+
+  const Node* const restored = project.find_node(created_id);
+  ASSERT_NE(restored, nullptr);
+  ASSERT_NE(restored->timeline(), nullptr);
+  ASSERT_NE(restored->timeline()->tempo(), nullptr);
+  EXPECT_EQ(restored->timeline()->tempo()->points()[0].tempo, original);
+}
+
+TEST(CommandTest, AddNodeRejectsMissingSourceWithoutMutation) {
+  Project        project = make_project();
+  AddNodeCommand command("Node", NodeId::generate());
+
+  EXPECT_EQ(command.execute(project).code(), ResultCode::kInvalidArgument);
+  EXPECT_TRUE(project.nodes().empty());
 }
 
 TEST(CommandTest, AddNodeDoubleExecuteRejected) {

@@ -191,6 +191,47 @@ TEST(AccessibilityTreeTest, ExposesMusicalHierarchyWithoutGlyphPrimitives) {
   EXPECT_TRUE(selected_note->bounds.has_value());
 }
 
+TEST(AccessibilityTreeTest, ExposesNamedPortsWithStableDirectionalIdentity) {
+  Fixture           fixture;
+  Node* const       node          = fixture.project.find_node(fixture.node_id);
+  const ConnectorId named_input   = node->add_input("Intro α");
+  const ConnectorId unnamed_input = node->add_input("");
+  const ConnectorId output        = node->add_output("Continue");
+
+  const AccessibilityBuildResult first = build_notation_accessibility_tree(
+      fixture.project, fixture.node_id, fixture.layout, NotePaletteState());
+
+  ASSERT_TRUE(first);
+  EXPECT_EQ(count_role(*first.tree, AccessibilityRole::kConnector), 3U);
+  const std::string input_id = connector_accessibility_id(
+      fixture.node_id, named_input, AccessibilityConnectorDirection::kInput);
+  const AccessibilityNode* named = first.tree->find(input_id);
+  ASSERT_NE(named, nullptr);
+  EXPECT_EQ(named->name, "Intro α, input port");
+  EXPECT_EQ(named->value, "Input port");
+  ASSERT_TRUE(named->parent.has_value());
+  EXPECT_EQ(*named->parent, *first.tree->root());
+  const AccessibilityNode* unnamed = first.tree->find(
+      connector_accessibility_id(fixture.node_id, unnamed_input,
+                                 AccessibilityConnectorDirection::kInput));
+  ASSERT_NE(unnamed, nullptr);
+  EXPECT_EQ(unnamed->name, "Unnamed input port");
+  const AccessibilityNode* output_node =
+      first.tree->find(connector_accessibility_id(
+          fixture.node_id, output, AccessibilityConnectorDirection::kOutput));
+  ASSERT_NE(output_node, nullptr);
+  EXPECT_EQ(output_node->name, "Continue, output port");
+  EXPECT_EQ(output_node->value, "Output port");
+
+  node->find_input(named_input)->set_name("Renamed");
+  const AccessibilityBuildResult renamed = build_notation_accessibility_tree(
+      fixture.project, fixture.node_id, fixture.layout, NotePaletteState());
+  ASSERT_TRUE(renamed);
+  const AccessibilityNode* renamed_input = renamed.tree->find(input_id);
+  ASSERT_NE(renamed_input, nullptr);
+  EXPECT_EQ(renamed_input->name, "Renamed, input port");
+}
+
 TEST(AccessibilityTreeTest, AnnouncesChordSpellingsAndSharedDuration) {
   Fixture fixture;
   Node*   node = fixture.project.find_node(fixture.node_id);

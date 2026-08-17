@@ -150,7 +150,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [ ] [Milestone 06 complete](06-graph-canvas.md)
 - [ ] Dependencies completed
 - [ ] Infinite viewport completed
-- [ ] Notation nodes completed
+- [x] Notation nodes completed
 - [ ] Connector creation and semantics completed
 - [ ] Orthogonal route editing completed
 - [ ] Selection and playback affordances completed

@@ -27,6 +27,12 @@ namespace {
   return "node/" + node.to_string();
 }
 
+[[nodiscard]] std::string connector_direction_name(
+    AccessibilityConnectorDirection direction) {
+  return direction == AccessibilityConnectorDirection::kInput ? "input"
+                                                              : "output";
+}
+
 [[nodiscard]] std::string track_path(NodeId node, TrackId track) {
   return append_path(node_path(node), "track/" + track.to_string());
 }
@@ -555,6 +561,23 @@ const AccessibilityNode* AccessibilityTree::find(const std::string& id) const {
   return found == nodes_.end() ? nullptr : &*found;
 }
 
+std::string connector_accessibility_id(
+    NodeId node, ConnectorId connector,
+    AccessibilityConnectorDirection direction) {
+  return append_path(node_path(node), "connector/" +
+                                          connector_direction_name(direction) +
+                                          "/" + connector.to_string());
+}
+
+std::string connector_accessibility_label(
+    std::string_view name, AccessibilityConnectorDirection direction) {
+  const std::string direction_name = connector_direction_name(direction);
+  if (name.empty()) {
+    return "Unnamed " + direction_name + " port";
+  }
+  return std::string(name) + ", " + direction_name + " port";
+}
+
 AccessibilityBuildResult build_notation_accessibility_tree(
     const Project& project, NodeId node_id, const NotationLayout& layout,
     const NotePaletteState& palette, const Selection* selection,
@@ -578,6 +601,25 @@ AccessibilityBuildResult build_notation_accessibility_tree(
       builder.add(node_path(node_id), AccessibilityRole::kNode,
                   node->name().empty() ? "Untitled node" : node->name(),
                   layout.bounds, std::nullopt);
+
+  for (const InputConnector& input : node->inputs()) {
+    const auto        direction = AccessibilityConnectorDirection::kInput;
+    const std::size_t connector =
+        builder.add(connector_accessibility_id(node_id, input.id(), direction),
+                    AccessibilityRole::kConnector,
+                    connector_accessibility_label(input.name(), direction),
+                    std::nullopt, root);
+    builder.set_value(connector, "Input port");
+  }
+  for (const OutputConnector& output : node->outputs()) {
+    const auto        direction = AccessibilityConnectorDirection::kOutput;
+    const std::size_t connector =
+        builder.add(connector_accessibility_id(node_id, output.id(), direction),
+                    AccessibilityRole::kConnector,
+                    connector_accessibility_label(output.name(), direction),
+                    std::nullopt, root);
+    builder.set_value(connector, "Output port");
+  }
 
   for (std::size_t ordinal = 0;
        ordinal < node->timeline()->measures().measure_count(); ++ordinal) {

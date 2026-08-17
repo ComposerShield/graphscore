@@ -2,6 +2,9 @@
 
 #include <graphscore/domain/archive_track_command.hpp>
 
+#include <new>
+#include <stdexcept>
+
 #include <graphscore/core/result.hpp>
 #include <graphscore/domain/project.hpp>
 
@@ -11,7 +14,14 @@ Result ArchiveTrackCommand::execute(Project& project) noexcept {
   if (state_ != State::kFresh)
     return Result(ResultCode::kInvalidArgument);
 
-  const Result result = project.archive_track(track_id_);
+  Result result;
+  try {
+    result = project.archive_track(track_id_);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
   if (!result.ok())
     return result;
 
@@ -23,7 +33,14 @@ Result ArchiveTrackCommand::undo(Project& project) noexcept {
   if (state_ != State::kDone)
     return Result(ResultCode::kInvalidArgument);
 
-  const Result result = project.restore_track(track_id_);
+  Result result;
+  try {
+    result = project.restore_track(track_id_);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
   if (!result.ok())
     return result;
 
@@ -35,7 +52,14 @@ Result ArchiveTrackCommand::redo(Project& project) noexcept {
   if (state_ != State::kUndone)
     return Result(ResultCode::kInvalidArgument);
 
-  const Result result = project.archive_track(track_id_);
+  Result result;
+  try {
+    result = project.archive_track(track_id_);
+  } catch (const std::bad_alloc&) {
+    return Result(ResultCode::kOutOfMemory);
+  } catch (const std::length_error&) {
+    return Result(ResultCode::kOutOfMemory);
+  }
   if (!result.ok())
     return result;
 
