@@ -122,7 +122,7 @@ revalidation owns remapping the cursor across both.
 
 ### Accessibility
 
-- [ ] M5-phase-43 Expose node, track, staff, measure, voice, note/rest, marking, palette, and selection semantics rather than glyph primitives.
+- [x] M5-phase-43 Expose node, track, staff, measure, voice, note/rest, marking, palette, and selection semantics rather than glyph primitives.
 - [ ] M5-phase-44 Announce pitch spelling, sounding pitch, duration, voice, bar/beat, selected state, and available actions.
 - [ ] M5-phase-45 Support complete note entry/editing without pointer input.
 - [ ] M5-phase-46 Keep focus stable across incremental layout and expose offscreen musical elements through a virtualized semantic tree.

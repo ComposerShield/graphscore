@@ -1008,3 +1008,24 @@ no third-party or writer-backend edge. The matching machine-readable
 additions are one `GRAPHSCORE_TEST_TARGETS` entry and
 `GRAPHSCORE_PUBLIC_EDGES_graphscore_canvas_test = graphscore_canvas`; the
 shared test-framework loop supplies `GTest::gtest_main`.
+
+---
+
+## Amendment (2026-08-17): Accessibility Test Target
+
+This amendment is purely additive. It names the Layer 8 accessibility
+unit-test target required by Milestone 05's semantic notation-tree
+implementation. It does not add or change any production dependency edge.
+
+| Test target | Internal edge | External edge |
+|---|---|---|
+| `graphscore_accessibility_test` | `graphscore_accessibility` | `GTest::gtest_main` |
+
+`graphscore_accessibility_test` follows §2.3's existing rule: it links exactly
+the one production target under test plus the test framework, inherits
+`graphscore_accessibility`'s permitted production edges only transitively, and
+adds no third-party or platform-bridge edge. The matching machine-readable
+additions are one `GRAPHSCORE_TEST_TARGETS` entry and
+`GRAPHSCORE_PUBLIC_EDGES_graphscore_accessibility_test =
+graphscore_accessibility`; the shared test-framework loop supplies
+`GTest::gtest_main`.
