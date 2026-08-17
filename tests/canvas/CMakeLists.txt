@@ -12,6 +12,7 @@ add_executable(graphscore_canvas_test
   connector_attachment_test.cpp
   connector_type_test.cpp
   connector_inspector_test.cpp
+  connector_route_test.cpp
   node_drag_test.cpp
 )
 

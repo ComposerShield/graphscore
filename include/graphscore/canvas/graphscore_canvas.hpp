@@ -441,9 +441,7 @@ struct CanvasNodeNotation {
 };
 
 // The short orthogonal legs that attach one connected output to its source
-// and destination node bounds. Port distribution and complete route finding
-// are separate phases; these retained legs establish the moving endpoint
-// geometry without persisting derived canvas coordinates in the domain model.
+// and destination node bounds.
 struct CanvasConnectorEndpointLeg {
   GraphPosition attachment;
   GraphPosition outer;
@@ -487,6 +485,10 @@ struct CanvasConnectorGeometry {
   ConnectorId                destination_connector;
   CanvasConnectorEndpointLeg source_leg;
   CanvasConnectorEndpointLeg destination_leg;
+  // Complete derived world-space polyline, including both attachment and
+  // outer points. Consecutive points are orthogonal and avoid every node
+  // interior not already covering a fixed endpoint clearance point.
+  std::vector<GraphPosition> route_points;
   ConnectorType              type = ConnectorType::kSequential;
   CanvasConnectorStyle       style =
       canvas_connector_style(ConnectorType::kSequential);
@@ -578,13 +580,14 @@ class CanvasNodeDragController {
   [[nodiscard]] CanvasNodeNotation* dragged_node() noexcept;
   [[nodiscard]] bool set_preview_position(GraphPosition position) noexcept;
 
-  Project&             project_;
-  CommandHistory&      history_;
-  CanvasNotationScene& scene_;
-  NodeId               node_id_;
-  GraphPosition        pointer_start_;
-  GraphPosition        position_start_;
-  bool                 active_ = false;
+  Project&                             project_;
+  CommandHistory&                      history_;
+  CanvasNotationScene&                 scene_;
+  NodeId                               node_id_;
+  GraphPosition                        pointer_start_;
+  GraphPosition                        position_start_;
+  std::vector<CanvasConnectorGeometry> connectors_start_;
+  bool                                 active_ = false;
 };
 
 // Owns one toolkit-neutral output-to-input attachment gesture. begin() accepts
