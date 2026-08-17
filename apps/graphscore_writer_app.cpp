@@ -13,7 +13,7 @@
 //
 // M05 scope: the active tool (note-entry or range-selection) and the
 // selection-drag state machine are owned at the application assembly layer
-// (see writer_app/selection_tool_handler.hpp). The 18 `--test-*` flags below
+// (see writer_app/selection_tool_handler.hpp). The `--test-*` flags below
 // exercise that layer through the WriterShell event-dispatch seams; their
 // declarations live in writer_app/selftests/selftests.hpp.
 //
@@ -59,6 +59,7 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::kKeyEventsShellTestFlag;
   using graphscore::writer_app::kKeyEventsTestFlag;
   using graphscore::writer_app::kKeySelectionTestFlag;
+  using graphscore::writer_app::kM5AcceptanceTestFlag;
   using graphscore::writer_app::kMarkingStyleEditTestFlag;
   using graphscore::writer_app::kMeasureEditTestFlag;
   using graphscore::writer_app::kNotationAccessibilityTestFlag;
@@ -76,6 +77,7 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::kStepEntryTestFlag;
   using graphscore::writer_app::kTrackpadGestureTestFlag;
   using graphscore::writer_app::kTupletEditTestFlag;
+  using graphscore::writer_app::m5_acceptance_test;
   using graphscore::writer_app::marking_style_edit_test;
   using graphscore::writer_app::measure_edit_test;
   using graphscore::writer_app::notation_accessibility_test;
@@ -116,6 +118,7 @@ int main(int argc, char** argv) {
   bool run_tuplet_edit_test            = false;
   bool run_event_style_edit_test       = false;
   bool run_marking_style_edit_test     = false;
+  bool run_m5_acceptance_test          = false;
   bool run_pickdown_edit_test          = false;
   bool run_trackpad_gesture_test       = false;
   bool run_renderer_backend_test       = false;
@@ -188,6 +191,9 @@ int main(int argc, char** argv) {
     }
     if (kMarkingStyleEditTestFlag == argv[i]) {
       run_marking_style_edit_test = true;
+    }
+    if (kM5AcceptanceTestFlag == argv[i]) {
+      run_m5_acceptance_test = true;
     }
     if (kPickdownEditTestFlag == argv[i]) {
       run_pickdown_edit_test = true;
@@ -272,6 +278,9 @@ int main(int argc, char** argv) {
     }
     if (run_marking_style_edit_test) {
       return marking_style_edit_test();
+    }
+    if (run_m5_acceptance_test) {
+      return m5_acceptance_test();
     }
     if (run_pickdown_edit_test) {
       return pickdown_edit_test();

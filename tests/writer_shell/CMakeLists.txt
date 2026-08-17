@@ -405,6 +405,18 @@ set_tests_properties(graphscore_writer_pickdown_edit_test PROPERTIES
   TIMEOUT 30
 )
 
+# M5-phase-48: replay the delivered in-memory notation lifecycle as one
+# acceptance gate and consume its layout through the production rasterizer.
+# Disk save/reopen remains owned by Milestone 03, as recorded in the plan.
+add_test(NAME graphscore_writer_m5_acceptance_test
+  COMMAND graphscore_writer_app --test-m5-acceptance
+)
+
+set_tests_properties(graphscore_writer_m5_acceptance_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "m5-acceptance-test: ok"
+  TIMEOUT 120
+)
+
 set_tests_properties(graphscore_writer_command_palette_test PROPERTIES
   PASS_REGULAR_EXPRESSION "command-palette-test: ok"
   TIMEOUT 30
