@@ -267,6 +267,96 @@ SelectionToolHandler::marking_edit_invalidation(
   return graphscore::NotationInvalidation{kind, *first, *last};
 }
 
+bool SelectionToolHandler::delete_selected_range() {
+  if (history_.poisoned()) {
+    post_diagnostic("range delete: history unavailable");
+    return false;
+  }
+  const auto* range = current_range_set();
+  if (range == nullptr) {
+    post_diagnostic("range delete: requires an arbitrary range selection");
+    return false;
+  }
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value())
+    return false;
+  std::unique_ptr<graphscore::Command> command =
+      graphscore::make_range_delete_command(project_, *selection);
+  if (command == nullptr) {
+    post_diagnostic("range delete: invalid range selection");
+    return false;
+  }
+  graphscore::CommandHistory::Transaction transaction =
+      history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active()) {
+    post_diagnostic("range delete: edit rejected");
+    return false;
+  }
+  const auto invalidation = full_invalidation();
+  if (!invalidation.has_value() || !refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      recover_from_failed_rollback();
+    } else {
+      layout_cache_.reset();
+      warm_layout_cache();
+    }
+    post_diagnostic("range delete: layout refresh failed");
+    return false;
+  }
+  if (!transaction.commit().ok()) {
+    post_diagnostic("range delete: commit failed");
+    return false;
+  }
+  return true;
+}
+
+bool SelectionToolHandler::transpose_selected_range(
+    graphscore::RangeTransposeKind kind, std::int32_t amount) {
+  if (history_.poisoned()) {
+    post_diagnostic("range transpose: history unavailable");
+    return false;
+  }
+  const auto* range = current_range_set();
+  if (range == nullptr) {
+    post_diagnostic("range transpose: requires an arbitrary range selection");
+    return false;
+  }
+  const auto& selection = drag_.committed_selection();
+  if (!selection.has_value())
+    return false;
+  std::unique_ptr<graphscore::Command> command =
+      graphscore::make_range_transpose_command(project_, *selection, kind,
+                                               amount);
+  if (command == nullptr) {
+    post_diagnostic("range transpose: invalid pitch or range");
+    return false;
+  }
+  graphscore::CommandHistory::Transaction transaction =
+      history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active()) {
+    post_diagnostic("range transpose: edit rejected");
+    return false;
+  }
+  const auto invalidation = full_invalidation();
+  if (!invalidation.has_value() || !refresh_layout(invalidation)) {
+    const graphscore::Result rollback = transaction.abort();
+    if (!rollback.ok()) {
+      recover_from_failed_rollback();
+    } else {
+      layout_cache_.reset();
+      warm_layout_cache();
+    }
+    post_diagnostic("range transpose: layout refresh failed");
+    return false;
+  }
+  if (!transaction.commit().ok()) {
+    post_diagnostic("range transpose: commit failed");
+    return false;
+  }
+  return true;
+}
+
 // Moves the single selected notehead one diatonic staff step (M5-phase-20).
 // Requires the committed selection to be a NoteheadSet with exactly one
 // item; any other selection -- none, a range, a non-notehead arm, or a

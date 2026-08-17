@@ -91,6 +91,13 @@ class SelectionToolHandler final : public graphscore::InputHandler {
   // measure. Reachable only through the command palette.
   bool delete_measure();
 
+  // Deletes or transposes the committed arbitrary musical range. These are
+  // palette actions; the domain command keeps rhythm and range-boundary
+  // invariants atomic.
+  bool delete_selected_range();
+  bool transpose_selected_range(graphscore::RangeTransposeKind kind,
+                                std::int32_t                   amount);
+
   // Applies 3:2 in one action. An arbitrary validated ratio uses
   // apply_tuplet_ratio(); both create from a rhythmic range and change an
   // existing selected marking through the notation factories.

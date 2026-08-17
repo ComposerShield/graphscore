@@ -62,6 +62,7 @@
 #include <graphscore/domain/pickdown_ownership.hpp>
 #include <graphscore/domain/plugin_chain.hpp>
 #include <graphscore/domain/project.hpp>
+#include <graphscore/domain/range_edit_command.hpp>
 #include <graphscore/domain/register_event_command.hpp>
 #include <graphscore/domain/remove_beam_override_command.hpp>
 #include <graphscore/domain/remove_clef_change_command.hpp>

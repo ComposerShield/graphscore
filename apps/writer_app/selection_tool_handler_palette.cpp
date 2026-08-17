@@ -13,6 +13,7 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -416,6 +417,11 @@ palette_interval(PaletteCommandId id) {
     case PaletteCommandId::kInsertMeasureBefore:
     case PaletteCommandId::kAppendMeasure:
     case PaletteCommandId::kDeleteMeasure:
+    case PaletteCommandId::kDeleteRange:
+    case PaletteCommandId::kTransposeDiatonicUp:
+    case PaletteCommandId::kTransposeDiatonicDown:
+    case PaletteCommandId::kTransposeChromaticUp:
+    case PaletteCommandId::kTransposeChromaticDown:
     case PaletteCommandId::kCreateTriplet:
     case PaletteCommandId::kRemoveTuplet:
     case PaletteCommandId::kApplyAccent:
@@ -707,6 +713,42 @@ bool SelectionToolHandler::palette_command_available(
       return measure_insert_available(graphscore::MeasureInsertMode::kAppend);
     case PaletteCommandId::kDeleteMeasure:
       return measure_delete_available();
+    case PaletteCommandId::kDeleteRange:
+    case PaletteCommandId::kTransposeDiatonicUp:
+    case PaletteCommandId::kTransposeDiatonicDown:
+    case PaletteCommandId::kTransposeChromaticUp:
+    case PaletteCommandId::kTransposeChromaticDown: {
+      if (active_tool_ != graphscore::ActiveTool::kSelection ||
+          current_range_set() == nullptr ||
+          !drag_.committed_selection().has_value())
+        return false;
+      if (id == PaletteCommandId::kDeleteRange) {
+        std::unique_ptr<graphscore::Command> command =
+            graphscore::make_range_delete_command(project_,
+                                                  *drag_.committed_selection());
+        if (command == nullptr)
+          return false;
+        graphscore::Project candidate = project_;
+        return command->execute(candidate).ok();
+      }
+      const bool chromatic = id == PaletteCommandId::kTransposeChromaticUp ||
+                             id == PaletteCommandId::kTransposeChromaticDown;
+      const std::int32_t amount =
+          id == PaletteCommandId::kTransposeDiatonicDown ||
+                  id == PaletteCommandId::kTransposeChromaticDown
+              ? -1
+              : 1;
+      std::unique_ptr<graphscore::Command> command =
+          graphscore::make_range_transpose_command(
+              project_, *drag_.committed_selection(),
+              chromatic ? graphscore::RangeTransposeKind::kChromatic
+                        : graphscore::RangeTransposeKind::kDiatonic,
+              amount);
+      if (command == nullptr)
+        return false;
+      graphscore::Project candidate = project_;
+      return command->execute(candidate).ok();
+    }
     case PaletteCommandId::kCreateTriplet:
       return tuplet_ratio_available(*graphscore::TupletRatio::create(3, 2));
     case PaletteCommandId::kTupletRatioEntry:
@@ -825,6 +867,7 @@ bool SelectionToolHandler::palette_command_available(
     case PaletteCommandId::kClearPickdown:
       return pickdown_clear_available();
   }
+
   return false;
 }
 
@@ -967,6 +1010,14 @@ std::string SelectionToolHandler::palette_command_unavailable_reason(
       }
       return "requires an aligned full-measure selection";
     }
+    case PaletteCommandId::kDeleteRange:
+    case PaletteCommandId::kTransposeDiatonicUp:
+    case PaletteCommandId::kTransposeDiatonicDown:
+    case PaletteCommandId::kTransposeChromaticUp:
+    case PaletteCommandId::kTransposeChromaticDown:
+      return active_tool_ != graphscore::ActiveTool::kSelection
+                 ? "selection tool is not active"
+                 : "requires an arbitrary range selection";
     case PaletteCommandId::kCreateTriplet:
       return "requires an exact single-voice rhythmic range or tuplet marking";
     case PaletteCommandId::kTupletRatioEntry:
@@ -1164,6 +1215,11 @@ enum class PaletteToolGate : std::uint8_t { kAny, kEntry, kSelection };
     case PaletteCommandId::kAccessibleRangeStart:
     case PaletteCommandId::kAccessibleRangeEnd:
     case PaletteCommandId::kAccessibleRangeStaffScope:
+    case PaletteCommandId::kDeleteRange:
+    case PaletteCommandId::kTransposeDiatonicUp:
+    case PaletteCommandId::kTransposeDiatonicDown:
+    case PaletteCommandId::kTransposeChromaticUp:
+    case PaletteCommandId::kTransposeChromaticDown:
       return PaletteToolGate::kSelection;
     default:
       return PaletteToolGate::kAny;
@@ -1326,6 +1382,20 @@ bool SelectionToolHandler::run_palette_command(PaletteCommandId id) {
       return append_measure();
     case PaletteCommandId::kDeleteMeasure:
       return delete_measure();
+    case PaletteCommandId::kDeleteRange:
+      return delete_selected_range();
+    case PaletteCommandId::kTransposeDiatonicUp:
+      return transpose_selected_range(graphscore::RangeTransposeKind::kDiatonic,
+                                      1);
+    case PaletteCommandId::kTransposeDiatonicDown:
+      return transpose_selected_range(graphscore::RangeTransposeKind::kDiatonic,
+                                      -1);
+    case PaletteCommandId::kTransposeChromaticUp:
+      return transpose_selected_range(
+          graphscore::RangeTransposeKind::kChromatic, 1);
+    case PaletteCommandId::kTransposeChromaticDown:
+      return transpose_selected_range(
+          graphscore::RangeTransposeKind::kChromatic, -1);
     case PaletteCommandId::kCreateTriplet:
       return create_triplet();
     case PaletteCommandId::kTupletRatioEntry:

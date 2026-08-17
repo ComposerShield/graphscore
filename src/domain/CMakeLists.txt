@@ -66,6 +66,7 @@ add_library(graphscore_domain STATIC
   remove_output_connector_command.cpp
   remove_pedal_span_command.cpp
   remove_slur_command.cpp
+  range_edit_command.cpp
   remove_tempo_point_command.cpp
   reset_route_command.cpp
   restore_track_command.cpp
