@@ -11,15 +11,15 @@
 
 namespace graphscore {
 
+class VoiceContent;
+
 // Thin domain-layer wiring over graphscore/core/playback_mapping.hpp: these
 // functions extract already-attached articulation/duration/grace-note
 // context from this domain's existing Note/Chord/GraceGroup structures and
-// call straight into the core math -- no TrackLane/VoiceContent traversal
-// happens here. Exactly like playback_mapping.hpp's own functions, every
-// function below takes its governing context (which Dynamic/Hairpin/Slur
-// applies, the gap to the next onset, whether an event is tied) as an
-// already-resolved parameter; finding that context by walking a voice's
-// timeline remains deferred to a future runtime/scheduler phase, per
+// call straight into the core math. The overloads taking VoiceContent below
+// resolve only the grace group's immediate preceding event; all other context
+// (which Dynamic/Hairpin/Slur applies, the gap to the next onset, whether an
+// event is tied) remains an already-resolved parameter, per
 // playback_mapping.hpp's overview, "Scope: math only, not context
 // resolution".
 
@@ -97,5 +97,25 @@ struct HairpinVelocityContext {
 // note's own notated duration.
 [[nodiscard]] Rational grace_group_remaining_preceding_duration(
     const GraceGroup& group, Rational available_duration);
+
+// The raw duration budget available for a grace group to steal from its
+// immediately preceding sounding event in `voice`. A Rest, a missing
+// principal event, or a principal event at the start of the voice supplies no
+// budget and returns Rational(0), which selects the core fallback duration for
+// the grace notes. The principal event itself is never shortened by this
+// lookup.
+[[nodiscard]] Rational grace_group_preceding_available_duration(
+    const VoiceContent& voice, const GraceGroup& group);
+
+// Voice-timeline overloads: apply the default/configured grace-steal policy
+// to the event immediately preceding `group.principal_event`. Grace-note
+// durations are returned in group order; the remaining-duration overload is
+// the preceding event's post-steal budget, before that event's own
+// articulation is applied.
+[[nodiscard]] std::vector<Rational> grace_group_steal_durations(
+    const VoiceContent& voice, const GraceGroup& group);
+
+[[nodiscard]] Rational grace_group_remaining_preceding_duration(
+    const VoiceContent& voice, const GraceGroup& group);
 
 }  // namespace graphscore

@@ -6,6 +6,8 @@
 #include <optional>
 #include <vector>
 
+#include <graphscore/domain/voice_content.hpp>
+
 namespace graphscore {
 
 namespace {
@@ -35,6 +37,19 @@ namespace {
   if (group.notes.empty())
     return GraceNoteType::kAppoggiatura;
   return group.notes.front().type;
+}
+
+[[nodiscard]] const VoiceEvent* find_preceding_sounding_event(
+    const VoiceContent& voice, const GraceGroup& group) {
+  const std::vector<VoiceEvent>& events = voice.events();
+  for (std::size_t index = 0; index < events.size(); ++index) {
+    if (event_id(events[index]) != group.principal_event)
+      continue;
+    if (index == 0 || std::holds_alternative<Rest>(events[index - 1]))
+      return nullptr;
+    return &events[index - 1];
+  }
+  return nullptr;
 }
 
 }  // namespace
@@ -72,6 +87,26 @@ Rational grace_group_remaining_preceding_duration(const GraceGroup& group,
                                                   Rational available_duration) {
   return grace_steal_remaining_duration(group_grace_note_type(group),
                                         group.notes.size(), available_duration);
+}
+
+Rational grace_group_preceding_available_duration(const VoiceContent& voice,
+                                                  const GraceGroup&   group) {
+  const VoiceEvent* preceding = find_preceding_sounding_event(voice, group);
+  if (preceding == nullptr)
+    return Rational(0);
+  return event_duration(*preceding).resolved();
+}
+
+std::vector<Rational> grace_group_steal_durations(const VoiceContent& voice,
+                                                  const GraceGroup&   group) {
+  return grace_group_steal_durations(
+      group, grace_group_preceding_available_duration(voice, group));
+}
+
+Rational grace_group_remaining_preceding_duration(const VoiceContent& voice,
+                                                  const GraceGroup&   group) {
+  return grace_group_remaining_preceding_duration(
+      group, grace_group_preceding_available_duration(voice, group));
 }
 
 }  // namespace graphscore

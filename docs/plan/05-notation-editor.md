@@ -114,7 +114,7 @@ revalidation owns remapping the cursor across both.
 
 ### Playback semantics in the editor model
 
-- [ ] M5-phase-38 Grace notes steal configured/default time from the preceding note.
+- [x] M5-phase-38 Grace notes steal configured/default time from the preceding note.
 - [ ] M5-phase-39 Dynamics use project-wide editable velocity defaults; hairpins interpolate note-on velocities.
 - [ ] M5-phase-40 Slurs create legato overlap unless an explicit articulation overrides it.
 - [ ] M5-phase-41 Articulations affect documented note velocity and/or duration.
