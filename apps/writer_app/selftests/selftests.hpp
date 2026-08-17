@@ -42,6 +42,7 @@ constexpr std::string_view kRendererBackendTestFlag = "--test-renderer-backend";
 constexpr std::string_view kRendererZoomTestFlag    = "--test-renderer-zoom";
 constexpr std::string_view kRendererPresentTestFlag = "--test-renderer-present";
 constexpr std::string_view kRenderGeometryTestFlag  = "--test-render-geometry";
+constexpr std::string_view kM5AcceptanceTestFlag    = "--test-m5-acceptance";
 
 [[nodiscard]] int selection_tool_test();
 [[nodiscard]] int selection_tool_shell_test();
@@ -70,6 +71,7 @@ constexpr std::string_view kRenderGeometryTestFlag  = "--test-render-geometry";
 [[nodiscard]] int renderer_zoom_test();
 [[nodiscard]] int renderer_present_test();
 [[nodiscard]] int render_geometry_test();
+[[nodiscard]] int m5_acceptance_test();
 
 // notehead_move_test is split across two translation units (its local-move
 // checks and its rollback-failure checks), so the four rollback checks below

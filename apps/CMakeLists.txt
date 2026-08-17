@@ -36,6 +36,7 @@ add_executable(graphscore_writer_app
   writer_app/selftests/selftest_key_events.cpp
   writer_app/selftests/selftest_key_selection.cpp
   writer_app/selftests/selftest_marking_style_edit.cpp
+  writer_app/selftests/selftest_m5_acceptance.cpp
   writer_app/selftests/selftest_measure_edit.cpp
   writer_app/selftests/selftest_notation_accessibility.cpp
   writer_app/selftests/selftest_notehead_delete.cpp
