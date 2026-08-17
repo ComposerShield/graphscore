@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <graphscore/domain/command_history.hpp>
 #include <graphscore/domain/graph_position.hpp>
 #include <graphscore/notation/notation_layout.hpp>
 
@@ -414,12 +415,75 @@ struct CanvasNodeNotation {
   }
 };
 
+// The short orthogonal legs that attach one connected output to its source
+// and destination node bounds. Port distribution and complete route finding
+// are separate phases; these retained legs establish the moving endpoint
+// geometry without persisting derived canvas coordinates in the domain model.
+struct CanvasConnectorEndpointLeg {
+  GraphPosition attachment;
+  GraphPosition outer;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorEndpointLeg&) const =
+      default;
+};
+
+struct CanvasConnectorGeometry {
+  static constexpr double kEndpointClearance = 24.0;
+
+  NodeId                     source_node;
+  ConnectorId                source_connector;
+  NodeId                     destination_node;
+  ConnectorId                destination_connector;
+  CanvasConnectorEndpointLeg source_leg;
+  CanvasConnectorEndpointLeg destination_leg;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorGeometry&) const = default;
+};
+
 struct CanvasNotationScene {
   // Project order is retained so paint and hit-test ordering never depend on
   // UUIDs or associative-container traversal.
   std::vector<CanvasNodeNotation> nodes;
+  // Project/output order is retained for the same reason. Only connected
+  // outputs have derived endpoint geometry.
+  std::vector<CanvasConnectorGeometry> connectors;
 
   [[nodiscard]] bool complete() const noexcept;
+};
+
+// Stages one node drag in retained canvas geometry. Pointer updates move the
+// node and every attached endpoint leg immediately, while the Project remains
+// unchanged. finish() records one SetNodePositionCommand; cancel() (and the
+// destructor safety net) restores the retained scene to its starting state.
+class CanvasNodeDragController {
+ public:
+  CanvasNodeDragController(Project& project, CommandHistory& history,
+                           CanvasNotationScene& scene) noexcept;
+  ~CanvasNodeDragController();
+
+  CanvasNodeDragController(const CanvasNodeDragController&)            = delete;
+  CanvasNodeDragController& operator=(const CanvasNodeDragController&) = delete;
+  CanvasNodeDragController(CanvasNodeDragController&&)                 = delete;
+  CanvasNodeDragController& operator=(CanvasNodeDragController&&)      = delete;
+
+  [[nodiscard]] bool   begin(NodeId node_id, GraphPosition pointer) noexcept;
+  [[nodiscard]] bool   update(GraphPosition pointer) noexcept;
+  [[nodiscard]] Result finish() noexcept;
+  void                 cancel() noexcept;
+
+  [[nodiscard]] bool active() const noexcept { return active_; }
+
+ private:
+  [[nodiscard]] CanvasNodeNotation* dragged_node() noexcept;
+  [[nodiscard]] bool set_preview_position(GraphPosition position) noexcept;
+
+  Project&             project_;
+  CommandHistory&      history_;
+  CanvasNotationScene& scene_;
+  NodeId               node_id_;
+  GraphPosition        pointer_start_;
+  GraphPosition        position_start_;
+  bool                 active_ = false;
 };
 
 class Canvas {

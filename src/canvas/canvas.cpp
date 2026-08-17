@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <graphscore/canvas/graphscore_canvas.hpp>
+#include <graphscore/domain/node.hpp>
+#include <graphscore/domain/project.hpp>
+#include <graphscore/domain/set_node_position_command.hpp>
 #include <graphscore/domain/validation_service.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
+#include <new>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -69,6 +74,70 @@ constexpr int kCanvasVersion = 1;
       {0.0, CanvasNodeGeometry::kHeaderHeight, width, content_height},
       {0.0, CanvasNodeGeometry::kHeaderHeight, notation_width,
        layout.has_value() ? layout->bounds.height : 0.0}};
+}
+
+[[nodiscard]] const CanvasNodeNotation* find_scene_node(
+    const CanvasNotationScene& scene, NodeId node_id) noexcept {
+  const auto found =
+      std::ranges::find(scene.nodes, node_id, &CanvasNodeNotation::node_id);
+  return found == scene.nodes.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] std::optional<CanvasConnectorEndpointLeg> endpoint_leg(
+    const WorldBounds& bounds, bool source) noexcept {
+  const double attachment_x =
+      source ? bounds.origin.x + bounds.width : bounds.origin.x;
+  const double attachment_y = bounds.origin.y + bounds.height / 2.0;
+  const double outer_x =
+      attachment_x + (source ? CanvasConnectorGeometry::kEndpointClearance
+                             : -CanvasConnectorGeometry::kEndpointClearance);
+  if (!std::isfinite(attachment_x) || !std::isfinite(attachment_y) ||
+      !std::isfinite(outer_x) ||
+      (source && bounds.width != 0.0 && attachment_x == bounds.origin.x) ||
+      (bounds.height != 0.0 && attachment_y == bounds.origin.y) ||
+      outer_x == attachment_x) {
+    return std::nullopt;
+  }
+  return CanvasConnectorEndpointLeg{{attachment_x, attachment_y},
+                                    {outer_x, attachment_y}};
+}
+
+[[nodiscard]] std::optional<CanvasConnectorGeometry> connector_geometry(
+    const CanvasNotationScene& scene, NodeId source_node,
+    ConnectorId source_connector, const ConnectorDestination& destination) {
+  const CanvasNodeNotation* const source = find_scene_node(scene, source_node);
+  const CanvasNodeNotation* const target =
+      find_scene_node(scene, destination.node);
+  if (source == nullptr || target == nullptr) {
+    return std::nullopt;
+  }
+  const auto source_leg      = endpoint_leg(source->geometry.bounds, true);
+  const auto destination_leg = endpoint_leg(target->geometry.bounds, false);
+  if (!source_leg.has_value() || !destination_leg.has_value()) {
+    return std::nullopt;
+  }
+  return CanvasConnectorGeometry{source_node,      source_connector,
+                                 destination.node, destination.connector,
+                                 *source_leg,      *destination_leg};
+}
+
+[[nodiscard]] bool refresh_attached_connector_legs(CanvasNotationScene& scene,
+                                                   NodeId moved_node) noexcept {
+  for (CanvasConnectorGeometry& connector : scene.connectors) {
+    if (connector.source_node != moved_node &&
+        connector.destination_node != moved_node) {
+      continue;
+    }
+    const ConnectorDestination destination{connector.destination_node,
+                                           connector.destination_connector};
+    const auto                 refreshed = connector_geometry(
+        scene, connector.source_node, connector.source_connector, destination);
+    if (!refreshed.has_value()) {
+      return false;
+    }
+    connector = *refreshed;
+  }
+  return true;
 }
 
 [[nodiscard]] std::optional<double> map_forward_raw(
@@ -445,6 +514,119 @@ bool CanvasNotationScene::complete() const noexcept {
   });
 }
 
+CanvasNodeDragController::CanvasNodeDragController(
+    Project& project, CommandHistory& history,
+    CanvasNotationScene& scene) noexcept
+    : project_(project), history_(history), scene_(scene) {}
+
+CanvasNodeDragController::~CanvasNodeDragController() {
+  cancel();
+}
+
+bool CanvasNodeDragController::begin(NodeId        node_id,
+                                     GraphPosition pointer) noexcept {
+  if (active_ || !is_finite(pointer)) {
+    return false;
+  }
+  Node* const project_node = project_.find_node(node_id);
+  const auto  scene_node =
+      std::ranges::find(scene_.nodes, node_id, &CanvasNodeNotation::node_id);
+  if (project_node == nullptr || scene_node == scene_.nodes.end() ||
+      scene_node->position != project_node->position() ||
+      !is_finite(scene_node->position)) {
+    return false;
+  }
+  node_id_        = node_id;
+  pointer_start_  = pointer;
+  position_start_ = scene_node->position;
+  active_         = true;
+  return true;
+}
+
+bool CanvasNodeDragController::update(GraphPosition pointer) noexcept {
+  if (!active_ || !is_finite(pointer)) {
+    return false;
+  }
+  const GraphPosition delta{pointer.x - pointer_start_.x,
+                            pointer.y - pointer_start_.y};
+  const GraphPosition position{position_start_.x + delta.x,
+                               position_start_.y + delta.y};
+  if (!is_finite(delta) || !is_finite(position) ||
+      (delta.x != 0.0 && position.x == position_start_.x) ||
+      (delta.y != 0.0 && position.y == position_start_.y)) {
+    return false;
+  }
+  return set_preview_position(position);
+}
+
+Result CanvasNodeDragController::finish() noexcept {
+  if (!active_) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  CanvasNodeNotation* const node         = dragged_node();
+  Node* const               project_node = project_.find_node(node_id_);
+  if (node == nullptr || project_node == nullptr ||
+      project_node->position() != position_start_) {
+    cancel();
+    return Result(ResultCode::kInvalidArgument);
+  }
+  const GraphPosition final_position = node->position;
+  if (final_position == position_start_) {
+    active_ = false;
+    return Result();
+  }
+  std::unique_ptr<SetNodePositionCommand> command;
+  try {
+    command =
+        std::make_unique<SetNodePositionCommand>(node_id_, final_position);
+  } catch (const std::bad_alloc&) {
+    cancel();
+    return Result(ResultCode::kOutOfMemory);
+  } catch (...) {
+    cancel();
+    return Result(ResultCode::kOutOfMemory);
+  }
+  const Result result = history_.execute_new(std::move(command), project_);
+  if (!result.ok()) {
+    cancel();
+    return result;
+  }
+  active_ = false;
+  return Result();
+}
+
+void CanvasNodeDragController::cancel() noexcept {
+  if (!active_) {
+    return;
+  }
+  static_cast<void>(set_preview_position(position_start_));
+  active_ = false;
+}
+
+CanvasNodeNotation* CanvasNodeDragController::dragged_node() noexcept {
+  const auto found =
+      std::ranges::find(scene_.nodes, node_id_, &CanvasNodeNotation::node_id);
+  return found == scene_.nodes.end() ? nullptr : &*found;
+}
+
+bool CanvasNodeDragController::set_preview_position(
+    GraphPosition position) noexcept {
+  CanvasNodeNotation* const node = dragged_node();
+  if (node == nullptr || !is_finite(position)) {
+    return false;
+  }
+  const GraphPosition previous = node->position;
+  node->position               = position;
+  node->geometry.bounds.origin = position;
+  if (!refresh_attached_connector_legs(scene_, node_id_)) {
+    node->position               = previous;
+    node->geometry.bounds.origin = previous;
+    static_cast<void>(refresh_attached_connector_legs(scene_, node_id_));
+    return false;
+  }
+  return true;
+}
+
 CanvasNotationScene Canvas::layout_nodes(
     const Project& project, const GlyphMetrics& metrics,
     const NotationLayoutOptions& options) const {
@@ -469,6 +651,25 @@ CanvasNotationScene Canvas::layout_nodes(
                          {CanvasNodeHeaderAction::kOpenTempoLane},
                          {CanvasNodeHeaderAction::kPlay}},
         geometry, result.error, std::move(result.layout)});
+  }
+  for (const Node& node : project.nodes()) {
+    for (const OutputConnector& output : node.outputs()) {
+      if (!output.destination().has_value()) {
+        continue;
+      }
+      const Node* const destination_node =
+          project.find_node(output.destination()->node);
+      if (destination_node == nullptr ||
+          destination_node->find_input(output.destination()->connector) ==
+              nullptr) {
+        continue;
+      }
+      const auto geometry = connector_geometry(scene, node.id(), output.id(),
+                                               *output.destination());
+      if (geometry.has_value()) {
+        scene.connectors.push_back(*geometry);
+      }
+    }
   }
   return scene;
 }
