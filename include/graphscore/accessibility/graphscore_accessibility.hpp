@@ -48,8 +48,10 @@ enum class AccessibilityConnectorDirection : std::uint8_t {
     std::string_view name, AccessibilityConnectorDirection direction);
 
 enum class AccessibilityState : std::uint8_t {
-  kNone     = 0,
-  kSelected = 1U << 0U,
+  kNone      = 0,
+  kSelected  = 1U << 0U,
+  kFocused   = 1U << 1U,
+  kOffscreen = 1U << 2U,
 };
 
 [[nodiscard]] constexpr AccessibilityState operator|(AccessibilityState left,
@@ -105,19 +107,28 @@ class AccessibilityTree {
     return root_;
   }
 
+  [[nodiscard]] std::optional<std::size_t> focused() const noexcept {
+    return focused_;
+  }
+
   [[nodiscard]] const AccessibilityNode* find(const std::string& id) const;
 
  private:
   friend AccessibilityBuildResult build_notation_accessibility_tree(
       const Project& project, NodeId node_id, const NotationLayout& layout,
       const NotePaletteState& palette, const Selection* selection,
-      std::span<const AccessibilityNode::Action> available_actions);
+      std::span<const AccessibilityNode::Action> available_actions,
+      std::span<const AccessibilityNode::Action> palette_actions,
+      std::string_view                           focused_id,
+      std::span<const std::string>               focus_ancestors);
 
   AccessibilityTree(std::vector<AccessibilityNode> nodes,
-                    std::optional<std::size_t>     root) noexcept;
+                    std::optional<std::size_t>     root,
+                    std::optional<std::size_t>     focused) noexcept;
 
   std::vector<AccessibilityNode> nodes_;
   std::optional<std::size_t>     root_;
+  std::optional<std::size_t>     focused_;
 };
 
 enum class AccessibilityBuildError : std::uint8_t {
@@ -143,10 +154,16 @@ struct AccessibilityBuildResult {
 
 // Projects the focused notation editor into stable musical semantics. Render
 // commands are never inspected, so one logical object remains one accessible
-// object regardless of how many glyphs or path segments engrave it.
+// object regardless of how many glyphs or path segments engrave it. Musical
+// objects omitted from the retained layout remain virtual tree nodes with
+// kOffscreen state and no bounds, so a platform bridge can materialize them on
+// demand without making viewport culling observable to assistive technology.
 [[nodiscard]] AccessibilityBuildResult build_notation_accessibility_tree(
     const Project& project, NodeId node_id, const NotationLayout& layout,
     const NotePaletteState& palette, const Selection* selection = nullptr,
-    std::span<const AccessibilityNode::Action> available_actions = {});
+    std::span<const AccessibilityNode::Action> available_actions = {},
+    std::span<const AccessibilityNode::Action> palette_actions   = {},
+    std::string_view                           focused_id        = {},
+    std::span<const std::string>               focus_ancestors   = {});
 
 }  // namespace graphscore

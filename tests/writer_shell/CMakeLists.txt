@@ -340,6 +340,17 @@ set_tests_properties(graphscore_writer_step_entry_test PROPERTIES
   TIMEOUT 30
 )
 
+# M5-phase-45: invoke the semantic tree's stable app-owned actions directly,
+# proving note entry and editing need neither pointer nor synthesized key input.
+add_test(NAME graphscore_writer_notation_accessibility_test
+  COMMAND graphscore_writer_app --test-notation-accessibility
+)
+
+set_tests_properties(graphscore_writer_notation_accessibility_test PROPERTIES
+  PASS_REGULAR_EXPRESSION "notation-accessibility-test: ok"
+  TIMEOUT 30
+)
+
 # M5-phase-27: exercise the app-owned in-memory clipboard handoff (copy/cut/
 # paste) and undo/redo through the writer executable's own --test-clipboard
 # path.

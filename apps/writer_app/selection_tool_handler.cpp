@@ -131,6 +131,11 @@ void SelectionToolHandler::set_committed_selection(
   update_highlight();
 }
 
+const graphscore::NotePaletteState& SelectionToolHandler::note_palette_state()
+    const noexcept {
+  return palette_;
+}
+
 const graphscore::SelectionDragState& SelectionToolHandler::drag_state()
     const noexcept {
   return drag_;

@@ -14,6 +14,7 @@ add_executable(graphscore_writer_app
   writer_app/app_shell_report.cpp
   writer_app/canvas_gesture_handler.cpp
   writer_app/command_palette.cpp
+  writer_app/notation_accessibility.cpp
   writer_app/selection_tool_handler.cpp
   writer_app/selection_tool_handler_clipboard.cpp
   writer_app/selection_tool_handler_edits.cpp
@@ -36,6 +37,7 @@ add_executable(graphscore_writer_app
   writer_app/selftests/selftest_key_selection.cpp
   writer_app/selftests/selftest_marking_style_edit.cpp
   writer_app/selftests/selftest_measure_edit.cpp
+  writer_app/selftests/selftest_notation_accessibility.cpp
   writer_app/selftests/selftest_notehead_delete.cpp
   writer_app/selftests/selftest_notehead_move.cpp
   writer_app/selftests/selftest_notehead_move_rollback.cpp

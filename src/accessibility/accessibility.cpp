@@ -8,6 +8,7 @@
 #include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <unordered_set>
 #include <utility>
@@ -200,11 +201,18 @@ template <typename Predicate>
   return result;
 }
 
+[[nodiscard]] AccessibilityState layout_state(
+    const std::optional<NotationRect>& bounds) noexcept {
+  return bounds.has_value() ? AccessibilityState::kNone
+                            : AccessibilityState::kOffscreen;
+}
+
 class TreeBuilder {
  public:
   std::size_t add(std::string id, AccessibilityRole role, std::string name,
                   std::optional<NotationRect> bounds,
-                  std::optional<std::size_t>  parent) {
+                  std::optional<std::size_t>  parent,
+                  AccessibilityState states = AccessibilityState::kNone) {
     if (!ids_.insert(id).second)
       duplicate_id_ = true;
     const std::size_t index = nodes_.size();
@@ -213,7 +221,7 @@ class TreeBuilder {
                                        std::move(name),
                                        {},
                                        bounds,
-                                       AccessibilityState::kNone,
+                                       states,
                                        {},
                                        parent,
                                        {},
@@ -232,6 +240,38 @@ class TreeBuilder {
         node.actions.assign(available_actions.begin(), available_actions.end());
       }
     }
+  }
+
+  [[nodiscard]] std::optional<std::size_t> focus(
+      std::string_view requested, std::span<const std::string> saved_ancestors,
+      std::size_t root) {
+    if (requested.empty())
+      return std::nullopt;
+    const auto mark_focused = [&](const std::string& id) {
+      const auto found = std::ranges::find(nodes_, id, &AccessibilityNode::id);
+      if (found == nodes_.end())
+        return std::optional<std::size_t>{};
+      found->states = found->states | AccessibilityState::kFocused;
+      return std::optional<std::size_t>{
+          static_cast<std::size_t>(found - nodes_.begin())};
+    };
+    std::string candidate(requested);
+    if (const auto exact = mark_focused(candidate))
+      return exact;
+    for (const std::string& ancestor : saved_ancestors) {
+      if (const auto fallback = mark_focused(ancestor))
+        return fallback;
+    }
+    while (!candidate.empty()) {
+      const std::size_t separator = candidate.rfind('/');
+      if (separator == std::string::npos)
+        break;
+      candidate.resize(separator);
+      if (const auto fallback = mark_focused(candidate))
+        return fallback;
+    }
+    nodes_[root].states = nodes_[root].states | AccessibilityState::kFocused;
+    return root;
   }
 
   void set_value(std::size_t node, std::string value) {
@@ -278,10 +318,10 @@ void add_record_markings(TreeBuilder& builder, const NotationLayout& layout,
                                const std::string& name) {
     for (const auto& record : records) {
       const auto bounds = marking_bounds(layout, record.id);
-      if (bounds.has_value()) {
-        builder.add(marking_path(voice_id, kind, record.id),
-                    AccessibilityRole::kMarking, name, bounds, voice_node);
-      }
+      builder.add(marking_path(voice_id, kind, record.id),
+                  AccessibilityRole::kMarking, name, bounds, voice_node,
+                  bounds.has_value() ? AccessibilityState::kNone
+                                     : AccessibilityState::kOffscreen);
     }
   };
   add_records(content.dynamics(), "dynamic", "Dynamic");
@@ -307,10 +347,9 @@ void add_event_semantics(TreeBuilder& builder, const NotationLayout& layout,
         const auto bounds = embedded_marking_bounds(
             layout, event_entity,
             "/articulation/" + std::to_string(index) + "/");
-        if (bounds.has_value()) {
-          builder.add(id, AccessibilityRole::kMarking, "Articulation", bounds,
-                                  voice_node);
-        }
+        const AccessibilityState state = layout_state(bounds);
+        builder.add(id, AccessibilityRole::kMarking, "Articulation", bounds,
+                                voice_node, state);
       }
     };
 
@@ -318,68 +357,68 @@ void add_event_semantics(TreeBuilder& builder, const NotationLayout& layout,
         [&](const auto& concrete) {
           using Event = std::decay_t<decltype(concrete)>;
           if constexpr (std::is_same_v<Event, Note>) {
-            const auto bounds = event_bounds(layout, concrete.id);
-            if (bounds.has_value()) {
-              const std::size_t note_node =
-                  builder.add(entity_path(voice_id, "note", concrete.id),
-                              AccessibilityRole::kNote,
-                              pitch_name(concrete.pitch), bounds, voice_node);
-              builder.set_value(note_node,
-                                event_value(concrete.pitch, concrete.duration,
-                                            voice, position, timeline));
-            }
+            const auto        bounds    = event_bounds(layout, concrete.id);
+            const std::size_t note_node = builder.add(
+                entity_path(voice_id, "note", concrete.id),
+                AccessibilityRole::kNote, pitch_name(concrete.pitch), bounds,
+                voice_node,
+                bounds.has_value() ? AccessibilityState::kNone
+                                   : AccessibilityState::kOffscreen);
+            builder.set_value(
+                note_node, event_value(concrete.pitch, concrete.duration, voice,
+                                       position, timeline));
             if (concrete.tied_to_next) {
               const auto tie_bounds =
                   embedded_marking_bounds(layout, concrete.id, "/tie/");
-              if (tie_bounds.has_value()) {
-                builder.add(marking_path(voice_id, "tie", concrete.id),
-                            AccessibilityRole::kMarking, "Tie", tie_bounds,
-                            voice_node);
-              }
+              builder.add(
+                  marking_path(voice_id, "tie", concrete.id),
+                  AccessibilityRole::kMarking, "Tie", tie_bounds, voice_node,
+                  tie_bounds.has_value() ? AccessibilityState::kNone
+                                         : AccessibilityState::kOffscreen);
             }
             add_event_markings(concrete);
           } else if constexpr (std::is_same_v<Event, Chord>) {
-            const auto chord_bounds = event_bounds(layout, concrete.id);
-            if (chord_bounds.has_value()) {
-              const std::size_t chord_node = builder.add(
-                  entity_path(voice_id, "chord", concrete.id),
-                  AccessibilityRole::kChord, "Chord", chord_bounds, voice_node);
-              builder.set_value(chord_node,
-                                event_value(std::nullopt, concrete.duration,
-                                            voice, position, timeline));
-              for (const ChordNote& note : concrete.notes) {
-                const auto bounds = event_bounds(layout, note.id);
-                if (bounds.has_value()) {
-                  const std::size_t note_node =
-                      builder.add(entity_path(voice_id, "note", note.id),
-                                  AccessibilityRole::kNote,
-                                  pitch_name(note.pitch), bounds, chord_node);
-                  builder.set_value(note_node,
-                                    event_value(note.pitch, concrete.duration,
-                                                voice, position, timeline));
-                }
-                if (note.tied_to_next) {
-                  const auto tie_bounds =
-                      embedded_marking_bounds(layout, note.id, "/tie/");
-                  if (tie_bounds.has_value()) {
-                    builder.add(marking_path(voice_id, "tie", note.id),
-                                AccessibilityRole::kMarking, "Tie", tie_bounds,
-                                voice_node);
-                  }
-                }
-              }
-              add_event_markings(concrete);
-            }
-          } else {
-            const auto bounds = event_bounds(layout, concrete.id);
-            if (bounds.has_value()) {
-              const std::size_t rest_node = builder.add(
-                  entity_path(voice_id, "rest", concrete.id),
-                  AccessibilityRole::kRest, "Rest", bounds, voice_node);
+            const auto        chord_bounds = event_bounds(layout, concrete.id);
+            const std::size_t chord_node   = builder.add(
+                entity_path(voice_id, "chord", concrete.id),
+                AccessibilityRole::kChord, "Chord", chord_bounds, voice_node,
+                chord_bounds.has_value() ? AccessibilityState::kNone
+                                           : AccessibilityState::kOffscreen);
+            builder.set_value(
+                chord_node, event_value(std::nullopt, concrete.duration, voice,
+                                        position, timeline));
+            for (const ChordNote& note : concrete.notes) {
+              const auto        bounds    = event_bounds(layout, note.id);
+              const std::size_t note_node = builder.add(
+                  entity_path(voice_id, "note", note.id),
+                  AccessibilityRole::kNote, pitch_name(note.pitch), bounds,
+                  chord_node,
+                  bounds.has_value() ? AccessibilityState::kNone
+                                     : AccessibilityState::kOffscreen);
               builder.set_value(
-                  rest_node, event_value(std::nullopt, concrete.duration, voice,
+                  note_node, event_value(note.pitch, concrete.duration, voice,
                                          position, timeline));
+              if (note.tied_to_next) {
+                const auto tie_bounds =
+                    embedded_marking_bounds(layout, note.id, "/tie/");
+                builder.add(
+                    marking_path(voice_id, "tie", note.id),
+                    AccessibilityRole::kMarking, "Tie", tie_bounds, voice_node,
+                    tie_bounds.has_value() ? AccessibilityState::kNone
+                                           : AccessibilityState::kOffscreen);
+              }
             }
+            add_event_markings(concrete);
+          } else {
+            const auto        bounds    = event_bounds(layout, concrete.id);
+            const std::size_t rest_node = builder.add(
+                entity_path(voice_id, "rest", concrete.id),
+                AccessibilityRole::kRest, "Rest", bounds, voice_node,
+                bounds.has_value() ? AccessibilityState::kNone
+                                   : AccessibilityState::kOffscreen);
+            builder.set_value(
+                rest_node, event_value(std::nullopt, concrete.duration, voice,
+                                       position, timeline));
           }
         },
         event);
@@ -395,27 +434,27 @@ void add_event_semantics(TreeBuilder& builder, const NotationLayout& layout,
               embedded_marking_bounds(layout, event_id(member), "/tuplet/"));
         }
       }
-      if (bounds.has_value()) {
-        builder.add(marking_path(voice_id, "tuplet", event_entity),
-                    AccessibilityRole::kMarking, "Tuplet", bounds, voice_node);
-      }
+      builder.add(marking_path(voice_id, "tuplet", event_entity),
+                  AccessibilityRole::kMarking, "Tuplet", bounds, voice_node,
+                  bounds.has_value() ? AccessibilityState::kNone
+                                     : AccessibilityState::kOffscreen);
     }
     position = position + event_duration(event).resolved();
   }
 
   for (const GraceGroup& group : content.grace_groups()) {
     for (const GraceNote& note : group.notes) {
-      const auto bounds = event_bounds(layout, note.id);
-      if (bounds.has_value()) {
-        const std::size_t note_node = builder.add(
-            entity_path(voice_id, "note", note.id), AccessibilityRole::kNote,
-            "Grace " + pitch_name(note.pitch), bounds, voice_node);
-        const auto grace_position = content.position_of_event(note.id);
-        if (grace_position.has_value()) {
-          builder.set_value(note_node,
-                            event_value(note.pitch, note.duration, voice,
-                                        *grace_position, timeline));
-        }
+      const auto        bounds    = event_bounds(layout, note.id);
+      const std::size_t note_node = builder.add(
+          entity_path(voice_id, "note", note.id), AccessibilityRole::kNote,
+          "Grace " + pitch_name(note.pitch), bounds, voice_node,
+          bounds.has_value() ? AccessibilityState::kNone
+                             : AccessibilityState::kOffscreen);
+      const auto grace_position = content.position_of_event(note.id);
+      if (grace_position.has_value()) {
+        builder.set_value(note_node,
+                          event_value(note.pitch, note.duration, voice,
+                                      *grace_position, timeline));
       }
     }
   }
@@ -512,9 +551,10 @@ void add_event_semantics(TreeBuilder& builder, const NotationLayout& layout,
 
 }  // namespace
 
-AccessibilityTree::AccessibilityTree(std::vector<AccessibilityNode> nodes,
-                                     std::optional<std::size_t> root) noexcept
-    : nodes_(std::move(nodes)), root_(root) {}
+AccessibilityTree::AccessibilityTree(
+    std::vector<AccessibilityNode> nodes, std::optional<std::size_t> root,
+    std::optional<std::size_t> focused) noexcept
+    : nodes_(std::move(nodes)), root_(root), focused_(focused) {}
 
 const AccessibilityNode* AccessibilityTree::find(const std::string& id) const {
   const auto found = std::ranges::find(nodes_, id, &AccessibilityNode::id);
@@ -541,7 +581,9 @@ std::string connector_accessibility_label(
 AccessibilityBuildResult build_notation_accessibility_tree(
     const Project& project, NodeId node_id, const NotationLayout& layout,
     const NotePaletteState& palette, const Selection* selection,
-    std::span<const AccessibilityNode::Action> available_actions) {
+    std::span<const AccessibilityNode::Action> available_actions,
+    std::span<const AccessibilityNode::Action> palette_actions,
+    std::string_view focused_id, std::span<const std::string> focus_ancestors) {
   const Node* node = project.find_node(node_id);
   if (node == nullptr)
     return {AccessibilityBuildError::kNodeNotFound, std::nullopt};
@@ -579,13 +621,21 @@ AccessibilityBuildResult build_notation_accessibility_tree(
     builder.set_value(connector, "Output port");
   }
 
-  for (const SystemLayout& system : layout.systems) {
-    for (const MeasureLayout& measure : system.measures) {
-      builder.add(
-          measure_path(node_id, measure.ordinal), AccessibilityRole::kMeasure,
-          "Measure " + std::to_string(measure.ordinal + 1),
-          container_bounds(layout, measure.id.value, HitRole::kMeasure), root);
+  for (std::size_t ordinal = 0;
+       ordinal < node->timeline()->measures().measure_count(); ++ordinal) {
+    std::optional<NotationRect> bounds;
+    for (const SystemLayout& system : layout.systems) {
+      const auto measure =
+          std::ranges::find(system.measures, ordinal, &MeasureLayout::ordinal);
+      if (measure != system.measures.end()) {
+        bounds = container_bounds(layout, measure->id.value, HitRole::kMeasure);
+        break;
+      }
     }
+    builder.add(measure_path(node_id, ordinal), AccessibilityRole::kMeasure,
+                "Measure " + std::to_string(ordinal + 1U), bounds, root,
+                bounds.has_value() ? AccessibilityState::kNone
+                                   : AccessibilityState::kOffscreen);
   }
 
   for (const Track& track : project.active_tracks()) {
@@ -624,12 +674,11 @@ AccessibilityBuildResult build_notation_accessibility_tree(
       if (const auto* spans = lane->pedal_spans(stave.id)) {
         for (const PedalSpan& span : *spans) {
           const auto bounds = marking_bounds(layout, span.id);
-          if (bounds.has_value()) {
-            builder.add(marking_path(staff_path(node_id, track.id(), stave.id),
-                                     "pedal", span.id),
-                        AccessibilityRole::kMarking, "Pedal", bounds,
-                        staff_node);
-          }
+          builder.add(marking_path(staff_path(node_id, track.id(), stave.id),
+                                   "pedal", span.id),
+                      AccessibilityRole::kMarking, "Pedal", bounds, staff_node,
+                      bounds.has_value() ? AccessibilityState::kNone
+                                         : AccessibilityState::kOffscreen);
         }
       }
     }
@@ -640,7 +689,7 @@ AccessibilityBuildResult build_notation_accessibility_tree(
       palette.entry_kind() == NotePaletteEntryKind::kNote ? "Note palette"
                                                           : "Rest palette",
       std::nullopt, root);
-  (void)palette_node;
+  builder.set_actions(palette_node, palette_actions);
   const std::size_t selection_node = builder.add(
       append_path(node_path(node_id), "selection"),
       AccessibilityRole::kSelection, "Selection", std::nullopt, root);
@@ -655,8 +704,10 @@ AccessibilityBuildResult build_notation_accessibility_tree(
   builder.select_related(related, available_actions);
   builder.set_related(selection_node, std::move(related));
   builder.set_actions(selection_node, available_actions);
+  const std::optional<std::size_t> focused =
+      builder.focus(focused_id, focus_ancestors, root);
   return {AccessibilityBuildError::kNone,
-          AccessibilityTree(std::move(builder).take_nodes(), root)};
+          AccessibilityTree(std::move(builder).take_nodes(), root, focused)};
 }
 
 }  // namespace graphscore

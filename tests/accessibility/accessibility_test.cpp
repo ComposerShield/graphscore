@@ -126,9 +126,12 @@ TEST(AccessibilityTreeTest, ExposesMusicalHierarchyWithoutGlyphPrimitives) {
 
   const std::vector<AccessibilityNode::Action> actions = {
       {"move-note-up", "Move note up"}, {"delete", "Delete note"}};
+  const std::vector<AccessibilityNode::Action> palette_actions = {
+      {"duration-quarter", "Duration quarter"},
+      {"enter-pitch-c", "Enter pitch C"}};
   const AccessibilityBuildResult result = build_notation_accessibility_tree(
       fixture.project, fixture.node_id, fixture.layout, NotePaletteState(),
-      &selected, actions);
+      &selected, actions, palette_actions);
 
   ASSERT_TRUE(result);
   const AccessibilityTree& tree = *result.tree;
@@ -144,6 +147,10 @@ TEST(AccessibilityTreeTest, ExposesMusicalHierarchyWithoutGlyphPrimitives) {
   EXPECT_EQ(count_role(tree, AccessibilityRole::kMarking), 1U);
   EXPECT_EQ(count_role(tree, AccessibilityRole::kPalette), 1U);
   EXPECT_EQ(count_role(tree, AccessibilityRole::kSelection), 1U);
+  const auto palette_node = std::ranges::find(
+      tree.nodes(), AccessibilityRole::kPalette, &AccessibilityNode::role);
+  ASSERT_NE(palette_node, tree.nodes().end());
+  EXPECT_EQ(palette_node->actions, palette_actions);
   EXPECT_EQ(std::ranges::count(tree.nodes(), std::string{"purely-visual-glyph"},
                                &AccessibilityNode::id),
             0);
@@ -416,6 +423,134 @@ TEST(AccessibilityTreeTest, KeepsStableSemanticIdsAcrossGlyphChanges) {
   std::ranges::transform(second.tree->nodes(), std::back_inserter(second_ids),
                          &AccessibilityNode::id);
   EXPECT_EQ(first_ids, second_ids);
+}
+
+TEST(AccessibilityTreeTest, ExposesOffscreenMusicAsVirtualSemanticNodes) {
+  Fixture fixture;
+  fixture.layout.hit_regions.erase(fixture.layout.hit_regions.begin() + 3,
+                                   fixture.layout.hit_regions.end());
+  const auto selection =
+      NoteheadSet::create({{fixture.node_id, fixture.track_id, fixture.stave_id,
+                            *Voice::create(1), fixture.note_id}});
+  ASSERT_TRUE(selection.has_value());
+  const Selection selected = *selection;
+
+  const AccessibilityBuildResult result = build_notation_accessibility_tree(
+      fixture.project, fixture.node_id, fixture.layout, NotePaletteState(),
+      &selected);
+
+  ASSERT_TRUE(result);
+  EXPECT_EQ(count_role(*result.tree, AccessibilityRole::kNote), 1U);
+  EXPECT_EQ(count_role(*result.tree, AccessibilityRole::kRest), 1U);
+  EXPECT_EQ(count_role(*result.tree, AccessibilityRole::kMarking), 1U);
+  const auto note = std::ranges::find(
+      result.tree->nodes(), AccessibilityRole::kNote, &AccessibilityNode::role);
+  ASSERT_NE(note, result.tree->nodes().end());
+  EXPECT_FALSE(note->bounds.has_value());
+  EXPECT_TRUE(has_state(note->states, AccessibilityState::kOffscreen));
+  EXPECT_TRUE(has_state(note->states, AccessibilityState::kSelected));
+}
+
+TEST(AccessibilityTreeTest, RestoresFocusByStableIdAcrossLayoutChanges) {
+  Fixture                        fixture;
+  const AccessibilityBuildResult first = build_notation_accessibility_tree(
+      fixture.project, fixture.node_id, fixture.layout, NotePaletteState());
+  ASSERT_TRUE(first);
+  const auto note = std::ranges::find(
+      first.tree->nodes(), AccessibilityRole::kNote, &AccessibilityNode::role);
+  ASSERT_NE(note, first.tree->nodes().end());
+  const std::string focused_id = note->id;
+  fixture.layout.hit_regions.erase(fixture.layout.hit_regions.begin() + 3,
+                                   fixture.layout.hit_regions.end());
+
+  const AccessibilityBuildResult second = build_notation_accessibility_tree(
+      fixture.project, fixture.node_id, fixture.layout, NotePaletteState(),
+      nullptr, {}, {}, focused_id);
+
+  ASSERT_TRUE(second);
+  ASSERT_TRUE(second.tree->focused().has_value());
+  const AccessibilityNode& focused =
+      second.tree->nodes()[*second.tree->focused()];
+  EXPECT_EQ(focused.id, focused_id);
+  EXPECT_TRUE(has_state(focused.states, AccessibilityState::kFocused));
+  EXPECT_TRUE(has_state(focused.states, AccessibilityState::kOffscreen));
+}
+
+TEST(AccessibilityTreeTest, FallsBackToStableAncestorWhenFocusTargetIsGone) {
+  Fixture                        fixture;
+  const AccessibilityBuildResult first = build_notation_accessibility_tree(
+      fixture.project, fixture.node_id, fixture.layout, NotePaletteState());
+  ASSERT_TRUE(first);
+  const auto note = std::ranges::find(
+      first.tree->nodes(), AccessibilityRole::kNote, &AccessibilityNode::role);
+  ASSERT_NE(note, first.tree->nodes().end());
+  const std::string focused_id = note->id;
+  Node*             node       = fixture.project.find_node(fixture.node_id);
+  ASSERT_NE(node, nullptr);
+  node->lane(fixture.track_id)
+      ->stave(fixture.stave_id)
+      ->voice(*Voice::create(1))
+      .clear();
+
+  const AccessibilityBuildResult second = build_notation_accessibility_tree(
+      fixture.project, fixture.node_id, fixture.layout, NotePaletteState(),
+      nullptr, {}, {}, focused_id);
+
+  ASSERT_TRUE(second);
+  ASSERT_TRUE(second.tree->focused().has_value());
+  const AccessibilityNode& focused =
+      second.tree->nodes()[*second.tree->focused()];
+  EXPECT_EQ(focused.role, AccessibilityRole::kVoice);
+  EXPECT_TRUE(has_state(focused.states, AccessibilityState::kFocused));
+}
+
+TEST(AccessibilityTreeTest, FallsBackToSavedChordAncestorAfterNoteDeletion) {
+  Fixture fixture;
+  Node*   node = fixture.project.find_node(fixture.node_id);
+  ASSERT_NE(node, nullptr);
+  VoiceContent& content = node->lane(fixture.track_id)
+                              ->stave(fixture.stave_id)
+                              ->voice(*Voice::create(1));
+  content.clear();
+  Chord chord = make_chord(
+      *Duration::create(NoteValue::kQuarter, 0),
+      {{NotationEntityId::generate(),
+        *SpelledPitch::create(Letter::kC, 4, Accidental::kNatural), false},
+       {NotationEntityId::generate(),
+        *SpelledPitch::create(Letter::kE, 4, Accidental::kNatural), false},
+       {NotationEntityId::generate(),
+        *SpelledPitch::create(Letter::kG, 4, Accidental::kNatural), false}});
+  ASSERT_TRUE(content.append(chord));
+  const NotationEntityId         deleted_note_id = chord.notes[1].id;
+  const AccessibilityBuildResult first = build_notation_accessibility_tree(
+      fixture.project, fixture.node_id, fixture.layout, NotePaletteState());
+  ASSERT_TRUE(first);
+  const auto chord_node = std::ranges::find(
+      first.tree->nodes(), AccessibilityRole::kChord, &AccessibilityNode::role);
+  ASSERT_NE(chord_node, first.tree->nodes().end());
+  const auto note_node = std::ranges::find_if(
+      first.tree->nodes(), [deleted_note_id](const AccessibilityNode& item) {
+        return item.role == AccessibilityRole::kNote &&
+               item.id.ends_with(deleted_note_id.to_string());
+      });
+  ASSERT_NE(note_node, first.tree->nodes().end());
+  const std::string              focused_id = note_node->id;
+  const std::vector<std::string> ancestors  = {chord_node->id};
+  DeleteNoteheadCommand          command(fixture.node_id, fixture.track_id,
+                                         fixture.stave_id, *Voice::create(1),
+                                         deleted_note_id);
+  ASSERT_TRUE(command.execute(fixture.project).ok());
+
+  const AccessibilityBuildResult second = build_notation_accessibility_tree(
+      fixture.project, fixture.node_id, fixture.layout, NotePaletteState(),
+      nullptr, {}, {}, focused_id, ancestors);
+
+  ASSERT_TRUE(second);
+  ASSERT_TRUE(second.tree->focused().has_value());
+  const AccessibilityNode& focused =
+      second.tree->nodes()[*second.tree->focused()];
+  EXPECT_EQ(focused.id, chord_node->id);
+  EXPECT_EQ(focused.role, AccessibilityRole::kChord);
 }
 
 TEST(AccessibilityTreeTest, RejectsMismatchedLayoutWithoutPartialTree) {
