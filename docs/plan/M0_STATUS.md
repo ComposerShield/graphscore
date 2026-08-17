@@ -1,6 +1,6 @@
 # Milestone 00 Status
 
-**Last updated**: 2026-07-21
+**Last updated**: 2026-08-17
 
 Scope and rules for M0 live in [00-architecture-spikes.md](00-architecture-spikes.md).
 Progress boxes live in [CHECKLIST.md](CHECKLIST.md). This file records only
@@ -19,9 +19,10 @@ current state.
 | VST3 SDK licensing | MIT across the root repo and all core submodules incl. `pluginterfaces`; VSTGUI BSD-3-style and not required | `spikes/m0/vst3-hosting/README.md` |
 
 macOS physical VoiceOver and trackpad gates were run and accepted by Adam; both
-are recorded in ADR 0004 and the rendering spike's evidence directory. Windows
-and Linux screen-reader and physical-GUI verification are deferred to
-Milestone 10 by recorded scope decision.
+are recorded in ADR 0004 and the rendering spike's evidence directory. The
+production platform bridges and all further screen-reader validation are
+deferred indefinitely by the current product-scope decision. Physical GUI
+verification remains part of the applicable platform milestones.
 
 | Direct VST3 hosting | Viable on macOS arm64 with no licensed framework; native editor gate observed by Adam on render, resize, and keyboard focus | ADR 0007 |
 

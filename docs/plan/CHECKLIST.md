@@ -141,7 +141,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [x] &nbsp;&nbsp;Articulation and stem-override editing increment completed
 - [x] &nbsp;&nbsp;Dynamic, hairpin, and pedal-span editing increment completed
 - [x] Playback semantics in the editor model completed
-- [ ] Accessibility completed
+- [x] Toolkit-neutral accessibility semantics completed
 - [ ] Acceptance criteria passed
 - [ ] Test focus completed
 
@@ -197,11 +197,10 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [ ] Acceptance criteria passed
 - [ ] Test focus completed
 
-## Milestone 10: Accessibility, Performance, And Hardening
+## Milestone 10: Performance And Hardening
 
 - [ ] [Milestone 10 complete](10-hardening.md)
 - [ ] Dependencies completed
-- [ ] Accessibility completion audit passed
 - [ ] Canvas and notation performance gates passed
 - [ ] Realtime and determinism hardening passed
 - [ ] Robustness and security hardening passed
@@ -231,6 +230,5 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [ ] General CC authoring completed
 - [ ] General CC persistence/export completed
 - [ ] General CC runtime behavior completed
-- [ ] General CC accessibility completed
 - [ ] Acceptance criteria passed
 - [ ] Test focus completed

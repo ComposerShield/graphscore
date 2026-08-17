@@ -6,7 +6,7 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 
 ## Dependencies
 
-- [ ] M6-phase-1 Milestone 05 notation rendering and semantic accessibility.
+- [ ] M6-phase-1 Milestone 05 notation rendering.
 - [ ] M6-phase-2 Milestone 02 graph/command model.
 - [ ] M6-phase-3 Milestone 01 writer shell.
 
@@ -16,7 +16,7 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 
 - [x] M6-phase-4 Sparse effectively unbounded coordinates with stable transforms and no persisted page edge.
 - [x] M6-phase-5 Native trackpad two-finger pan and pinch zoom, centered around the gesture focal point.
-- [x] M6-phase-6 Mouse wheel pan, modifier-wheel zoom, middle-button drag pan, and keyboard pan/zoom centered on accessibility focus.
+- [x] M6-phase-6 Mouse wheel pan, modifier-wheel zoom, middle-button drag pan, and keyboard pan/zoom centered on keyboard focus.
 - [x] M6-phase-7 Spatial indexing, viewport clipping, and bounded invalidation for nodes, labels, controls, connector segments, and hit regions.
 - [x] M6-phase-8 Full notation remains conceptually present at every zoom; do not replace it with semantic summaries.
 - [x] M6-phase-9 Permit raster/detail simplification only when the exact glyph detail is below perceptible resolution.
@@ -32,7 +32,7 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 
 ### Connector creation and semantics
 
-- [x] M6-phase-16 Create any number of named input/output ports with stable identity and accessible labels.
+- [x] M6-phase-16 Create any number of named input/output ports with stable identity and clear labels.
 - [ ] M6-phase-17 One output attaches to at most one destination input.
 - [ ] M6-phase-18 Author sequential versus vertical type and show redundant color plus line-pattern distinction.
 - [ ] M6-phase-19 Provide connector inspector fields for event binding, priority, random weight, and name, plus linked node/event-listener fields for queue policy/capacity and validation diagnostics.
@@ -53,10 +53,10 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 
 - [ ] M6-phase-29 Normal single click selects ports, paths, segments, nodes, controls, or notation for editing.
 - [ ] M6-phase-30 Double-clicking a connection requests its playback action without changing single-click editing behavior.
-- [ ] M6-phase-31 Add a small destination-end action circle that invokes the same queue/jump action and has a large enough accessible hit target.
-- [ ] M6-phase-32 Enable playback actions only for outputs whose source is the active node; other paths remain editable and expose an accessible unavailable reason.
+- [ ] M6-phase-31 Add a small destination-end action circle that invokes the same queue/jump action and has a sufficiently large interaction target.
+- [ ] M6-phase-32 Enable playback actions only for outputs whose source is the active node; other paths remain editable and show an unavailable reason.
 - [ ] M6-phase-33 Play actions are initially routed through controller interfaces and become audible in Milestones 08/09.
-- [ ] M6-phase-34 Node play controls are keyboard/screen-reader operable and clearly distinct from selecting/dragging a node.
+- [ ] M6-phase-34 Node play controls are keyboard operable and clearly distinct from selecting/dragging a node.
 
 ### Organization operations
 
@@ -73,7 +73,7 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 - [ ] M6-phase-42 Node moves preserve manually positioned interior segments where geometrically valid.
 - [ ] M6-phase-43 All graph operations are undoable and survive save/reopen.
 - [ ] M6-phase-44 Sequential and vertical connections remain distinguishable without relying on color alone.
-- [ ] M6-phase-45 Keyboard and screen-reader users can create, inspect, connect, reroute, reset, and delete connections.
+- [ ] M6-phase-45 Keyboard users can create, inspect, connect, reroute, reset, and delete connections.
 
 ## Test Focus
 
@@ -83,4 +83,3 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 - [ ] M6-phase-49 Hit testing at route crossings, rounded corners, ports, and action circles.
 - [ ] M6-phase-50 UUID/edge remapping during node duplication and paste.
 - [ ] M6-phase-51 Performance benchmarks with 1,000 notation nodes and adversarial connector density.
-- [ ] M6-phase-52 Accessibility tree virtualization and focus retention during pan/zoom.

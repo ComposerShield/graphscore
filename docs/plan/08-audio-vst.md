@@ -57,7 +57,7 @@ Make composition audible through a permissively implemented cross-platform audio
        `kNotImplemented`.
 - [ ] M8-phase-27 Do not treat `getTailSamples()` as bounded. `kInfiniteTail` (0xFFFFFFFF)
        was returned by both commercial plugins tested.
-- [ ] M8-phase-28 Provide an accessible generic parameter view where the VST3 exposes usable parameter metadata.
+- [ ] M8-phase-28 Provide a generic parameter view where the VST3 exposes usable parameter metadata.
 - [ ] M8-phase-29 Do not author or export parameter automation in `0.1.0`.
 
 ### Open question carried from M0: in-process hosting
@@ -98,7 +98,7 @@ plugin code takes over host crash handling for the whole writer.
 - [ ] M8-phase-46 Missing plugins do not block open, edit, save, or export.
 - [ ] M8-phase-47 Latency compensation aligns synthetic test impulses within one sample.
 - [ ] M8-phase-48 Audio callback remains allocation/lock-free for GraphScore code and passes realtime stress tests at 44.1/48 kHz and 64-1024 variable frames.
-- [ ] M8-phase-49 Native and generic plugin controls remain keyboard reachable; generic controls expose screen-reader semantics.
+- [ ] M8-phase-49 Native and generic plugin controls remain keyboard reachable.
 
 ## Test Focus
 

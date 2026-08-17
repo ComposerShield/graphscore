@@ -51,7 +51,7 @@ Join notation, graph editing, adaptive scheduling, VST3 audition, persistence, a
 
 ### Application preferences
 
-- [ ] M9-phase-29 Audio device/sample-rate/block settings, plugin search paths/blacklist, metronome/count-in settings, keyboard shortcut display, and accessibility preferences.
+- [ ] M9-phase-29 Audio device/sample-rate/block settings, plugin search paths/blacklist, metronome/count-in settings, and keyboard shortcut display.
 - [ ] M9-phase-30 Keep project-semantic settings in the project and machine-specific device/plugin paths in per-user preferences.
 - [ ] M9-phase-31 Use atomic preference persistence and safe defaults when devices/plugins disappear.
 
@@ -61,7 +61,7 @@ Join notation, graph editing, adaptive scheduling, VST3 audition, persistence, a
 - [ ] M9-phase-33 Writer MIDI decisions match the standalone runtime for recorded seed/event/block traces.
 - [ ] M9-phase-34 Every declared safe live edit becomes audible on the next block without allocation, lock, duplicate event, or stuck note.
 - [ ] M9-phase-35 Every deferred edit is visible and becomes active after a deterministic restart.
-- [ ] M9-phase-36 Connector and node playback controls remain distinct from editing and are keyboard/screen-reader actionable.
+- [ ] M9-phase-36 Connector and node playback controls remain distinct from editing and are keyboard actionable.
 - [ ] M9-phase-37 Crash-recovery tests preserve the last complete edit and plugin state.
 
 ## Test Focus

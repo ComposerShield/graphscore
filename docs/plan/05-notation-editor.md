@@ -2,7 +2,7 @@
 
 ## Goal
 
-Provide a polished, directly editable focused notation system inside a node, with complete keyboard and screen-reader workflows.
+Provide a polished, directly editable focused notation system inside a node, with complete keyboard workflows.
 
 ## Dependencies
 
@@ -122,11 +122,17 @@ revalidation owns remapping the cursor across both.
 
 ### Accessibility
 
+The toolkit-neutral semantic work completed below is retained, but production
+platform bridges, screen-reader support, and assistive-technology validation
+are deferred indefinitely under the product-scope decision in
+[README.md](README.md#writer-interaction). They are not Milestone 05 acceptance
+gates.
+
 - [x] M5-phase-43 Expose node, track, staff, measure, voice, note/rest, marking, palette, and selection semantics rather than glyph primitives.
 - [x] M5-phase-44 Announce pitch spelling, sounding pitch, duration, voice, bar/beat, selected state, and available actions.
 - [x] M5-phase-45 Support complete note entry/editing without pointer input.
 - [x] M5-phase-46 Keep focus stable across incremental layout and expose offscreen musical elements through a virtualized semantic tree.
-- [ ] M5-phase-47 Validate the workflow with VoiceOver, Narrator, and Orca on both Wayland and X11/XWayland.
+- [x] M5-phase-47 Defer production platform accessibility bridges and assistive-technology validation indefinitely.
 
 ## Acceptance Criteria
 
@@ -136,7 +142,6 @@ revalidation owns remapping the cursor across both.
 - [ ] M5-phase-51 Four voices, tuplets, grace notes, cross-measure ties, signatures, and markings survive complex measure edits without invalid references.
 - [ ] M5-phase-52 The specified keyboard workflow is covered by automated command tests and manual platform shortcut checks.
 - [ ] M5-phase-53 The action table defines a complete step-entry protocol and has keyboard-layout tests rather than relying on US key labels alone.
-- [ ] M5-phase-54 A screen-reader user can navigate staves, identify notes, change pitch/duration/accidental/voice, and perform undo/redo.
 - [ ] M5-phase-55 Editing a representative 64-track, 64-measure node remains responsive when only a small visible region changes.
 
 ## Test Focus
@@ -147,5 +152,4 @@ revalidation owns remapping the cursor across both.
 - [ ] M5-phase-59 Keyboard command tables, wrapping staff focus, selection recovery, and interval spelling in every standard key.
 - [ ] M5-phase-60 Round-trip edit/undo/redo tests for every notation command.
 - [ ] M5-phase-61 Measure and arbitrary-range paste tests cover empty/occupied destinations, multiple voices/staves, partial beats, tuplets, boundary-crossing spans, UUID remapping, preview/commit equality, and undo/redo.
-- [ ] M5-phase-62 Accessibility tree snapshots and action invocation tests.
 - [ ] M5-phase-63 Property-style generated valid measures checked for non-overlap and complete voice duration.

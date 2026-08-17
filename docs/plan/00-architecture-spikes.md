@@ -77,10 +77,10 @@ audio-device, or VST3 dependencies. Recorded in ADR 0003.
 
 Recorded in ADR 0004.
 
-**Windows and Linux screen-reader and physical-GUI verification is an
-Milestone 10 hardening gate, not an M0 blocker.** SDL3 and AccessKit both
-support those platforms; the M0 question was whether a custom-drawn notation
-canvas can be made screen-reader navigable at all, and macOS answered it.
+Windows and Linux physical-GUI verification remains a platform hardening gate,
+not an M0 blocker. Production screen-reader integration and validation are
+deferred indefinitely; the M0 question was whether a custom-drawn notation
+canvas could be made screen-reader navigable at all, and macOS answered it.
 
 ### Engraving-engine decision — COMPLETE
 
@@ -143,8 +143,8 @@ Scope notes:
   Milestone 08, which is where cross-platform audio is built anyway.
 - Wayland native-editor embedding is the highest residual risk in the whole
   plan. It is **not** resolved by this spike. Record it as an accepted open risk
-  with the fallback already in the product spec: the GraphScore-owned accessible
-  generic parameter view.
+  with the fallback already in the product spec: the GraphScore-owned generic
+  parameter view.
 - No test suite, no sanitizers, no evidence catalog. A working binary plus the
   ADR is the deliverable.
 
@@ -170,5 +170,6 @@ Do not start Milestone 01 until the default writer stack is confirmed
 permissively reusable and direct VST3 hosting has a credible implementation
 path on at least one platform.
 
-Cross-platform proof, performance targets, and hardened accessibility are
-Milestone 08 and Milestone 10 gates. They are not M0 exit conditions.
+Cross-platform proof and performance targets are Milestone 08 and Milestone 10
+gates. Production accessibility integration and validation are deferred
+indefinitely. None is an M0 exit condition.
