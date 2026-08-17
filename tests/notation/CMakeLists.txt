@@ -10,6 +10,7 @@ add_executable(graphscore_notation_test
   event_style_edit_test.cpp
   marking_style_edit_test.cpp
   measure_edit_test.cpp
+  notation_golden_test.cpp
   notation_test.cpp
   note_audition_test.cpp
   note_entry_test.cpp
