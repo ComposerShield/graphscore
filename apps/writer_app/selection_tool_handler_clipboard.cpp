@@ -375,7 +375,7 @@ bool SelectionToolHandler::paste_clipboard() {
   graphscore::CommandHistory::Transaction transaction =
       history_.begin_transaction(std::move(command), project_);
   if (!transaction.active()) {
-    post_diagnostic("paste: rejected (out of range or meter mismatch)");
+    post_diagnostic("paste: could not commit at the destination");
     return false;
   }
 
