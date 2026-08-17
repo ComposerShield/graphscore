@@ -14,9 +14,11 @@ using graphscore::Chord;
 using graphscore::ChordNote;
 using graphscore::Duration;
 using graphscore::Dynamic;
+using graphscore::event_duration;
 using graphscore::event_id;
 using graphscore::event_note_on_velocity;
 using graphscore::event_sounded_duration;
+using graphscore::grace_group_preceding_available_duration;
 using graphscore::grace_group_remaining_preceding_duration;
 using graphscore::grace_group_steal_durations;
 using graphscore::grace_steal_durations;
@@ -39,6 +41,7 @@ using graphscore::Rational;
 using graphscore::sounded_duration_for_articulation;
 using graphscore::SpelledPitch;
 using graphscore::velocity_for_dynamic;
+using graphscore::VoiceContent;
 using graphscore::VoiceEvent;
 
 namespace {
@@ -232,4 +235,120 @@ TEST(NotationPlaybackTest, GraceGroupWithNoPrecedingNoteFallsBack) {
   ASSERT_EQ(result.size(), 1u);
   EXPECT_EQ(result[0], grace_steal_durations(GraceNoteType::kAppoggiatura, 1,
                                              Rational(0))[0]);
+}
+
+TEST(NotationPlaybackTest, GraceGroupStealsFromImmediatelyPrecedingNote) {
+  VoiceContent     voice;
+  const VoiceEvent preceding = make_note(pitch(Letter::kC), quarter());
+  const VoiceEvent principal = make_note(pitch(Letter::kD), quarter());
+  ASSERT_TRUE(voice.append(preceding).ok());
+  ASSERT_TRUE(voice.append(principal).ok());
+
+  const GraceGroup group = make_grace_group(
+      event_id(principal), {GraceNote{.pitch    = pitch(Letter::kC),
+                                      .duration = eighth(),
+                                      .type = GraceNoteType::kAppoggiatura}});
+  ASSERT_TRUE(voice.add_grace_group(group).ok());
+
+  EXPECT_EQ(grace_group_preceding_available_duration(voice, group),
+            quarter().resolved());
+  EXPECT_EQ(grace_group_steal_durations(voice, group),
+            grace_steal_durations(GraceNoteType::kAppoggiatura, 1,
+                                  quarter().resolved()));
+  EXPECT_EQ(grace_group_remaining_preceding_duration(voice, group),
+            grace_steal_remaining_duration(GraceNoteType::kAppoggiatura, 1,
+                                           quarter().resolved()));
+  EXPECT_EQ(event_duration(voice.events()[1]).resolved(), quarter().resolved());
+}
+
+TEST(NotationPlaybackTest, GraceGroupDoesNotStealFromRest) {
+  VoiceContent     voice;
+  const VoiceEvent rest      = make_rest(quarter());
+  const VoiceEvent principal = make_note(pitch(Letter::kD), quarter());
+  ASSERT_TRUE(voice.append(rest).ok());
+  ASSERT_TRUE(voice.append(principal).ok());
+
+  const GraceGroup group = make_grace_group(
+      event_id(principal), {GraceNote{.pitch    = pitch(Letter::kC),
+                                      .duration = eighth(),
+                                      .type = GraceNoteType::kAcciaccatura}});
+  ASSERT_TRUE(voice.add_grace_group(group).ok());
+
+  EXPECT_EQ(grace_group_preceding_available_duration(voice, group),
+            Rational(0));
+  EXPECT_EQ(
+      grace_group_steal_durations(voice, group),
+      grace_steal_durations(GraceNoteType::kAcciaccatura, 1, Rational(0)));
+  EXPECT_EQ(grace_group_remaining_preceding_duration(voice, group),
+            Rational(0));
+  EXPECT_EQ(event_duration(voice.events()[0]).resolved(), quarter().resolved());
+}
+
+TEST(NotationPlaybackTest, GraceGroupAtVoiceStartUsesFallback) {
+  VoiceContent     voice;
+  const VoiceEvent principal = make_note(pitch(Letter::kD), quarter());
+  ASSERT_TRUE(voice.append(principal).ok());
+
+  const GraceGroup group = make_grace_group(
+      event_id(principal), {GraceNote{.pitch    = pitch(Letter::kC),
+                                      .duration = eighth(),
+                                      .type = GraceNoteType::kAppoggiatura}});
+  ASSERT_TRUE(voice.add_grace_group(group).ok());
+
+  EXPECT_EQ(
+      grace_group_steal_durations(voice, group),
+      grace_steal_durations(GraceNoteType::kAppoggiatura, 1, Rational(0)));
+  EXPECT_EQ(grace_group_remaining_preceding_duration(voice, group),
+            Rational(0));
+}
+
+TEST(NotationPlaybackTest, GraceGroupStealsExactTimeFromChordPredecessor) {
+  VoiceContent     voice;
+  const Duration   dotted_quarter = *Duration::create(NoteValue::kQuarter, 1);
+  const VoiceEvent chord =
+      make_chord(dotted_quarter, {ChordNote{.pitch = pitch(Letter::kC)},
+                                  ChordNote{.pitch = pitch(Letter::kE)}});
+  const VoiceEvent principal = make_note(pitch(Letter::kD), quarter());
+  ASSERT_TRUE(voice.append(chord).ok());
+  ASSERT_TRUE(voice.append(principal).ok());
+
+  const GraceGroup group = make_grace_group(
+      event_id(principal), {GraceNote{.pitch    = pitch(Letter::kC),
+                                      .duration = eighth(),
+                                      .type     = GraceNoteType::kAppoggiatura},
+                            GraceNote{.pitch    = pitch(Letter::kB),
+                                      .duration = eighth(),
+                                      .type = GraceNoteType::kAppoggiatura}});
+  ASSERT_TRUE(voice.add_grace_group(group).ok());
+
+  const Rational available = dotted_quarter.resolved();
+  EXPECT_EQ(grace_group_preceding_available_duration(voice, group), available);
+  EXPECT_EQ(grace_group_steal_durations(voice, group),
+            grace_steal_durations(GraceNoteType::kAppoggiatura, 2, available));
+  EXPECT_EQ(grace_group_remaining_preceding_duration(voice, group),
+            grace_steal_remaining_duration(GraceNoteType::kAppoggiatura, 2,
+                                           available));
+  EXPECT_EQ(event_duration(voice.events()[0]).resolved(), available);
+}
+
+TEST(NotationPlaybackTest, GraceGroupWithDanglingPrincipalUsesFallback) {
+  VoiceContent     voice;
+  const VoiceEvent present = make_note(pitch(Letter::kC), quarter());
+  const VoiceEvent missing = make_note(pitch(Letter::kD), quarter());
+  ASSERT_TRUE(voice.append(present).ok());
+
+  const GraceGroup group = make_grace_group(
+      event_id(missing), {GraceNote{.pitch    = pitch(Letter::kB),
+                                    .duration = eighth(),
+                                    .type     = GraceNoteType::kAcciaccatura}});
+  ASSERT_TRUE(voice.add_grace_group(group).ok());
+
+  EXPECT_EQ(grace_group_preceding_available_duration(voice, group),
+            Rational(0));
+  EXPECT_EQ(
+      grace_group_steal_durations(voice, group),
+      grace_steal_durations(GraceNoteType::kAcciaccatura, 1, Rational(0)));
+  EXPECT_EQ(grace_group_remaining_preceding_duration(voice, group),
+            Rational(0));
+  EXPECT_EQ(event_duration(voice.events()[0]).resolved(), quarter().resolved());
 }
