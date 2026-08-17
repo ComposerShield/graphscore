@@ -53,6 +53,24 @@ constexpr int kCanvasVersion = 1;
   return state;
 }
 
+[[nodiscard]] CanvasNodeGeometry node_geometry(
+    GraphPosition                        position,
+    const std::optional<NotationLayout>& layout) noexcept {
+  const double notation_width = layout.has_value() ? layout->bounds.width : 0.0;
+  const double content_height =
+      layout.has_value() ? layout->bounds.height
+                         : CanvasNodeGeometry::kFallbackContentHeight;
+  const double width =
+      std::max(CanvasNodeGeometry::kMinimumWidth, notation_width);
+
+  return CanvasNodeGeometry{
+      {position, width, CanvasNodeGeometry::kHeaderHeight + content_height},
+      {0.0, 0.0, width, CanvasNodeGeometry::kHeaderHeight},
+      {0.0, CanvasNodeGeometry::kHeaderHeight, width, content_height},
+      {0.0, CanvasNodeGeometry::kHeaderHeight, notation_width,
+       layout.has_value() ? layout->bounds.height : 0.0}};
+}
+
 [[nodiscard]] std::optional<double> map_forward_raw(
     double value, double input_anchor, double scale,
     double output_anchor) noexcept {
@@ -438,6 +456,8 @@ CanvasNotationScene Canvas::layout_nodes(
     NotationLayoutResult result =
         layout_notation(project, node.id(), metrics, options);
     const NodeTimeline* const timeline = node.timeline();
+    const CanvasNodeGeometry  geometry =
+        node_geometry(node.position(), result.layout);
     scene.nodes.push_back(CanvasNodeNotation{
         node.id(), node.position(),
         CanvasNodeHeader{node.name(),
@@ -448,7 +468,7 @@ CanvasNotationScene Canvas::layout_nodes(
                          {CanvasNodeHeaderAction::kEditFreeformNotes},
                          {CanvasNodeHeaderAction::kOpenTempoLane},
                          {CanvasNodeHeaderAction::kPlay}},
-        result.error, std::move(result.layout)});
+        geometry, result.error, std::move(result.layout)});
   }
   return scene;
 }

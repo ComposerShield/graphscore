@@ -378,14 +378,34 @@ struct CanvasNodeHeader {
   [[nodiscard]] bool operator==(const CanvasNodeHeader&) const = default;
 };
 
+// Content-driven node geometry in node-local coordinates, plus the complete
+// world-space bound used by culling and routing. Nodes auto-fit their notation:
+// width is the larger of kMinimumWidth and the notation width, while height is
+// the fixed header followed by the complete notation height. There is no
+// independent crop size. Changing notation wrapping or musical content requires
+// relayout and therefore deterministically resizes the node.
+struct CanvasNodeGeometry {
+  static constexpr double kHeaderHeight          = 64.0;
+  static constexpr double kMinimumWidth          = 320.0;
+  static constexpr double kFallbackContentHeight = 160.0;
+
+  WorldBounds  bounds;
+  NotationRect header_bounds;
+  NotationRect content_bounds;
+  NotationRect notation_bounds;
+
+  [[nodiscard]] bool operator==(const CanvasNodeGeometry&) const = default;
+};
+
 // One retained, node-local header and notation layout at its graph-canvas
 // position. Every project node has one record, including nodes that cannot yet
-// be laid out; the error then explains why `layout` is empty without hiding
-// unaffected nodes.
+// be laid out; the error then explains why `layout` is empty and geometry uses
+// a deterministic fallback body without hiding unaffected nodes.
 struct CanvasNodeNotation {
   NodeId                        node_id;
   GraphPosition                 position;
   CanvasNodeHeader              header;
+  CanvasNodeGeometry            geometry;
   NotationLayoutError           error = NotationLayoutError::kNone;
   std::optional<NotationLayout> layout;
 
