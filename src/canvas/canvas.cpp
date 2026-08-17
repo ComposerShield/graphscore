@@ -2,11 +2,16 @@
 
 #include <graphscore/accessibility/graphscore_accessibility.hpp>
 #include <graphscore/canvas/graphscore_canvas.hpp>
+#include <graphscore/domain/bind_output_event_command.hpp>
 #include <graphscore/domain/connect_command.hpp>
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/project.hpp>
+#include <graphscore/domain/set_listener_policy_command.hpp>
 #include <graphscore/domain/set_node_position_command.hpp>
+#include <graphscore/domain/set_output_connector_name_command.hpp>
+#include <graphscore/domain/set_output_priority_command.hpp>
 #include <graphscore/domain/set_output_type_command.hpp>
+#include <graphscore/domain/set_output_weight_command.hpp>
 #include <graphscore/domain/validation_service.hpp>
 
 #include <algorithm>
@@ -16,6 +21,7 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -140,6 +146,41 @@ void append_ports(std::vector<CanvasNodePort>& ports, NodeId node_id,
         return port.connector_id == connector && port.direction == direction;
       });
   return found == node.ports.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] CanvasNodePort* find_port(CanvasNodeNotation& node,
+                                        ConnectorId         connector,
+                                        CanvasPortDirection direction) {
+  const auto found = std::ranges::find_if(
+      node.ports, [connector, direction](const CanvasNodePort& port) {
+        return port.connector_id == connector && port.direction == direction;
+      });
+  return found == node.ports.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] CanvasNodeNotation* find_scene_node(CanvasNotationScene& scene,
+                                                  NodeId node_id) noexcept {
+  const auto found =
+      std::ranges::find(scene.nodes, node_id, &CanvasNodeNotation::node_id);
+  return found == scene.nodes.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] bool diagnostic_applies_to_connector(
+    const Diagnostic& diagnostic, NodeId source_node,
+    ConnectorId output_id) noexcept {
+  if (const auto* const connector =
+          std::get_if<ConnectorId>(&diagnostic.entity);
+      connector != nullptr && *connector == output_id) {
+    return !diagnostic.node.has_value() || diagnostic.node == source_node;
+  }
+  const auto* const node = std::get_if<NodeId>(&diagnostic.entity);
+  return node != nullptr && *node == source_node;
+}
+
+[[nodiscard]] bool valid_queue_policy(QueuePolicy policy) noexcept {
+  return policy == QueuePolicy::kFirstWins ||
+         policy == QueuePolicy::kLatestValidWins ||
+         policy == QueuePolicy::kFifo;
 }
 
 [[nodiscard]] std::optional<CanvasConnectorEndpointLeg> endpoint_leg(
@@ -877,6 +918,158 @@ Result CanvasConnectorTypeController::set_type(NodeId        node_id,
   return Result();
 }
 
+CanvasConnectorInspectorController::CanvasConnectorInspectorController(
+    Project& project, CommandHistory& history,
+    CanvasNotationScene& scene) noexcept
+    : project_(project), history_(history), scene_(scene) {}
+
+OutputConnector* CanvasConnectorInspectorController::find_output(
+    NodeId node_id, ConnectorId output_id) noexcept {
+  Node* const               node       = project_.find_node(node_id);
+  CanvasNodeNotation* const scene_node = find_scene_node(scene_, node_id);
+  if (node == nullptr || scene_node == nullptr) {
+    return nullptr;
+  }
+  OutputConnector* const      output = node->find_output(output_id);
+  const CanvasNodePort* const port =
+      find_port(*scene_node, output_id, CanvasPortDirection::kOutput);
+  if (output == nullptr || port == nullptr) {
+    return nullptr;
+  }
+  try {
+    if (port->name != output->name() ||
+        port->accessibility_id !=
+            connector_accessibility_id(
+                node_id, output_id, AccessibilityConnectorDirection::kOutput) ||
+        port->accessibility_label !=
+            connector_accessibility_label(
+                output->name(), AccessibilityConnectorDirection::kOutput)) {
+      return nullptr;
+    }
+  } catch (...) {
+    return nullptr;
+  }
+  return output;
+}
+
+Result CanvasConnectorInspectorController::set_event_binding(
+    NodeId node_id, ConnectorId output_id,
+    std::optional<EventId> event) noexcept {
+  OutputConnector* const output = find_output(node_id, output_id);
+  if (output == nullptr) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (output->event_binding() == event) {
+    return Result();
+  }
+  try {
+    return history_.execute_new(
+        std::make_unique<BindOutputEventCommand>(node_id, output_id, event),
+        project_);
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+}
+
+Result CanvasConnectorInspectorController::set_priority(NodeId      node_id,
+                                                        ConnectorId output_id,
+                                                        int priority) noexcept {
+  OutputConnector* const output = find_output(node_id, output_id);
+  if (output == nullptr) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (output->priority() == priority) {
+    return Result();
+  }
+  try {
+    return history_.execute_new(std::make_unique<SetOutputPriorityCommand>(
+                                    node_id, output_id, priority),
+                                project_);
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+}
+
+Result CanvasConnectorInspectorController::set_random_weight(
+    NodeId node_id, ConnectorId output_id, Rational weight) noexcept {
+  OutputConnector* const output = find_output(node_id, output_id);
+  if (output == nullptr) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (output->weight() == weight) {
+    return Result();
+  }
+  try {
+    return history_.execute_new(
+        std::make_unique<SetOutputWeightCommand>(node_id, output_id, weight),
+        project_);
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+}
+
+Result CanvasConnectorInspectorController::set_name(NodeId      node_id,
+                                                    ConnectorId output_id,
+                                                    std::string name) noexcept {
+  OutputConnector* const    output     = find_output(node_id, output_id);
+  CanvasNodeNotation* const scene_node = find_scene_node(scene_, node_id);
+  CanvasNodePort* const     port =
+      scene_node == nullptr
+              ? nullptr
+              : find_port(*scene_node, output_id, CanvasPortDirection::kOutput);
+  if (output == nullptr || port == nullptr) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (output->name() == name) {
+    return Result();
+  }
+
+  std::string label;
+  try {
+    label = connector_accessibility_label(
+        name, AccessibilityConnectorDirection::kOutput);
+    auto command = std::make_unique<SetOutputConnectorNameCommand>(
+        node_id, output_id, name);
+    const Result result = history_.execute_new(std::move(command), project_);
+    if (!result.ok()) {
+      return result;
+    }
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  port->name                = std::move(name);
+  port->accessibility_label = std::move(label);
+  return Result();
+}
+
+Result CanvasConnectorInspectorController::set_listener(
+    NodeId node_id, ConnectorId output_id, QueuePolicy policy,
+    std::size_t capacity) noexcept {
+  if (!valid_queue_policy(policy)) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  OutputConnector* const output = find_output(node_id, output_id);
+  if (output == nullptr || !output->event_binding().has_value()) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  Node* const                node     = project_.find_node(node_id);
+  const EventId              event    = *output->event_binding();
+  const EventListener* const listener = node->find_listener(event);
+  if (listener == nullptr) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (listener->policy() == policy && listener->capacity() == capacity) {
+    return Result();
+  }
+  try {
+    return history_.execute_new(std::make_unique<SetListenerPolicyCommand>(
+                                    node_id, event, policy, capacity),
+                                project_);
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+}
+
 CanvasNotationScene Canvas::layout_nodes(
     const Project& project, const GlyphMetrics& metrics,
     const NotationLayoutOptions& options) const {
@@ -923,6 +1116,70 @@ CanvasNotationScene Canvas::layout_nodes(
     }
   }
   return scene;
+}
+
+std::optional<CanvasConnectorInspector> Canvas::inspect_connector(
+    const Project& project, NodeId source_node, ConnectorId output_id) const {
+  const Node* const node = project.find_node(source_node);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  const OutputConnector* const output = node->find_output(output_id);
+  if (output == nullptr) {
+    return std::nullopt;
+  }
+
+  CanvasConnectorInspector inspector{source_node,
+                                     node->name(),
+                                     output_id,
+                                     output->name(),
+                                     output->type(),
+                                     std::nullopt,
+                                     output->priority(),
+                                     output->weight(),
+                                     std::nullopt,
+                                     std::nullopt,
+                                     {}};
+  if (output->event_binding().has_value()) {
+    const EventId              event_id = *output->event_binding();
+    std::optional<std::string> event_name;
+    if (const EventDefinition* const event =
+            project.events().find_by_id(event_id);
+        event != nullptr) {
+      event_name = event->name;
+    }
+    inspector.event = CanvasConnectorEventFields{event_id, event_name};
+    if (const EventListener* const listener = node->find_listener(event_id);
+        listener != nullptr) {
+      inspector.listener = CanvasConnectorListenerFields{listener->policy(),
+                                                         listener->capacity()};
+    }
+  }
+  if (output->destination().has_value()) {
+    const ConnectorDestination destination = *output->destination();
+    inspector.destination                  = CanvasConnectorDestinationFields{
+        destination.node, std::nullopt, destination.connector, std::nullopt};
+    if (const Node* const destination_node =
+            project.find_node(destination.node);
+        destination_node != nullptr) {
+      inspector.destination->node_name = destination_node->name();
+      if (const InputConnector* const input =
+              destination_node->find_input(destination.connector);
+          input != nullptr) {
+        inspector.destination->input_name = input->name();
+      }
+    }
+  }
+
+  const ValidationReport report =
+      ValidationService{}.validate_complete(project);
+  std::ranges::copy_if(report.diagnostics,
+                       std::back_inserter(inspector.diagnostics),
+                       [source_node, output_id](const Diagnostic& diagnostic) {
+                         return diagnostic_applies_to_connector(
+                             diagnostic, source_node, output_id);
+                       });
+  return inspector;
 }
 
 int canvas_version() noexcept {

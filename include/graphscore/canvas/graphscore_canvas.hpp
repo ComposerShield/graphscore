@@ -4,7 +4,9 @@
 
 #include <graphscore/domain/command_history.hpp>
 #include <graphscore/domain/connector.hpp>
+#include <graphscore/domain/event_listener.hpp>
 #include <graphscore/domain/graph_position.hpp>
+#include <graphscore/domain/validation_service.hpp>
 #include <graphscore/notation/notation_layout.hpp>
 
 #include <array>
@@ -492,6 +494,53 @@ struct CanvasConnectorGeometry {
   [[nodiscard]] bool operator==(const CanvasConnectorGeometry&) const = default;
 };
 
+struct CanvasConnectorDestinationFields {
+  NodeId                     node_id;
+  std::optional<std::string> node_name;
+  ConnectorId                input_id;
+  std::optional<std::string> input_name;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorDestinationFields&) const =
+      default;
+};
+
+struct CanvasConnectorEventFields {
+  EventId                    event_id;
+  std::optional<std::string> event_name;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorEventFields&) const =
+      default;
+};
+
+struct CanvasConnectorListenerFields {
+  QueuePolicy policy   = QueuePolicy::kLatestValidWins;
+  std::size_t capacity = 1;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorListenerFields&) const =
+      default;
+};
+
+// Toolkit-neutral values for an output connector inspector. Listener values
+// are resolved from the source node's shared (node, event) listener rather
+// than copied onto the connector. Missing linked entities remain visible by
+// stable identity and are explained by the attached validation diagnostics.
+struct CanvasConnectorInspector {
+  NodeId                                    source_node_id;
+  std::string                               source_node_name;
+  ConnectorId                               output_id;
+  std::string                               name;
+  ConnectorType                             type = ConnectorType::kSequential;
+  std::optional<CanvasConnectorEventFields> event;
+  int                                       priority      = 0;
+  Rational                                  random_weight = Rational(1);
+  std::optional<CanvasConnectorDestinationFields> destination;
+  std::optional<CanvasConnectorListenerFields>    listener;
+  std::vector<Diagnostic>                         diagnostics;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorInspector&) const =
+      default;
+};
+
 struct CanvasNotationScene {
   // Project order is retained so paint and hit-test ordering never depend on
   // UUIDs or associative-container traversal.
@@ -592,6 +641,36 @@ class CanvasConnectorTypeController {
   CanvasNotationScene& scene_;
 };
 
+// Authors connector-inspector values through reversible domain commands.
+// Queue policy and capacity are addressed through an output only to locate its
+// bound source-node listener; matching outputs therefore observe one shared
+// value. Renaming also refreshes the retained port presentation immediately.
+class CanvasConnectorInspectorController {
+ public:
+  CanvasConnectorInspectorController(Project& project, CommandHistory& history,
+                                     CanvasNotationScene& scene) noexcept;
+
+  [[nodiscard]] Result set_event_binding(NodeId node_id, ConnectorId output_id,
+                                         std::optional<EventId> event) noexcept;
+  [[nodiscard]] Result set_priority(NodeId node_id, ConnectorId output_id,
+                                    int priority) noexcept;
+  [[nodiscard]] Result set_random_weight(NodeId node_id, ConnectorId output_id,
+                                         Rational weight) noexcept;
+  [[nodiscard]] Result set_name(NodeId node_id, ConnectorId output_id,
+                                std::string name) noexcept;
+  [[nodiscard]] Result set_listener(NodeId node_id, ConnectorId output_id,
+                                    QueuePolicy policy,
+                                    std::size_t capacity) noexcept;
+
+ private:
+  [[nodiscard]] OutputConnector* find_output(NodeId      node_id,
+                                             ConnectorId output_id) noexcept;
+
+  Project&             project_;
+  CommandHistory&      history_;
+  CanvasNotationScene& scene_;
+};
+
 class Canvas {
  public:
   Canvas() = default;
@@ -603,6 +682,9 @@ class Canvas {
   [[nodiscard]] CanvasNotationScene layout_nodes(
       const Project& project, const GlyphMetrics& metrics,
       const NotationLayoutOptions& options = {}) const;
+
+  [[nodiscard]] std::optional<CanvasConnectorInspector> inspect_connector(
+      const Project& project, NodeId source_node, ConnectorId output_id) const;
 };
 
 [[nodiscard]] int canvas_version() noexcept;
