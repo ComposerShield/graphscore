@@ -508,6 +508,42 @@ class CanvasNodeDragController {
   bool                 active_ = false;
 };
 
+// Owns one toolkit-neutral output-to-input attachment gesture. begin() accepts
+// only an unconnected output represented in the retained scene. finish()
+// commits through ConnectCommand, publishes exactly one derived connector
+// geometry, and ends the gesture. An occupied output must be disconnected
+// before it can begin another attachment, so retargeting is never implicit.
+class CanvasConnectorAttachmentController {
+ public:
+  CanvasConnectorAttachmentController(Project& project, CommandHistory& history,
+                                      CanvasNotationScene& scene) noexcept;
+
+  CanvasConnectorAttachmentController(
+      const CanvasConnectorAttachmentController&) = delete;
+  CanvasConnectorAttachmentController& operator=(
+      const CanvasConnectorAttachmentController&) = delete;
+  CanvasConnectorAttachmentController(CanvasConnectorAttachmentController&&) =
+      delete;
+  CanvasConnectorAttachmentController& operator=(
+      CanvasConnectorAttachmentController&&) = delete;
+
+  [[nodiscard]] bool   begin(NodeId      source_node,
+                             ConnectorId source_output) noexcept;
+  [[nodiscard]] Result finish(NodeId      destination_node,
+                              ConnectorId destination_input) noexcept;
+  void                 cancel() noexcept;
+
+  [[nodiscard]] bool active() const noexcept { return active_; }
+
+ private:
+  Project&             project_;
+  CommandHistory&      history_;
+  CanvasNotationScene& scene_;
+  NodeId               source_node_;
+  ConnectorId          source_output_;
+  bool                 active_ = false;
+};
+
 class Canvas {
  public:
   Canvas() = default;

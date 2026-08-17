@@ -2,6 +2,7 @@
 
 #include <graphscore/accessibility/graphscore_accessibility.hpp>
 #include <graphscore/canvas/graphscore_canvas.hpp>
+#include <graphscore/domain/connect_command.hpp>
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/project.hpp>
 #include <graphscore/domain/set_node_position_command.hpp>
@@ -9,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <memory>
 #include <new>
@@ -184,6 +186,47 @@ void append_ports(std::vector<CanvasNodePort>& ports, NodeId node_id,
   return CanvasConnectorGeometry{source_node,      source_connector,
                                  destination.node, destination.connector,
                                  *source_leg,      *destination_leg};
+}
+
+[[nodiscard]] bool scene_connectors_match_project(
+    const CanvasNotationScene& scene, const Project& project) noexcept {
+  std::size_t scene_index = 0;
+  for (const Node& node : project.nodes()) {
+    for (const OutputConnector& output : node.outputs()) {
+      if (!output.destination().has_value()) {
+        continue;
+      }
+      if (scene_index >= scene.connectors.size()) {
+        return false;
+      }
+      const CanvasConnectorGeometry& geometry = scene.connectors[scene_index];
+      if (geometry.source_node != node.id() ||
+          geometry.source_connector != output.id() ||
+          geometry.destination_node != output.destination()->node ||
+          geometry.destination_connector != output.destination()->connector) {
+        return false;
+      }
+      ++scene_index;
+    }
+  }
+  return scene_index == scene.connectors.size();
+}
+
+[[nodiscard]] std::optional<std::size_t> connector_insertion_index(
+    const Project& project, NodeId source_node,
+    ConnectorId source_output) noexcept {
+  std::size_t connected_before = 0;
+  for (const Node& node : project.nodes()) {
+    for (const OutputConnector& output : node.outputs()) {
+      if (node.id() == source_node && output.id() == source_output) {
+        return connected_before;
+      }
+      if (output.destination().has_value()) {
+        ++connected_before;
+      }
+    }
+  }
+  return std::nullopt;
 }
 
 [[nodiscard]] bool refresh_attached_connector_legs(CanvasNotationScene& scene,
@@ -690,6 +733,86 @@ bool CanvasNodeDragController::set_preview_position(
     return false;
   }
   return true;
+}
+
+CanvasConnectorAttachmentController::CanvasConnectorAttachmentController(
+    Project& project, CommandHistory& history,
+    CanvasNotationScene& scene) noexcept
+    : project_(project), history_(history), scene_(scene) {}
+
+bool CanvasConnectorAttachmentController::begin(
+    NodeId source_node, ConnectorId source_output) noexcept {
+  if (active_ || !scene_connectors_match_project(scene_, project_)) {
+    return false;
+  }
+  const Node* const node = project_.find_node(source_node);
+  if (node == nullptr) {
+    return false;
+  }
+  const OutputConnector* const    output = node->find_output(source_output);
+  const CanvasNodeNotation* const scene_node =
+      find_scene_node(scene_, source_node);
+  if (output == nullptr || output->destination().has_value() ||
+      scene_node == nullptr ||
+      find_port(*scene_node, source_output, CanvasPortDirection::kOutput) ==
+          nullptr) {
+    return false;
+  }
+  source_node_   = source_node;
+  source_output_ = source_output;
+  active_        = true;
+  return true;
+}
+
+Result CanvasConnectorAttachmentController::finish(
+    NodeId destination_node, ConnectorId destination_input) noexcept {
+  if (!active_) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  active_ = false;
+
+  const Node* const            source = project_.find_node(source_node_);
+  const OutputConnector* const output =
+      source == nullptr ? nullptr : source->find_output(source_output_);
+  const auto insertion_index =
+      connector_insertion_index(project_, source_node_, source_output_);
+  if (output == nullptr || output->destination().has_value() ||
+      !insertion_index.has_value() ||
+      !scene_connectors_match_project(scene_, project_)) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+
+  const ConnectorDestination destination{destination_node, destination_input};
+  const auto                 geometry =
+      connector_geometry(scene_, source_node_, source_output_, destination);
+  if (!geometry.has_value()) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+
+  std::unique_ptr<ConnectCommand> command;
+  try {
+    scene_.connectors.reserve(scene_.connectors.size() + 1U);
+    command = std::make_unique<ConnectCommand>(
+        source_node_, source_output_, destination_node, destination_input);
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+
+  const Result result = history_.execute_new(std::move(command), project_);
+  if (!result.ok()) {
+    return result;
+  }
+  static_assert(std::is_nothrow_copy_constructible_v<CanvasConnectorGeometry>);
+  static_assert(std::is_nothrow_move_constructible_v<CanvasConnectorGeometry>);
+  static_assert(std::is_nothrow_move_assignable_v<CanvasConnectorGeometry>);
+  scene_.connectors.insert(
+      scene_.connectors.begin() + static_cast<std::ptrdiff_t>(*insertion_index),
+      *geometry);
+  return Result();
+}
+
+void CanvasConnectorAttachmentController::cancel() noexcept {
+  active_ = false;
 }
 
 CanvasNotationScene Canvas::layout_nodes(
