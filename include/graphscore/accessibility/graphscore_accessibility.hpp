@@ -94,7 +94,8 @@ class AccessibilityTree {
   friend AccessibilityBuildResult build_notation_accessibility_tree(
       const Project& project, NodeId node_id, const NotationLayout& layout,
       const NotePaletteState& palette, const Selection* selection,
-      std::span<const AccessibilityNode::Action> available_actions);
+      std::span<const AccessibilityNode::Action> available_actions,
+      std::span<const AccessibilityNode::Action> palette_actions);
 
   AccessibilityTree(std::vector<AccessibilityNode> nodes,
                     std::optional<std::size_t>     root) noexcept;
@@ -130,6 +131,7 @@ struct AccessibilityBuildResult {
 [[nodiscard]] AccessibilityBuildResult build_notation_accessibility_tree(
     const Project& project, NodeId node_id, const NotationLayout& layout,
     const NotePaletteState& palette, const Selection* selection = nullptr,
-    std::span<const AccessibilityNode::Action> available_actions = {});
+    std::span<const AccessibilityNode::Action> available_actions = {},
+    std::span<const AccessibilityNode::Action> palette_actions   = {});
 
 }  // namespace graphscore

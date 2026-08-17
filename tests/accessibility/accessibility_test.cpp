@@ -126,9 +126,12 @@ TEST(AccessibilityTreeTest, ExposesMusicalHierarchyWithoutGlyphPrimitives) {
 
   const std::vector<AccessibilityNode::Action> actions = {
       {"move-note-up", "Move note up"}, {"delete", "Delete note"}};
+  const std::vector<AccessibilityNode::Action> palette_actions = {
+      {"duration-quarter", "Duration quarter"},
+      {"enter-pitch-c", "Enter pitch C"}};
   const AccessibilityBuildResult result = build_notation_accessibility_tree(
       fixture.project, fixture.node_id, fixture.layout, NotePaletteState(),
-      &selected, actions);
+      &selected, actions, palette_actions);
 
   ASSERT_TRUE(result);
   const AccessibilityTree& tree = *result.tree;
@@ -144,6 +147,10 @@ TEST(AccessibilityTreeTest, ExposesMusicalHierarchyWithoutGlyphPrimitives) {
   EXPECT_EQ(count_role(tree, AccessibilityRole::kMarking), 1U);
   EXPECT_EQ(count_role(tree, AccessibilityRole::kPalette), 1U);
   EXPECT_EQ(count_role(tree, AccessibilityRole::kSelection), 1U);
+  const auto palette_node = std::ranges::find(
+      tree.nodes(), AccessibilityRole::kPalette, &AccessibilityNode::role);
+  ASSERT_NE(palette_node, tree.nodes().end());
+  EXPECT_EQ(palette_node->actions, palette_actions);
   EXPECT_EQ(std::ranges::count(tree.nodes(), std::string{"purely-visual-glyph"},
                                &AccessibilityNode::id),
             0);

@@ -61,6 +61,7 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::kKeySelectionTestFlag;
   using graphscore::writer_app::kMarkingStyleEditTestFlag;
   using graphscore::writer_app::kMeasureEditTestFlag;
+  using graphscore::writer_app::kNotationAccessibilityTestFlag;
   using graphscore::writer_app::kNoteheadDeleteTestFlag;
   using graphscore::writer_app::kNoteheadMoveTestFlag;
   using graphscore::writer_app::kPickdownEditTestFlag;
@@ -77,6 +78,7 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::kTupletEditTestFlag;
   using graphscore::writer_app::marking_style_edit_test;
   using graphscore::writer_app::measure_edit_test;
+  using graphscore::writer_app::notation_accessibility_test;
   using graphscore::writer_app::notehead_delete_test;
   using graphscore::writer_app::notehead_move_test;
   using graphscore::writer_app::pickdown_edit_test;
@@ -92,33 +94,34 @@ int main(int argc, char** argv) {
   using graphscore::writer_app::trackpad_gesture_test;
   using graphscore::writer_app::tuplet_edit_test;
 
-  bool smoke_test                    = false;
-  bool run_selection_test            = false;
-  bool run_selection_shell_test      = false;
-  bool run_key_events_test           = false;
-  bool run_key_events_shell_test     = false;
-  bool run_key_selection_test        = false;
-  bool run_notehead_move_test        = false;
-  bool run_accidental_step_test      = false;
-  bool run_notehead_delete_test      = false;
-  bool run_convert_to_rest_test      = false;
-  bool run_staff_step_test           = false;
-  bool run_interval_entry_test       = false;
-  bool run_interval_entry_shell_test = false;
-  bool run_step_entry_test           = false;
-  bool run_clipboard_test            = false;
-  bool run_command_palette_test      = false;
-  bool run_action_table_test         = false;
-  bool run_measure_edit_test         = false;
-  bool run_tuplet_edit_test          = false;
-  bool run_event_style_edit_test     = false;
-  bool run_marking_style_edit_test   = false;
-  bool run_pickdown_edit_test        = false;
-  bool run_trackpad_gesture_test     = false;
-  bool run_renderer_backend_test     = false;
-  bool run_renderer_zoom_test        = false;
-  bool run_renderer_present_test     = false;
-  bool run_render_geometry_test      = false;
+  bool smoke_test                      = false;
+  bool run_selection_test              = false;
+  bool run_selection_shell_test        = false;
+  bool run_key_events_test             = false;
+  bool run_key_events_shell_test       = false;
+  bool run_key_selection_test          = false;
+  bool run_notehead_move_test          = false;
+  bool run_accidental_step_test        = false;
+  bool run_notehead_delete_test        = false;
+  bool run_convert_to_rest_test        = false;
+  bool run_staff_step_test             = false;
+  bool run_interval_entry_test         = false;
+  bool run_interval_entry_shell_test   = false;
+  bool run_step_entry_test             = false;
+  bool run_notation_accessibility_test = false;
+  bool run_clipboard_test              = false;
+  bool run_command_palette_test        = false;
+  bool run_action_table_test           = false;
+  bool run_measure_edit_test           = false;
+  bool run_tuplet_edit_test            = false;
+  bool run_event_style_edit_test       = false;
+  bool run_marking_style_edit_test     = false;
+  bool run_pickdown_edit_test          = false;
+  bool run_trackpad_gesture_test       = false;
+  bool run_renderer_backend_test       = false;
+  bool run_renderer_zoom_test          = false;
+  bool run_renderer_present_test       = false;
+  bool run_render_geometry_test        = false;
   for (int i = 1; i < argc; ++i) {
     if (kSmokeTestFlag == argv[i]) {
       smoke_test = true;
@@ -161,6 +164,9 @@ int main(int argc, char** argv) {
     }
     if (kStepEntryTestFlag == argv[i]) {
       run_step_entry_test = true;
+    }
+    if (kNotationAccessibilityTestFlag == argv[i]) {
+      run_notation_accessibility_test = true;
     }
     if (kClipboardTestFlag == argv[i]) {
       run_clipboard_test = true;
@@ -242,6 +248,9 @@ int main(int argc, char** argv) {
     }
     if (run_step_entry_test) {
       return step_entry_test();
+    }
+    if (run_notation_accessibility_test) {
+      return notation_accessibility_test();
     }
     if (run_clipboard_test) {
       return clipboard_test();

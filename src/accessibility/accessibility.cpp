@@ -518,7 +518,8 @@ const AccessibilityNode* AccessibilityTree::find(const std::string& id) const {
 AccessibilityBuildResult build_notation_accessibility_tree(
     const Project& project, NodeId node_id, const NotationLayout& layout,
     const NotePaletteState& palette, const Selection* selection,
-    std::span<const AccessibilityNode::Action> available_actions) {
+    std::span<const AccessibilityNode::Action> available_actions,
+    std::span<const AccessibilityNode::Action> palette_actions) {
   const Node* node = project.find_node(node_id);
   if (node == nullptr)
     return {AccessibilityBuildError::kNodeNotFound, std::nullopt};
@@ -598,7 +599,7 @@ AccessibilityBuildResult build_notation_accessibility_tree(
       palette.entry_kind() == NotePaletteEntryKind::kNote ? "Note palette"
                                                           : "Rest palette",
       std::nullopt, root);
-  (void)palette_node;
+  builder.set_actions(palette_node, palette_actions);
   const std::size_t selection_node = builder.add(
       append_path(node_path(node_id), "selection"),
       AccessibilityRole::kSelection, "Selection", std::nullopt, root);

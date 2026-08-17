@@ -25,7 +25,9 @@ constexpr std::string_view kStaffStepTestFlag      = "--test-staff-step";
 constexpr std::string_view kIntervalEntryTestFlag  = "--test-interval-entry";
 constexpr std::string_view kIntervalEntryShellTestFlag =
     "--test-interval-entry-shell";
-constexpr std::string_view kStepEntryTestFlag      = "--test-step-entry";
+constexpr std::string_view kStepEntryTestFlag = "--test-step-entry";
+constexpr std::string_view kNotationAccessibilityTestFlag =
+    "--test-notation-accessibility";
 constexpr std::string_view kClipboardTestFlag      = "--test-clipboard";
 constexpr std::string_view kCommandPaletteTestFlag = "--test-command-palette";
 constexpr std::string_view kActionTableTestFlag    = "--test-action-table";
@@ -54,6 +56,7 @@ constexpr std::string_view kRenderGeometryTestFlag  = "--test-render-geometry";
 [[nodiscard]] int interval_entry_test();
 [[nodiscard]] int interval_entry_shell_test();
 [[nodiscard]] int step_entry_test();
+[[nodiscard]] int notation_accessibility_test();
 [[nodiscard]] int clipboard_test();
 [[nodiscard]] int command_palette_test();
 [[nodiscard]] int action_table_test();

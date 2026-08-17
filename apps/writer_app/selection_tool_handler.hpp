@@ -332,6 +332,9 @@ class SelectionToolHandler final : public graphscore::InputHandler {
 
   [[nodiscard]] graphscore::Voice armed_voice() const noexcept;
 
+  [[nodiscard]] const graphscore::NotePaletteState& note_palette_state()
+      const noexcept;
+
   [[nodiscard]] const graphscore::SelectionDragState& drag_state()
       const noexcept;
 
