@@ -1,8 +1,8 @@
 ---
 description: Directly implement one GraphScore milestone phase, verify it, perform one reviewer pass, correct agreed findings, update bookkeeping, and commit the result.
 mode: primary
-model: openai/gpt-5.6-luna
-variant: high
+model: openai/gpt-5.6-sol
+variant: medium
 color: "#16A085"
 permission:
   edit:

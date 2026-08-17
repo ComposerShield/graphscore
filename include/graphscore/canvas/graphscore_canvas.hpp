@@ -5,9 +5,12 @@
 #include <graphscore/domain/graph_position.hpp>
 
 #include <array>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
+#include <vector>
 
 namespace graphscore {
 
@@ -36,6 +39,137 @@ struct WorldBounds {
   double        height = 0.0;
 
   [[nodiscard]] bool operator==(const WorldBounds&) const = default;
+};
+
+enum class CanvasItemKind : std::uint8_t {
+  kNode,
+  kLabel,
+  kControl,
+  kConnectorSegment,
+  kHitRegion,
+};
+
+struct CanvasItemId {
+  CanvasItemKind kind  = CanvasItemKind::kNode;
+  std::uint64_t  value = 0;
+
+  [[nodiscard]] bool operator==(const CanvasItemId&) const  = default;
+  [[nodiscard]] auto operator<=>(const CanvasItemId&) const = default;
+};
+
+struct CanvasSceneItem {
+  CanvasItemId id;
+  WorldBounds  bounds;
+
+  [[nodiscard]] bool operator==(const CanvasSceneItem&) const = default;
+};
+
+struct SpatialQueryStatistics {
+  // Every BVH node whose bounds are tested, including branch and leaf nodes.
+  std::size_t nodes_visited = 0;
+  // Every leaf item whose bounds are tested for exact inclusive intersection.
+  std::size_t candidates_tested = 0;
+};
+
+struct SpatialQueryResult {
+  std::vector<CanvasSceneItem> items;
+  SpatialQueryStatistics       statistics;
+};
+
+// A finite endpoint representation used for dirty output. Unlike an
+// origin-plus-width rectangle, this can bound disjoint valid geometry near
+// opposite finite coordinate extremes without overflowing its representation.
+struct WorldRect {
+  double left   = 0.0;
+  double top    = 0.0;
+  double right  = 0.0;
+  double bottom = 0.0;
+
+  [[nodiscard]] bool operator==(const WorldRect&) const = default;
+};
+
+[[nodiscard]] bool is_valid_world_bounds(const WorldBounds& bounds) noexcept;
+
+class ViewportTransform;
+
+// Converts finite logical viewport dimensions to inclusive world bounds.
+// Items touching or crossing any edge are visible. `expansion` is logical
+// viewport-space interaction slop and does not alter retained scene content.
+[[nodiscard]] std::optional<WorldBounds> viewport_world_bounds(
+    const ViewportTransform& transform, double viewport_width,
+    double viewport_height, double expansion = 0.0) noexcept;
+
+class SparseSpatialIndex {
+ public:
+  SparseSpatialIndex();
+  ~SparseSpatialIndex();
+  SparseSpatialIndex(const SparseSpatialIndex&)            = delete;
+  SparseSpatialIndex& operator=(const SparseSpatialIndex&) = delete;
+  SparseSpatialIndex(SparseSpatialIndex&&) noexcept;
+  SparseSpatialIndex& operator=(SparseSpatialIndex&&) noexcept;
+
+  // Identity is the (kind, value) pair. Duplicate insertion is rejected.
+  // Invalid geometry and missing updates/removals leave the index unchanged.
+  [[nodiscard]] bool insert(CanvasSceneItem item);
+  [[nodiscard]] bool update(CanvasItemId id, WorldBounds bounds);
+  [[nodiscard]] bool remove(CanvasItemId id);
+  [[nodiscard]] bool contains(CanvasItemId id) const;
+  [[nodiscard]] std::optional<CanvasSceneItem> find(CanvasItemId id) const;
+  [[nodiscard]] std::size_t                    size() const noexcept;
+
+  // Results are sorted by stable identity, independent of tree traversal order.
+  // Intersection is inclusive at every edge.
+  [[nodiscard]] std::optional<SpatialQueryResult> query(
+      WorldBounds bounds) const;
+  [[nodiscard]] std::optional<SpatialQueryResult> query_viewport(
+      const ViewportTransform& transform, double viewport_width,
+      double viewport_height, double expansion = 0.0) const;
+
+ private:
+  class Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
+// Accumulates exact add/remove and old/new update coverage. Regions coalesce
+// when they touch. If their count would exceed `region_cap`, all regions are
+// collapsed to one finite endpoint rectangle; coverage is never discarded.
+class BoundedInvalidation {
+ public:
+  explicit BoundedInvalidation(std::size_t region_cap = 32);
+
+  [[nodiscard]] bool invalidate_add(const CanvasSceneItem& item);
+  [[nodiscard]] bool invalidate_remove(const CanvasSceneItem& item);
+  [[nodiscard]] bool invalidate_update(const CanvasSceneItem& old_item,
+                                       const CanvasSceneItem& new_item);
+  void               clear() noexcept;
+
+  [[nodiscard]] const std::vector<WorldRect>& regions() const noexcept;
+  [[nodiscard]] std::size_t                   region_cap() const noexcept;
+
+ private:
+  [[nodiscard]] bool add_bounds(const WorldBounds& bounds);
+
+  std::size_t            region_cap_ = 0;
+  std::vector<WorldRect> regions_;
+};
+
+// Scene ownership keeps culling separate from semantic retention: queries
+// never remove items. Every successful mutation records bounded redraw damage.
+class CanvasScene {
+ public:
+  explicit CanvasScene(std::size_t dirty_region_cap = 32);
+
+  [[nodiscard]] bool insert(CanvasSceneItem item);
+  [[nodiscard]] bool update(CanvasItemId id, WorldBounds bounds);
+  [[nodiscard]] bool remove(CanvasItemId id);
+
+  [[nodiscard]] const SparseSpatialIndex&  index() const noexcept;
+  [[nodiscard]] const BoundedInvalidation& invalidation() const noexcept;
+  void                                     clear_invalidation() noexcept;
+
+ private:
+  SparseSpatialIndex  index_;
+  BoundedInvalidation invalidation_;
 };
 
 // App-owned accessibility focus implementations provide only the focused
