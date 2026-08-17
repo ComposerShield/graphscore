@@ -109,11 +109,17 @@ Rational event_sounded_duration(
     const VoiceEvent& event, bool is_tied,
     std::optional<Rational> slurred_gap_to_next_onset) {
   const Rational notated_duration = event_duration(event).resolved();
-  if (slurred_gap_to_next_onset.has_value())
+  const std::optional<Articulation> duration_articulation =
+      find_duration_articulation(event);
+  // A slur supplies legato overlap unless an explicit duration articulation
+  // gives this event a different sounded-duration instruction. Accent and
+  // marcato are velocity-only, so they do not suppress the slur.
+  if (slurred_gap_to_next_onset.has_value() &&
+      !duration_articulation.has_value())
     return legato_sounded_duration(notated_duration,
                                    *slurred_gap_to_next_onset);
-  return sounded_duration_for_articulation(
-      notated_duration, find_duration_articulation(event), is_tied);
+  return sounded_duration_for_articulation(notated_duration,
+                                           duration_articulation, is_tied);
 }
 
 MidiVelocity event_note_on_velocity(

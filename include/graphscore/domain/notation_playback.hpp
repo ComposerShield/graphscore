@@ -46,26 +46,19 @@ struct NoteOnVelocityContext {
 };
 
 // This event's final sounded (audible) duration. Reads the event's own
-// notated Duration (event_duration()) and, when unslurred, its duration
-// articulation (event_articulations(), via is_duration_articulation());
-// `is_tied` and an active slur's `slurred_gap_to_next_onset` are supplied
-// by the caller, which alone knows the event's tie/slur context.
+// notated Duration (event_duration()) and its duration articulation
+// (event_articulations(), via is_duration_articulation()); `is_tied` and an
+// active slur's `slurred_gap_to_next_onset` are supplied by the caller, which
+// alone knows the event's tie/slur context.
 //
-// Calls, in this order: when `slurred_gap_to_next_onset` has a value, this
-// event's notated duration is passed straight to legato_sounded_duration()
-// UNMODIFIED by sounded_duration_for_articulation() at all -- a slur
-// overrides BOTH duration-articulation shortening (and the plain
-// no-articulation default gap) AND tie-boundary suppression entirely, per
-// playback_mapping.hpp's overview, "Legato (slur) overlap and its
-// precedence over shortening". Concretely: `is_tied` has NO EFFECT on this
-// function's result whenever `slurred_gap_to_next_onset` has a value --
-// slur wins outright over tie-suppression, not merely over articulation
-// shortening, so a caller must not expect `is_tied` to matter for a
-// slurred note even though it is a named parameter here. Otherwise (no
-// slur governs this event), this event's notated duration, its own
-// duration articulation (if any), and `is_tied` are passed to
-// sounded_duration_for_articulation(), whose own overview documents the
-// four ratios and the tie-boundary suppression rule.
+// When `slurred_gap_to_next_onset` has a value and the event has no explicit
+// duration articulation, the event's raw notated duration is passed to
+// legato_sounded_duration() to create the slur's overlap. An explicit
+// duration articulation (staccato, staccatissimo, or tenuto) overrides the
+// slur and is passed to sounded_duration_for_articulation() instead. Accent
+// and marcato are velocity-only and therefore do not override a slur. In the
+// articulation path, `is_tied` retains its normal tie-boundary suppression
+// behavior.
 [[nodiscard]] Rational event_sounded_duration(
     const VoiceEvent& event, bool is_tied,
     std::optional<Rational> slurred_gap_to_next_onset);

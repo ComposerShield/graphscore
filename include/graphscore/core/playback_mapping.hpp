@@ -184,7 +184,7 @@ namespace graphscore {
 // the full notated value even when NOT tied, tie-suppression never changes
 // a tenuto note's own result, only a staccato-family one's.
 //
-// -- Legato (slur) overlap and its precedence over shortening --
+// -- Legato (slur) overlap and articulation precedence --
 // legato_sounded_duration() extends a note's sounded duration fully into
 // the gap before the next event's onset: `articulated_duration +
 // gap_to_next_onset`, eliminating the gap entirely so the note sounds
@@ -195,38 +195,14 @@ namespace graphscore {
 // Rational(0)` (a negative gap describes overlapping notated events, not a
 // meaningful request this function is asked to interpret).
 //
-// Precedence versus duration-articulation shortening AND tie-boundary
-// suppression (the plan's "precedence" deliverable, stated explicitly): a
-// slur governing a note's outgoing edge overrides BOTH duration-
-// articulation shortening AND tie-suppression ENTIRELY, not partially.
-// graphscore/domain/notation_playback.hpp's wiring enforces this by NOT
-// calling sounded_duration_for_articulation() at all for a slurred note --
-// it passes the note's raw notated duration directly as
-// `articulated_duration` here, bypassing the three shortening ratios
-// above, the no-articulation 7/8 default, AND the `is_tied` flag alike (a
-// slurred note has no reason to carry the ordinary detache gap either,
-// since the slur already guarantees legato continuity). Tenuto is
-// unaffected either way, since tenuto's own ratio is already 1/1 --
-// identical to the raw notated value this bypass supplies.
-//
-// This IS a real conflict, resolved deliberately, not a case that "never
-// conflicts in practice": a note that is BOTH tied AND slurred AND marked
-// staccato sounds for `notated_duration + gap_to_next_onset` (the full
-// legato-overlap result computed by legato_sounded_duration()) -- its
-// `is_tied` flag and its staccato marking are BOTH silently ignored for
-// that note's own sounded-duration computation. Slur wins outright because
-// it is treated as the "loudest" playback instruction of the three: an
-// audibly continuous legato connection -- the entire point of notating a
-// slur -- must not be interrupted by a shortening articulation, nor
-// deferred to tie-suppression logic that was designed for a different
-// case (a tied note's audible span continuing into a SEPARATE following
-// event via a real MIDI tie, not a slur's own overlap into the next
-// onset's attack). A caller passing `is_tied` alongside a
-// `slurred_gap_to_next_onset` must not expect `is_tied` to matter --
-// graphscore/domain/notation_playback.hpp's event_sounded_duration() doc
-// comment states this explicitly, since `is_tied` is a named parameter of
-// that function and a caller could otherwise be surprised it is silently
-// discarded in this combination.
+// The domain wiring applies this primitive when a slur governs an event with
+// no explicit duration articulation. A duration articulation is the more
+// specific instruction and therefore suppresses the overlap: the domain
+// calls sounded_duration_for_articulation() instead, preserving its normal
+// tie-boundary suppression. Accent and marcato do not affect this precedence
+// because they are velocity-only. The standalone primitive remains useful
+// for callers that have already resolved the articulated duration and the
+// outgoing slur gap.
 //
 // == Grace-note steal ==
 //
@@ -457,8 +433,8 @@ inline constexpr std::size_t kMaxGraceNotesPerGroup = 16;
 
 // Extends `articulated_duration` (the result of
 // sounded_duration_for_articulation(), or a note's raw notated duration
-// when a slur overrides shortening -- see this header's overview, "Legato
-// (slur) overlap and its precedence over shortening") fully into the gap
+// when a slur applies -- see this header's overview, "Legato (slur) overlap
+// and articulation precedence") fully into the gap
 // before the next event's onset: `articulated_duration +
 // gap_to_next_onset`. Precondition: `gap_to_next_onset >= Rational(0)`.
 [[nodiscard]] Rational legato_sounded_duration(

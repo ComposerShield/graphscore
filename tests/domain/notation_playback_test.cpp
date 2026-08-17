@@ -30,7 +30,9 @@ using graphscore::HairpinDirection;
 using graphscore::HairpinVelocityContext;
 using graphscore::interpolate_hairpin_velocity;
 using graphscore::kDefaultSoundedDurationRatio;
+using graphscore::kStaccatissimoSoundedDurationRatio;
 using graphscore::kStaccatoSoundedDurationRatio;
+using graphscore::kTenutoSoundedDurationRatio;
 using graphscore::Letter;
 using graphscore::make_chord;
 using graphscore::make_dynamic_marking;
@@ -96,36 +98,65 @@ TEST(NotationPlaybackTest, StaccatoNoteTiedSuppressesShortening) {
   EXPECT_EQ(result, quarter().resolved());
 }
 
-TEST(NotationPlaybackTest, SlurredNoteOverridesArticulationShortening) {
+TEST(NotationPlaybackTest, ExplicitDurationArticulationOverridesSlur) {
   const VoiceEvent event =
       make_note(pitch(Letter::kC), quarter(), false, {Articulation::kStaccato});
   const Rational gap = *Rational::create(1, 8);
   const Rational result =
       event_sounded_duration(event, /*is_tied=*/false, std::make_optional(gap));
-  EXPECT_EQ(result, quarter().resolved() + gap);
+  EXPECT_EQ(result, quarter().resolved() * kStaccatoSoundedDurationRatio);
+}
+
+TEST(NotationPlaybackTest, PresentZeroSlurGapUsesRawDuration) {
+  const VoiceEvent event = make_note(pitch(Letter::kC), quarter());
+  const Rational   result =
+      event_sounded_duration(event, /*is_tied=*/false, Rational(0));
+  EXPECT_EQ(result, quarter().resolved());
+}
+
+TEST(NotationPlaybackTest, EveryDurationArticulationOverridesSlur) {
+  const Rational gap = *Rational::create(1, 8);
+  const std::vector<std::pair<Articulation, Rational>> cases = {
+      {Articulation::kStaccatissimo, kStaccatissimoSoundedDurationRatio},
+      {Articulation::kTenuto, kTenutoSoundedDurationRatio},
+  };
+
+  for (const auto& [articulation, ratio] : cases) {
+    const VoiceEvent event =
+        make_note(pitch(Letter::kC), quarter(), false, {articulation});
+    EXPECT_EQ(event_sounded_duration(event, /*is_tied=*/false,
+                                     std::make_optional(gap)),
+              quarter().resolved() * ratio);
+  }
 }
 
 TEST(NotationPlaybackTest,
-     SlurredTiedStaccatoNoteIgnoresIsTiedAndArticulationAlike) {
-  // Documented precedence (playback_mapping.hpp's overview, "Legato (slur)
-  // overlap and its precedence over shortening"): a slur wins outright over
-  // BOTH duration-articulation shortening AND tie-boundary suppression.
-  // is_tied=true and Articulation::kStaccato are both silently ignored when
-  // a slur governs the outgoing edge; the result is the plain legato
-  // overlap of the raw notated duration.
+     ExplicitDurationArticulationPreservesTieSuppressionOverSlur) {
+  // A duration articulation is more specific than a slur. Once it overrides
+  // the slur, the ordinary tie rule still suppresses its shortening.
   const VoiceEvent event =
       make_note(pitch(Letter::kC), quarter(), /*tied_to_next=*/true,
                 {Articulation::kStaccato});
   const Rational gap = *Rational::create(1, 8);
   const Rational result =
       event_sounded_duration(event, /*is_tied=*/true, std::make_optional(gap));
-  EXPECT_EQ(result, quarter().resolved() + gap);
-
-  // Confirm this is genuinely different from what either is_tied or
-  // staccato alone would have produced, so the test would fail if
-  // precedence regressed to tie-wins or staccato-wins.
-  EXPECT_NE(result, quarter().resolved());
+  EXPECT_EQ(result, quarter().resolved());
   EXPECT_NE(result, quarter().resolved() * kStaccatoSoundedDurationRatio);
+}
+
+TEST(NotationPlaybackTest, SlurRemainsActiveForVelocityOnlyArticulations) {
+  const Rational   gap = *Rational::create(1, 8);
+  const VoiceEvent accent =
+      make_note(pitch(Letter::kC), quarter(), false, {Articulation::kAccent});
+  const VoiceEvent marcato =
+      make_note(pitch(Letter::kD), quarter(), false, {Articulation::kMarcato});
+
+  EXPECT_EQ(event_sounded_duration(accent, /*is_tied=*/false,
+                                   std::make_optional(gap)),
+            quarter().resolved() + gap);
+  EXPECT_EQ(event_sounded_duration(marcato, /*is_tied=*/false,
+                                   std::make_optional(gap)),
+            quarter().resolved() + gap);
 }
 
 TEST(NotationPlaybackTest, ChordUsesItsOwnArticulationSet) {
