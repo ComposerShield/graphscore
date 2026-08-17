@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace graphscore::writer_app {
@@ -58,17 +59,57 @@ NotationAccessibilityController::available_actions() const {
 }
 
 graphscore::AccessibilityBuildResult
-NotationAccessibilityController::build_tree() const {
+NotationAccessibilityController::build_tree() {
   if (handler_ == nullptr) {
     return {graphscore::AccessibilityBuildError::kNodeNotFound, std::nullopt};
   }
   const std::vector<graphscore::AccessibilityNode::Action> actions =
       available_actions();
   const auto& selection = handler_->drag_state().committed_selection();
-  return graphscore::build_notation_accessibility_tree(
-      handler_->project(), handler_->layout().node_id, handler_->layout(),
-      handler_->note_palette_state(),
-      selection.has_value() ? &*selection : nullptr, actions, actions);
+  graphscore::AccessibilityBuildResult result =
+      graphscore::build_notation_accessibility_tree(
+          handler_->project(), handler_->layout().node_id, handler_->layout(),
+          handler_->note_palette_state(),
+          selection.has_value() ? &*selection : nullptr, actions, actions,
+          focused_id_.value_or(""), focus_ancestors_);
+  if (result && result.tree->focused().has_value()) {
+    const auto& nodes = result.tree->nodes();
+    focused_id_       = nodes[*result.tree->focused()].id;
+    focus_ancestors_.clear();
+    std::optional<std::size_t> parent = nodes[*result.tree->focused()].parent;
+    while (parent.has_value()) {
+      focus_ancestors_.push_back(nodes[*parent].id);
+      parent = nodes[*parent].parent;
+    }
+  }
+  return result;
+}
+
+bool NotationAccessibilityController::set_focus(std::string_view semantic_id) {
+  if (semantic_id.empty()) {
+    return false;
+  }
+  const std::optional<std::string> previous           = focused_id_;
+  std::vector<std::string>         previous_ancestors = focus_ancestors_;
+  focused_id_                                         = semantic_id;
+  focus_ancestors_.clear();
+  const graphscore::AccessibilityBuildResult result = build_tree();
+  if (result && focused_id_ == semantic_id) {
+    return true;
+  }
+  focused_id_      = previous;
+  focus_ancestors_ = std::move(previous_ancestors);
+  return false;
+}
+
+void NotationAccessibilityController::clear_focus() noexcept {
+  focused_id_.reset();
+  focus_ancestors_.clear();
+}
+
+const std::optional<std::string>& NotationAccessibilityController::focused_id()
+    const noexcept {
+  return focused_id_;
 }
 
 bool NotationAccessibilityController::invoke(std::string_view action_id_value) {

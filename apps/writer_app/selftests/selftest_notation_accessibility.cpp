@@ -69,10 +69,26 @@ int notation_accessibility_test() {
     return 1;
   }
 
-  NotationAccessibilityController accessibility(&handler);
-  auto                            actions = accessibility.available_actions();
-  const auto* move_up    = find_action(actions, "Move note up");
-  const auto* enter_mode = find_action(actions, "Toggle note entry");
+  NotationAccessibilityController            accessibility(&handler);
+  const graphscore::AccessibilityBuildResult initial_tree =
+      accessibility.build_tree();
+  if (!initial_tree || !initial_tree.tree.has_value()) {
+    std::fprintf(stderr,
+                 "notation-accessibility-test: initial tree build failed\n");
+    return 1;
+  }
+  const auto initial_note = std::ranges::find(
+      initial_tree.tree->nodes(), graphscore::AccessibilityRole::kNote,
+      &graphscore::AccessibilityNode::role);
+  if (initial_note == initial_tree.tree->nodes().end() ||
+      !accessibility.set_focus(initial_note->id)) {
+    std::fprintf(stderr, "notation-accessibility-test: focus setup failed\n");
+    return 1;
+  }
+  const std::string focused_note_id = initial_note->id;
+  auto              actions         = accessibility.available_actions();
+  const auto*       move_up         = find_action(actions, "Move note up");
+  const auto*       enter_mode      = find_action(actions, "Toggle note entry");
   if (move_up == nullptr || enter_mode == nullptr ||
       !accessibility.invoke(move_up->id)) {
     std::fprintf(stderr,
@@ -96,6 +112,14 @@ int notation_accessibility_test() {
       find_action(selected->actions, "Move note down") == nullptr) {
     std::fprintf(stderr,
                  "notation-accessibility-test: selected actions missing\n");
+    return 1;
+  }
+  if (!edited_tree.tree->focused().has_value() ||
+      edited_tree.tree->nodes()[*edited_tree.tree->focused()].id !=
+          focused_note_id ||
+      accessibility.focused_id() != focused_note_id) {
+    std::fprintf(stderr,
+                 "notation-accessibility-test: focus changed after edit\n");
     return 1;
   }
 
