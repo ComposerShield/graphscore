@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <type_traits>
 #include <unordered_set>
@@ -47,6 +49,86 @@ namespace {
 
 [[nodiscard]] std::string measure_path(NodeId node, std::size_t ordinal) {
   return append_path(node_path(node), "measure/" + std::to_string(ordinal));
+}
+
+[[nodiscard]] std::string pitch_name(const SpelledPitch& pitch) {
+  constexpr const char* kLetters[]     = {"A", "B", "C", "D", "E", "F", "G"};
+  constexpr const char* kAccidentals[] = {"double flat", "flat", "natural",
+                                          "sharp", "double sharp"};
+  const std::size_t     accidental_index =
+      static_cast<std::size_t>(to_semitone_offset(pitch.accidental()) + 2);
+  return std::string(kLetters[static_cast<std::uint8_t>(pitch.letter())]) +
+         " " + kAccidentals[accidental_index] + " " +
+         std::to_string(pitch.octave());
+}
+
+[[nodiscard]] std::string duration_name(const Duration& duration) {
+  constexpr const char* kNoteValues[] = {
+      "whole note",        "half note",      "quarter note",
+      "eighth note",       "sixteenth note", "thirty-second note",
+      "sixty-fourth note",
+  };
+  std::string result;
+  if (duration.dots() == 1U)
+    result = "dotted ";
+  else if (duration.dots() == 2U)
+    result = "double-dotted ";
+  result += kNoteValues[static_cast<std::uint8_t>(duration.base())];
+  if (duration.tuplet().has_value()) {
+    result += ", " + std::to_string(duration.tuplet()->played()) + ":" +
+              std::to_string(duration.tuplet()->normal()) + " tuplet";
+  }
+  return result;
+}
+
+[[nodiscard]] std::string rational_ordinal(Rational value) {
+  const std::int64_t whole     = value.numerator() / value.denominator();
+  const std::int64_t remainder = value.numerator() % value.denominator();
+  if (remainder == 0)
+    return std::to_string(whole);
+  if (whole == 0) {
+    return std::to_string(remainder) + "/" +
+           std::to_string(value.denominator());
+  }
+  return std::to_string(whole) + " " + std::to_string(remainder) + "/" +
+         std::to_string(value.denominator());
+}
+
+[[nodiscard]] std::string position_name(const NodeTimeline& timeline,
+                                        Rational            position) {
+  const MeasureMap& measures      = timeline.measures();
+  std::size_t       measure_index = measures.measure_count();
+  Rational          measure_start = timeline.boundary_position();
+  TimeSignature     meter =
+      measures.measure(measures.measure_count() - 1U).time_signature;
+  if (const auto main_measure = measures.measure_index_at(position)) {
+    measure_index = *main_measure;
+    measure_start = measures.measure_start(measure_index);
+    meter         = measures.measure(measure_index).time_signature;
+  }
+  const Rational beat =
+      (position - measure_start) * Rational(meter.denominator()) + Rational(1);
+  return "bar " + std::to_string(measure_index + 1U) + ", beat " +
+         rational_ordinal(beat);
+}
+
+[[nodiscard]] std::string event_value(const std::optional<SpelledPitch>& pitch,
+                                      const Duration& duration, Voice voice,
+                                      Rational            position,
+                                      const NodeTimeline& timeline) {
+  std::string result;
+  if (pitch.has_value()) {
+    const auto sounding = pitch->to_midi_pitch();
+    result              = sounding.has_value()
+                              ? "Sounding pitch " +
+                       std::to_string(static_cast<unsigned>(sounding->value()))
+                              : "Sounding pitch unavailable";
+    result += "; ";
+  }
+  result += duration_name(duration) + "; voice " +
+            std::to_string(voice.index()) + "; " +
+            position_name(timeline, position);
+  return result;
 }
 
 [[nodiscard]] std::optional<NotationRect> union_rects(
@@ -123,8 +205,10 @@ class TreeBuilder {
     nodes_.push_back(AccessibilityNode{std::move(id),
                                        role,
                                        std::move(name),
+                                       {},
                                        bounds,
                                        AccessibilityState::kNone,
+                                       {},
                                        parent,
                                        {},
                                        {}});
@@ -133,11 +217,26 @@ class TreeBuilder {
     return index;
   }
 
-  void select_related(const std::vector<std::string>& related) {
+  void select_related(
+      const std::vector<std::string>&            related,
+      std::span<const AccessibilityNode::Action> available_actions) {
     for (AccessibilityNode& node : nodes_) {
-      if (std::ranges::find(related, node.id) != related.end())
+      if (std::ranges::find(related, node.id) != related.end()) {
         node.states = node.states | AccessibilityState::kSelected;
+        node.actions.assign(available_actions.begin(), available_actions.end());
+      }
     }
+  }
+
+  void set_value(std::size_t node, std::string value) {
+    nodes_[node].value = std::move(value);
+  }
+
+  void set_actions(
+      std::size_t                                node,
+      std::span<const AccessibilityNode::Action> available_actions) {
+    nodes_[node].actions.assign(available_actions.begin(),
+                                available_actions.end());
   }
 
   void set_related(std::size_t node, std::vector<std::string> related) {
@@ -186,8 +285,10 @@ void add_record_markings(TreeBuilder& builder, const NotationLayout& layout,
 
 void add_event_semantics(TreeBuilder& builder, const NotationLayout& layout,
                          const VoiceContent& content,
-                         const std::string& voice_id, std::size_t voice_node) {
+                         const std::string& voice_id, std::size_t voice_node,
+                         Voice voice, const NodeTimeline& timeline) {
   std::set<std::string> emitted_tuplets;
+  Rational              position;
   for (const VoiceEvent& event : content.events()) {
     const NotationEntityId event_entity       = event_id(event);
     const auto             add_event_markings = [&](const auto& sounding) {
@@ -213,8 +314,13 @@ void add_event_semantics(TreeBuilder& builder, const NotationLayout& layout,
           if constexpr (std::is_same_v<Event, Note>) {
             const auto bounds = event_bounds(layout, concrete.id);
             if (bounds.has_value()) {
-              builder.add(entity_path(voice_id, "note", concrete.id),
-                          AccessibilityRole::kNote, "Note", bounds, voice_node);
+              const std::size_t note_node =
+                  builder.add(entity_path(voice_id, "note", concrete.id),
+                              AccessibilityRole::kNote,
+                              pitch_name(concrete.pitch), bounds, voice_node);
+              builder.set_value(note_node,
+                                event_value(concrete.pitch, concrete.duration,
+                                            voice, position, timeline));
             }
             if (concrete.tied_to_next) {
               const auto tie_bounds =
@@ -232,12 +338,19 @@ void add_event_semantics(TreeBuilder& builder, const NotationLayout& layout,
               const std::size_t chord_node = builder.add(
                   entity_path(voice_id, "chord", concrete.id),
                   AccessibilityRole::kChord, "Chord", chord_bounds, voice_node);
+              builder.set_value(chord_node,
+                                event_value(std::nullopt, concrete.duration,
+                                            voice, position, timeline));
               for (const ChordNote& note : concrete.notes) {
                 const auto bounds = event_bounds(layout, note.id);
                 if (bounds.has_value()) {
-                  builder.add(entity_path(voice_id, "note", note.id),
-                              AccessibilityRole::kNote, "Note", bounds,
-                              chord_node);
+                  const std::size_t note_node =
+                      builder.add(entity_path(voice_id, "note", note.id),
+                                  AccessibilityRole::kNote,
+                                  pitch_name(note.pitch), bounds, chord_node);
+                  builder.set_value(note_node,
+                                    event_value(note.pitch, concrete.duration,
+                                                voice, position, timeline));
                 }
                 if (note.tied_to_next) {
                   const auto tie_bounds =
@@ -254,8 +367,12 @@ void add_event_semantics(TreeBuilder& builder, const NotationLayout& layout,
           } else {
             const auto bounds = event_bounds(layout, concrete.id);
             if (bounds.has_value()) {
-              builder.add(entity_path(voice_id, "rest", concrete.id),
-                          AccessibilityRole::kRest, "Rest", bounds, voice_node);
+              const std::size_t rest_node = builder.add(
+                  entity_path(voice_id, "rest", concrete.id),
+                  AccessibilityRole::kRest, "Rest", bounds, voice_node);
+              builder.set_value(
+                  rest_node, event_value(std::nullopt, concrete.duration, voice,
+                                         position, timeline));
             }
           }
         },
@@ -277,14 +394,22 @@ void add_event_semantics(TreeBuilder& builder, const NotationLayout& layout,
                     AccessibilityRole::kMarking, "Tuplet", bounds, voice_node);
       }
     }
+    position = position + event_duration(event).resolved();
   }
 
   for (const GraceGroup& group : content.grace_groups()) {
     for (const GraceNote& note : group.notes) {
       const auto bounds = event_bounds(layout, note.id);
       if (bounds.has_value()) {
-        builder.add(entity_path(voice_id, "note", note.id),
-                    AccessibilityRole::kNote, "Grace note", bounds, voice_node);
+        const std::size_t note_node = builder.add(
+            entity_path(voice_id, "note", note.id), AccessibilityRole::kNote,
+            "Grace " + pitch_name(note.pitch), bounds, voice_node);
+        const auto grace_position = content.position_of_event(note.id);
+        if (grace_position.has_value()) {
+          builder.set_value(note_node,
+                            event_value(note.pitch, note.duration, voice,
+                                        *grace_position, timeline));
+        }
       }
     }
   }
@@ -392,7 +517,8 @@ const AccessibilityNode* AccessibilityTree::find(const std::string& id) const {
 
 AccessibilityBuildResult build_notation_accessibility_tree(
     const Project& project, NodeId node_id, const NotationLayout& layout,
-    const NotePaletteState& palette, const Selection* selection) {
+    const NotePaletteState& palette, const Selection* selection,
+    std::span<const AccessibilityNode::Action> available_actions) {
   const Node* node = project.find_node(node_id);
   if (node == nullptr)
     return {AccessibilityBuildError::kNodeNotFound, std::nullopt};
@@ -451,7 +577,7 @@ AccessibilityBuildResult build_notation_accessibility_tree(
             container_bounds(layout, layout_voice_id.value, HitRole::kVoice),
             staff_node);
         add_event_semantics(builder, layout, voices->voice(voice), voice_id,
-                            voice_node);
+                            voice_node, voice, *node->timeline());
       }
       if (const auto* spans = lane->pedal_spans(stave.id)) {
         for (const PedalSpan& span : *spans) {
@@ -484,8 +610,9 @@ AccessibilityBuildResult build_notation_accessibility_tree(
   }
   if (builder.has_duplicate_id())
     return {AccessibilityBuildError::kDuplicateSemanticId, std::nullopt};
-  builder.select_related(related);
+  builder.select_related(related, available_actions);
   builder.set_related(selection_node, std::move(related));
+  builder.set_actions(selection_node, available_actions);
   return {AccessibilityBuildError::kNone,
           AccessibilityTree(std::move(builder).take_nodes(), root)};
 }

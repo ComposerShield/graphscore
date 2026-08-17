@@ -124,9 +124,11 @@ TEST(AccessibilityTreeTest, ExposesMusicalHierarchyWithoutGlyphPrimitives) {
   ASSERT_TRUE(selection.has_value());
   const Selection selected = *selection;
 
+  const std::vector<AccessibilityNode::Action> actions = {
+      {"move-note-up", "Move note up"}, {"delete", "Delete note"}};
   const AccessibilityBuildResult result = build_notation_accessibility_tree(
       fixture.project, fixture.node_id, fixture.layout, NotePaletteState(),
-      &selected);
+      &selected, actions);
 
   ASSERT_TRUE(result);
   const AccessibilityTree& tree = *result.tree;
@@ -152,11 +154,22 @@ TEST(AccessibilityTreeTest, ExposesMusicalHierarchyWithoutGlyphPrimitives) {
                has_state(node.states, AccessibilityState::kSelected);
       });
   ASSERT_NE(selected_note, tree.nodes().end());
+  EXPECT_EQ(selected_note->name, "C natural 4");
+  EXPECT_EQ(selected_note->value,
+            "Sounding pitch 60; quarter note; voice 1; bar 1, beat 1");
+  EXPECT_EQ(selected_note->actions, actions);
   const auto selection_node = std::ranges::find(
       tree.nodes(), AccessibilityRole::kSelection, &AccessibilityNode::role);
   ASSERT_NE(selection_node, tree.nodes().end());
   EXPECT_EQ(selection_node->related_ids,
             std::vector<std::string>{selected_note->id});
+  EXPECT_EQ(selection_node->actions, actions);
+
+  const auto rest = std::ranges::find(tree.nodes(), AccessibilityRole::kRest,
+                                      &AccessibilityNode::role);
+  ASSERT_NE(rest, tree.nodes().end());
+  EXPECT_EQ(rest->value, "dotted half note; voice 1; bar 1, beat 2");
+  EXPECT_TRUE(rest->actions.empty());
 
   std::set<std::string> ids;
   for (std::size_t index = 0; index < tree.nodes().size(); ++index) {
@@ -169,6 +182,178 @@ TEST(AccessibilityTreeTest, ExposesMusicalHierarchyWithoutGlyphPrimitives) {
   }
   EXPECT_FALSE(tree.nodes()[*tree.root()].parent.has_value());
   EXPECT_TRUE(selected_note->bounds.has_value());
+}
+
+TEST(AccessibilityTreeTest, AnnouncesChordSpellingsAndSharedDuration) {
+  Fixture fixture;
+  Node*   node = fixture.project.find_node(fixture.node_id);
+  ASSERT_NE(node, nullptr);
+  VoiceContent& content = node->lane(fixture.track_id)
+                              ->stave(fixture.stave_id)
+                              ->voice(*Voice::create(1));
+  content.clear();
+  Chord chord = make_chord(
+      *Duration::create(NoteValue::kQuarter, 2, *TupletRatio::create(3, 2)),
+      {{NotationEntityId::generate(),
+        *SpelledPitch::create(Letter::kC, 4, Accidental::kSharp), false},
+       {NotationEntityId::generate(),
+        *SpelledPitch::create(Letter::kD, 4, Accidental::kFlat), false}});
+  ASSERT_TRUE(content.append(chord));
+  fixture.layout.hit_regions.erase(fixture.layout.hit_regions.begin() + 3,
+                                   fixture.layout.hit_regions.end());
+  fixture.layout.hit_regions.push_back({NotationId{"chord"},
+                                        NotationId{chord.id.to_string()},
+                                        HitRole::kEvent,
+                                        {40.0, 40.0, 30.0, 12.0},
+                                        6});
+  for (std::size_t index = 0; index < chord.notes.size(); ++index) {
+    fixture.layout.hit_regions.push_back(
+        {NotationId{"note-" + std::to_string(index)},
+         NotationId{chord.notes[index].id.to_string()},
+         HitRole::kNotehead,
+         {40.0, 40.0 + static_cast<double>(index) * 8.0, 10.0, 8.0},
+         8});
+  }
+
+  const AccessibilityBuildResult result = build_notation_accessibility_tree(
+      fixture.project, fixture.node_id, fixture.layout, NotePaletteState());
+
+  ASSERT_TRUE(result);
+  const auto chord_node =
+      std::ranges::find(result.tree->nodes(), AccessibilityRole::kChord,
+                        &AccessibilityNode::role);
+  ASSERT_NE(chord_node, result.tree->nodes().end());
+  EXPECT_EQ(chord_node->value,
+            "double-dotted quarter note, 3:2 tuplet; voice 1; bar 1, beat 1");
+  ASSERT_EQ(chord_node->children.size(), 2U);
+  const AccessibilityNode& sharp =
+      result.tree->nodes()[chord_node->children[0]];
+  const AccessibilityNode& flat = result.tree->nodes()[chord_node->children[1]];
+  EXPECT_EQ(sharp.name, "C sharp 4");
+  EXPECT_EQ(flat.name, "D flat 4");
+  EXPECT_EQ(sharp.value,
+            "Sounding pitch 61; double-dotted quarter note, 3:2 tuplet; "
+            "voice 1; bar 1, beat 1");
+  EXPECT_EQ(flat.value, sharp.value);
+}
+
+TEST(AccessibilityTreeTest, AnnouncesExactBeatAcrossMeterChange) {
+  Fixture fixture;
+  Node*   node = fixture.project.find_node(fixture.node_id);
+  ASSERT_NE(node, nullptr);
+  node->set_timeline(*NodeTimeline::create(
+      {{*TimeSignature::create(4, 4), KeySignature{}},
+       {*TimeSignature::create(6, 8), KeySignature{}}},
+      fixture.project.active_tracks().front().layout().staves()));
+  VoiceContent& content = node->lane(fixture.track_id)
+                              ->stave(fixture.stave_id)
+                              ->voice(*Voice::create(1));
+  content.clear();
+  ASSERT_TRUE(
+      content.append(make_rest(*Duration::create(NoteValue::kWhole, 0))));
+  Note note = make_note(
+      *SpelledPitch::create(Letter::kF, 4, Accidental::kDoubleSharp),
+      *Duration::create(NoteValue::kEighth, 0, *TupletRatio::create(3, 2)));
+  ASSERT_TRUE(content.append(note));
+  Note later =
+      make_note(*SpelledPitch::create(Letter::kG, 4, Accidental::kNatural),
+                *Duration::create(NoteValue::kQuarter, 0));
+  ASSERT_TRUE(content.append(later));
+  fixture.layout.hit_regions.push_back({NotationId{"meter-note"},
+                                        NotationId{note.id.to_string()},
+                                        HitRole::kNotehead,
+                                        {120.0, 40.0, 10.0, 8.0},
+                                        8});
+  fixture.layout.hit_regions.push_back({NotationId{"meter-later"},
+                                        NotationId{later.id.to_string()},
+                                        HitRole::kNotehead,
+                                        {140.0, 40.0, 10.0, 8.0},
+                                        8});
+
+  const AccessibilityBuildResult result = build_notation_accessibility_tree(
+      fixture.project, fixture.node_id, fixture.layout, NotePaletteState());
+
+  ASSERT_TRUE(result);
+  const auto first = std::ranges::find_if(
+      result.tree->nodes(), [](const AccessibilityNode& candidate) {
+        return candidate.role == AccessibilityRole::kNote &&
+               candidate.name == "F double sharp 4";
+      });
+  const auto second = std::ranges::find_if(
+      result.tree->nodes(), [](const AccessibilityNode& candidate) {
+        return candidate.role == AccessibilityRole::kNote &&
+               candidate.name == "G natural 4";
+      });
+  ASSERT_NE(first, result.tree->nodes().end());
+  ASSERT_NE(second, result.tree->nodes().end());
+  EXPECT_EQ(first->value,
+            "Sounding pitch 67; eighth note, 3:2 tuplet; voice 1; bar 2, "
+            "beat 1");
+  EXPECT_EQ(second->value,
+            "Sounding pitch 67; quarter note; voice 1; bar 2, beat 1 2/3");
+}
+
+TEST(AccessibilityTreeTest, AnnouncesGraceNoteAndUnavailableSoundingPitch) {
+  Fixture fixture;
+  Node*   node = fixture.project.find_node(fixture.node_id);
+  ASSERT_NE(node, nullptr);
+  VoiceContent& content = node->lane(fixture.track_id)
+                              ->stave(fixture.stave_id)
+                              ->voice(*Voice::create(1));
+  GraceNote grace{
+      NotationEntityId::generate(),
+      *SpelledPitch::create(Letter::kC, -1, Accidental::kDoubleFlat),
+      *Duration::create(NoteValue::kSixteenth, 0), GraceNoteType::kAcciaccatura,
+      true};
+  ASSERT_TRUE(
+      content.add_grace_group(make_grace_group(fixture.note_id, {grace})));
+  fixture.layout.hit_regions.push_back({NotationId{"grace"},
+                                        NotationId{grace.id.to_string()},
+                                        HitRole::kNotehead,
+                                        {35.0, 40.0, 8.0, 6.0},
+                                        8});
+
+  const AccessibilityBuildResult result = build_notation_accessibility_tree(
+      fixture.project, fixture.node_id, fixture.layout, NotePaletteState());
+
+  ASSERT_TRUE(result);
+  const auto grace_node = std::ranges::find(
+      result.tree->nodes(), "Grace C double flat -1", &AccessibilityNode::name);
+  ASSERT_NE(grace_node, result.tree->nodes().end());
+  EXPECT_EQ(grace_node->value,
+            "Sounding pitch unavailable; sixteenth note; voice 1; bar 1, "
+            "beat 1");
+}
+
+TEST(AccessibilityTreeTest, AnnouncesVoiceAndPickdownBarPosition) {
+  Fixture fixture;
+  Node*   node = fixture.project.find_node(fixture.node_id);
+  ASSERT_NE(node, nullptr);
+  ASSERT_TRUE(node->timeline()->set_pickdown(Rational(1) / Rational(4)));
+  VoiceContent& content = node->lane(fixture.track_id)
+                              ->stave(fixture.stave_id)
+                              ->voice(*Voice::create(4));
+  ASSERT_TRUE(
+      content.append(make_rest(*Duration::create(NoteValue::kWhole, 0))));
+  Note note =
+      make_note(*SpelledPitch::create(Letter::kA, 4, Accidental::kNatural),
+                *Duration::create(NoteValue::kEighth, 0));
+  ASSERT_TRUE(content.append(note));
+  fixture.layout.hit_regions.push_back({NotationId{"pickdown-note"},
+                                        NotationId{note.id.to_string()},
+                                        HitRole::kNotehead,
+                                        {360.0, 40.0, 10.0, 8.0},
+                                        8});
+
+  const AccessibilityBuildResult result = build_notation_accessibility_tree(
+      fixture.project, fixture.node_id, fixture.layout, NotePaletteState());
+
+  ASSERT_TRUE(result);
+  const auto accessible_note = std::ranges::find(
+      result.tree->nodes(), "A natural 4", &AccessibilityNode::name);
+  ASSERT_NE(accessible_note, result.tree->nodes().end());
+  EXPECT_EQ(accessible_note->value,
+            "Sounding pitch 69; eighth note; voice 4; bar 2, beat 1");
 }
 
 TEST(AccessibilityTreeTest, KeepsStableSemanticIdsAcrossGlyphChanges) {

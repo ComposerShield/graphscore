@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -47,13 +48,26 @@ enum class AccessibilityState : std::uint8_t {
 }
 
 struct AccessibilityNode {
-  std::string                 id;
-  AccessibilityRole           role = AccessibilityRole::kNode;
-  std::string                 name;
+  struct Action {
+    std::string id;
+    std::string name;
+
+    [[nodiscard]] bool operator==(const Action&) const = default;
+  };
+
+  std::string       id;
+  AccessibilityRole role = AccessibilityRole::kNode;
+  std::string       name;
+  // Spoken value separate from the concise semantic name. For notation
+  // events this carries duration, voice, bar/beat, and sounding pitch.
+  std::string                 value;
   std::optional<NotationRect> bounds;
   AccessibilityState          states = AccessibilityState::kNone;
-  std::optional<std::size_t>  parent;
-  std::vector<std::size_t>    children;
+  // Actions currently available for this semantic object. IDs are stable
+  // application-owned invocation keys; names are suitable for announcement.
+  std::vector<Action>        actions;
+  std::optional<std::size_t> parent;
+  std::vector<std::size_t>   children;
   // Stable semantic IDs named by aggregate concepts such as a selection.
   std::vector<std::string> related_ids;
 
@@ -79,7 +93,8 @@ class AccessibilityTree {
  private:
   friend AccessibilityBuildResult build_notation_accessibility_tree(
       const Project& project, NodeId node_id, const NotationLayout& layout,
-      const NotePaletteState& palette, const Selection* selection);
+      const NotePaletteState& palette, const Selection* selection,
+      std::span<const AccessibilityNode::Action> available_actions);
 
   AccessibilityTree(std::vector<AccessibilityNode> nodes,
                     std::optional<std::size_t>     root) noexcept;
@@ -114,6 +129,7 @@ struct AccessibilityBuildResult {
 // object regardless of how many glyphs or path segments engrave it.
 [[nodiscard]] AccessibilityBuildResult build_notation_accessibility_tree(
     const Project& project, NodeId node_id, const NotationLayout& layout,
-    const NotePaletteState& palette, const Selection* selection = nullptr);
+    const NotePaletteState& palette, const Selection* selection = nullptr,
+    std::span<const AccessibilityNode::Action> available_actions = {});
 
 }  // namespace graphscore
