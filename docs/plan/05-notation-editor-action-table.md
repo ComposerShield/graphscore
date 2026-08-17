@@ -29,9 +29,10 @@ below changes that assignment:
 - There is **no runtime impact**: nothing here reaches `graphscore_runtime`
   or any clean-layer target.
 
-Explicitly **out of scope** here, owned by later milestones, and therefore not
-claimed by this table: platform accessibility bridges and AT key routing
-(M10), native plugin-editor focus handling (M8), canvas bindings (M6), OS
+Explicitly **out of scope** here, and therefore not claimed by this table:
+platform accessibility bridges and AT key routing (deferred indefinitely under
+the product-scope decision in `README.md`), native plugin-editor focus handling
+(M8), canvas bindings (M6), OS
 clipboard interchange and clipboard persistence (a later phase — this table
 defines only the in-memory handoff to `CutFragmentCommand` /
 `PasteFragmentCommand`), and any toolbar/UI presentation beyond the key chords
@@ -727,7 +728,7 @@ not mutate the project. Each successful action is one undoable transaction.
 
 ## 11. Command palette (complete normative route)
 
-The command palette is the universal keyboard and accessibility route to every
+The command palette is the universal keyboard route to every
 action in this table, and it is what makes the numpad-only bindings
 (duration/rest/dots, §7.6) reachable on keyboards without a numpad.
 
@@ -786,12 +787,11 @@ action in this table, and it is what makes the numpad-only bindings
 - **Search.** The filter matches the name and description, case-insensitively;
   filtering never changes an action's availability or chord hint.
 
-This makes the palette the complete route M5-phase-52/53/54 exercise: every
-chord in §7 is reachable by name without any specific physical key, so a
-numpad-less keyboard — or a screen reader — reaches duration/rest/dots and
-every other action through `Primary+K` plus its searchable name. The numpad
-bindings in §7.6 remain an accelerator for keyboards that have them; they are
-not a requirement for reachability.
+This makes the palette the complete route M5-phase-52/53 exercise: every chord
+in §7 is reachable by name without any specific physical key, so a numpad-less
+keyboard reaches duration/rest/dots and every other action through `Primary+K`
+plus its searchable name. The numpad bindings in §7.6 remain an accelerator for
+keyboards that have them; they are not a requirement for reachability.
 
 ## 12. Determinism and testability
 

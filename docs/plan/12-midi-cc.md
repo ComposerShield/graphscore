@@ -15,7 +15,7 @@ Add general MIDI Control Change authoring and runtime output after the complete 
 - [ ] M12-phase-4 Track/node CC lanes for controller numbers 0-127, excluding or specially coordinating existing CC64 pedal notation.
 - [ ] M12-phase-5 Point, step, linear, and smooth controller curves anchored to musical positions.
 - [ ] M12-phase-6 Explicit value range, thinning/resampling, and sample-accurate emission policy.
-- [ ] M12-phase-7 Writer palette/inspector, graph-node lane UI, selection, copy/paste, undo/redo, accessibility, and plugin audition.
+- [ ] M12-phase-7 Writer palette/inspector, graph-node lane UI, selection, copy/paste, undo/redo, and plugin audition.
 - [ ] M12-phase-8 Cooked schema additions with backward-compatible version negotiation.
 - [ ] M12-phase-9 Runtime MIDI-capacity analysis accounting for worst-case controller density.
 - [ ] M12-phase-10 Host/API documentation for ordering CC against note-off, program/state events if later added, and note-on at the same sample.
@@ -30,7 +30,7 @@ Add general MIDI Control Change authoring and runtime output after the complete 
 
 ## Acceptance Criteria
 
-- [ ] M12-phase-16 General CC data is editable, accessible, persisted, exported, and emitted identically by writer and runtime.
+- [ ] M12-phase-16 General CC data is editable, persisted, exported, and emitted identically by writer and runtime.
 - [ ] M12-phase-17 Controller output is deterministic across block partitioning and platforms.
 - [ ] M12-phase-18 Processing remains allocation-free and capacity can be queried before playback.
 - [ ] M12-phase-19 Older `0.1.0` libraries reject assets that require general CC semantics; only explicitly optional non-semantic fields may be ignored.

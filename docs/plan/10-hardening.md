@@ -1,8 +1,8 @@
-# Milestone 10: Accessibility, Performance, And Hardening
+# Milestone 10: Performance And Hardening
 
 ## Goal
 
-Turn the integrated writer/runtime into release-quality `0.1.0` candidates through measurable accessibility, realtime, performance, resilience, and compatibility gates.
+Turn the integrated writer/runtime into release-quality `0.1.0` candidates through measurable realtime, performance, resilience, and compatibility gates.
 
 ## Dependencies
 
@@ -11,19 +11,15 @@ Turn the integrated writer/runtime into release-quality `0.1.0` candidates throu
 
 ## Deliverables
 
-### Accessibility completion
+### Keyboard workflows
 
-- [ ] M10-phase-3 Audit every custom graph, notation, tempo, connector, mixer, transport, event, validation, and plugin-generic control.
 - [ ] M10-phase-4 Complete keyboard-only creation/editing workflows and visible focus indicators.
-- [ ] M10-phase-5 Verify role/name/value/state/action announcements with VoiceOver, Narrator, and Orca on Wayland and X11/XWayland using a recorded OS/assistive-technology version matrix.
-- [ ] M10-phase-6 Preserve semantic focus through viewport culling, zoom, live updates, undo/redo, and dialog/plugin-editor transitions.
-- [ ] M10-phase-7 Add color-vision-safe themes and ensure connection types, errors, selection, and playback state never rely on color alone.
 
 ### Canvas and notation performance
 
 - [ ] M10-phase-8 Establish a versioned representative 1,000-node project fixture with realistic notation, 64-track stress nodes, tempo lanes, and dense connectors.
 - [ ] M10-phase-9 Maintain 60 fps target interactions for pan, zoom, node drag, and route drag on documented recommended hardware.
-- [ ] M10-phase-10 Profile spatial queries, clipping, engraving invalidation, rendering, accessibility updates, and connector routing separately.
+- [ ] M10-phase-10 Profile spatial queries, clipping, engraving invalidation, rendering, and connector routing separately.
 - [ ] M10-phase-11 Bound memory growth while repeatedly navigating, editing, undoing, opening projects, and rescanning plugins.
 - [ ] M10-phase-12 Retain full notation semantics at all zoom levels while allowing clipping and sub-pixel raster simplification.
 
@@ -53,7 +49,7 @@ Turn the integrated writer/runtime into release-quality `0.1.0` candidates throu
 
 ## Acceptance Criteria
 
-- [ ] M10-phase-28 Every core composition/graph workflow is keyboard-complete and exposes tested role/name/value/state/action semantics with no severity-1 accessibility defects under the recorded assistive-technology matrix.
+- [ ] M10-phase-28 Every core composition/graph workflow is keyboard-complete with visible focus and no focus traps.
 - [ ] M10-phase-29 Performance fixture meets the documented 60 fps target on reference hardware or has an approved, measured exception.
 - [ ] M10-phase-30 Realtime stress/soak tests complete without allocation, locks, missed deadlines above the agreed threshold, sanitizer findings, races, or nondeterministic MIDI.
 - [ ] M10-phase-31 Malformed input and hostile scanner fixtures cannot crash the writer/runtime host process or exceed documented resource limits.
@@ -62,7 +58,6 @@ Turn the integrated writer/runtime into release-quality `0.1.0` candidates throu
 
 ## Test Focus
 
-- [ ] M10-phase-34 Automated accessibility tree/action tests plus a manual assistive-technology checklist.
 - [ ] M10-phase-35 Versioned benchmark baselines with regression thresholds and trace capture.
 - [ ] M10-phase-36 Multi-hour runtime/audio soak tests and repeated open/close/plugin-rescan loops.
 - [ ] M10-phase-37 ASan/UBSan/TSan optimized and debug configurations where supported.

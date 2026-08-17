@@ -47,7 +47,7 @@ Ship the runtime, writer, Unity package, Unreal plugin, documentation, and unsig
 - [ ] M11-phase-22 Composer quick start covering tracks, notation, tempo, graph connections, events, pickdowns, plugins, playback, save/recovery, and export.
 - [ ] M11-phase-23 Runtime quick start covering clock blocks, buffers, UUID/name events, deterministic seeds, MIDI routing, diagnostics, and shutdown.
 - [ ] M11-phase-24 Unity/Unreal guides and complete sample build instructions.
-- [ ] M11-phase-25 Accessibility/keyboard shortcut reference including connector editing and playback actions.
+- [ ] M11-phase-25 Keyboard shortcut reference including connector editing and playback actions.
 - [ ] M11-phase-26 Known limitations explicitly list no opening pickups, no transposing instruments, no plugin automation, general MIDI CC deferred except CC64, and arm64 test status.
 
 ## Acceptance Criteria
