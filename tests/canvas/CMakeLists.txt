@@ -6,6 +6,7 @@ add_executable(graphscore_canvas_test
   canvas_navigation_test.cpp
   spatial_index_test.cpp
   node_notation_test.cpp
+  node_header_test.cpp
 )
 
 target_compile_features(graphscore_canvas_test PRIVATE cxx_std_23)

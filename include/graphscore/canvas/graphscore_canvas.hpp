@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace graphscore {
@@ -339,12 +340,52 @@ class CanvasNavigationController {
   ViewportTransform& transform_;
 };
 
-// One retained, node-local notation layout at its graph-canvas position. Every
-// project node has one record, including nodes that cannot yet be laid out; the
-// error then explains why `layout` is empty without hiding unaffected nodes.
+enum class CanvasNodeValidationState : std::uint8_t {
+  kValid = 0,
+  kWarning,
+  kError,
+};
+
+enum class CanvasNodeHeaderAction : std::uint8_t {
+  kEditFreeformNotes = 0,
+  kOpenTempoLane,
+  kPlay,
+};
+
+// A distinct toolkit-neutral button identity. Geometry, activation routing,
+// and accessibility behavior are layered onto these stable actions by their
+// dedicated canvas phases.
+struct CanvasNodeHeaderButton {
+  CanvasNodeHeaderAction action = CanvasNodeHeaderAction::kEditFreeformNotes;
+
+  [[nodiscard]] bool operator==(const CanvasNodeHeaderButton&) const = default;
+};
+
+// Header semantics retained independently from notation geometry. The notes
+// and tempo booleans describe current content; their buttons remain present so
+// an empty value can still be opened and edited.
+struct CanvasNodeHeader {
+  std::string               name;
+  std::uint32_t             color              = 0xFFFFFFFF;
+  bool                      has_freeform_notes = false;
+  CanvasNodeValidationState validation     = CanvasNodeValidationState::kValid;
+  bool                      has_tempo_lane = false;
+  CanvasNodeHeaderButton    freeform_notes_button;
+  CanvasNodeHeaderButton    tempo_lane_button{
+      CanvasNodeHeaderAction::kOpenTempoLane};
+  CanvasNodeHeaderButton play_button{CanvasNodeHeaderAction::kPlay};
+
+  [[nodiscard]] bool operator==(const CanvasNodeHeader&) const = default;
+};
+
+// One retained, node-local header and notation layout at its graph-canvas
+// position. Every project node has one record, including nodes that cannot yet
+// be laid out; the error then explains why `layout` is empty without hiding
+// unaffected nodes.
 struct CanvasNodeNotation {
   NodeId                        node_id;
   GraphPosition                 position;
+  CanvasNodeHeader              header;
   NotationLayoutError           error = NotationLayoutError::kNone;
   std::optional<NotationLayout> layout;
 

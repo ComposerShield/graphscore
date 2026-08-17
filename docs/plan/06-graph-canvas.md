@@ -24,7 +24,7 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 ### Notation nodes
 
 - [x] M6-phase-10 Render every active global track and staff in every node, aligned to the common measure timeline.
-- [ ] M6-phase-11 Node header includes name, custom color, freeform-notes affordance, validation state, tempo-lane affordance, and dedicated play button.
+- [x] M6-phase-11 Node header includes name, custom color, freeform-notes affordance, validation state, tempo-lane affordance, and dedicated play button.
 - [ ] M6-phase-12 Node geometry follows measure/track content and exposes clear resize/layout rules rather than arbitrary clipping.
 - [ ] M6-phase-13 Dragging nodes updates attached connector endpoint legs continuously.
 - [ ] M6-phase-14 New nodes inherit track structure plus the selected/source node's exact tempo value and beat unit at the end of its main region, or project defaults when no source is selected.

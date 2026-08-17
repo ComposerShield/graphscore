@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <graphscore/canvas/graphscore_canvas.hpp>
+#include <graphscore/domain/validation_service.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -8,6 +9,7 @@
 #include <optional>
 #include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace graphscore {
 
@@ -27,6 +29,28 @@ constexpr int kCanvasVersion = 1;
 
 [[nodiscard]] bool is_finite(ViewportPosition position) noexcept {
   return std::isfinite(position.x) && std::isfinite(position.y);
+}
+
+[[nodiscard]] bool diagnostic_applies_to_node(const Diagnostic& diagnostic,
+                                              NodeId node_id) noexcept {
+  const NodeId* const subject = std::get_if<NodeId>(&diagnostic.entity);
+  return (subject != nullptr && *subject == node_id) ||
+         diagnostic.node == node_id;
+}
+
+[[nodiscard]] CanvasNodeValidationState validation_state_for_node(
+    const ValidationReport& report, NodeId node_id) noexcept {
+  CanvasNodeValidationState state = CanvasNodeValidationState::kValid;
+  for (const Diagnostic& diagnostic : report.diagnostics) {
+    if (!diagnostic_applies_to_node(diagnostic, node_id)) {
+      continue;
+    }
+    if (diagnostic.severity == DiagnosticSeverity::kError) {
+      return CanvasNodeValidationState::kError;
+    }
+    state = CanvasNodeValidationState::kWarning;
+  }
+  return state;
 }
 
 [[nodiscard]] std::optional<double> map_forward_raw(
@@ -408,11 +432,23 @@ CanvasNotationScene Canvas::layout_nodes(
     const NotationLayoutOptions& options) const {
   CanvasNotationScene scene;
   scene.nodes.reserve(project.nodes().size());
+  const ValidationReport validation =
+      ValidationService{}.validate_complete(project);
   for (const Node& node : project.nodes()) {
     NotationLayoutResult result =
         layout_notation(project, node.id(), metrics, options);
+    const NodeTimeline* const timeline = node.timeline();
     scene.nodes.push_back(CanvasNodeNotation{
-        node.id(), node.position(), result.error, std::move(result.layout)});
+        node.id(), node.position(),
+        CanvasNodeHeader{node.name(),
+                         node.color(),
+                         !node.notes().empty(),
+                         validation_state_for_node(validation, node.id()),
+                         timeline != nullptr && timeline->tempo() != nullptr,
+                         {CanvasNodeHeaderAction::kEditFreeformNotes},
+                         {CanvasNodeHeaderAction::kOpenTempoLane},
+                         {CanvasNodeHeaderAction::kPlay}},
+        result.error, std::move(result.layout)});
   }
   return scene;
 }
