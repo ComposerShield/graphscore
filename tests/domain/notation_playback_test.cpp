@@ -8,7 +8,6 @@
 
 #include <graphscore/domain/graphscore_domain.hpp>
 
-using graphscore::apply_emphasis;
 using graphscore::Articulation;
 using graphscore::Chord;
 using graphscore::ChordNote;
@@ -30,9 +29,6 @@ using graphscore::HairpinDirection;
 using graphscore::HairpinVelocityContext;
 using graphscore::interpolate_hairpin_velocity;
 using graphscore::kDefaultSoundedDurationRatio;
-using graphscore::kStaccatissimoSoundedDurationRatio;
-using graphscore::kStaccatoSoundedDurationRatio;
-using graphscore::kTenutoSoundedDurationRatio;
 using graphscore::Letter;
 using graphscore::make_chord;
 using graphscore::make_dynamic_marking;
@@ -87,7 +83,7 @@ TEST(NotationPlaybackTest, StaccatoNoteShortensToHalf) {
       make_note(pitch(Letter::kC), quarter(), false, {Articulation::kStaccato});
   const Rational result =
       event_sounded_duration(event, /*is_tied=*/false, std::nullopt);
-  EXPECT_EQ(result, quarter().resolved() * kStaccatoSoundedDurationRatio);
+  EXPECT_EQ(result, quarter().resolved() * Rational(1) / Rational(2));
 }
 
 TEST(NotationPlaybackTest, StaccatoNoteTiedSuppressesShortening) {
@@ -104,7 +100,7 @@ TEST(NotationPlaybackTest, ExplicitDurationArticulationOverridesSlur) {
   const Rational gap = *Rational::create(1, 8);
   const Rational result =
       event_sounded_duration(event, /*is_tied=*/false, std::make_optional(gap));
-  EXPECT_EQ(result, quarter().resolved() * kStaccatoSoundedDurationRatio);
+  EXPECT_EQ(result, quarter().resolved() * Rational(1) / Rational(2));
 }
 
 TEST(NotationPlaybackTest, PresentZeroSlurGapUsesRawDuration) {
@@ -117,8 +113,8 @@ TEST(NotationPlaybackTest, PresentZeroSlurGapUsesRawDuration) {
 TEST(NotationPlaybackTest, EveryDurationArticulationOverridesSlur) {
   const Rational gap = *Rational::create(1, 8);
   const std::vector<std::pair<Articulation, Rational>> cases = {
-      {Articulation::kStaccatissimo, kStaccatissimoSoundedDurationRatio},
-      {Articulation::kTenuto, kTenutoSoundedDurationRatio},
+      {Articulation::kStaccatissimo, Rational(1) / Rational(4)},
+      {Articulation::kTenuto, Rational(1)},
   };
 
   for (const auto& [articulation, ratio] : cases) {
@@ -141,7 +137,7 @@ TEST(NotationPlaybackTest,
   const Rational result =
       event_sounded_duration(event, /*is_tied=*/true, std::make_optional(gap));
   EXPECT_EQ(result, quarter().resolved());
-  EXPECT_NE(result, quarter().resolved() * kStaccatoSoundedDurationRatio);
+  EXPECT_NE(result, quarter().resolved() * Rational(1) / Rational(2));
 }
 
 TEST(NotationPlaybackTest, SlurRemainsActiveForVelocityOnlyArticulations) {
@@ -178,23 +174,23 @@ TEST(NotationPlaybackTest, VelocityWithNoHairpinUsesGoverningDynamic) {
   EXPECT_EQ(result, velocity_for_dynamic(Dynamic::kF));
 }
 
-TEST(NotationPlaybackTest, VelocityWithAccentAppliesEmphasis) {
-  const VoiceEvent event =
+TEST(NotationPlaybackTest, VelocityArticulationsApplyDocumentedBoosts) {
+  const VoiceEvent accent =
       make_note(pitch(Letter::kC), quarter(), false, {Articulation::kAccent});
-  const MidiVelocity result =
-      event_note_on_velocity(event, Dynamic::kF, std::nullopt);
-  EXPECT_EQ(result,
-            apply_emphasis(velocity_for_dynamic(Dynamic::kF), true, false));
-}
-
-TEST(NotationPlaybackTest, VelocityWithMarcatoOutranksAccent) {
-  const VoiceEvent event =
+  const VoiceEvent marcato =
+      make_note(pitch(Letter::kD), quarter(), false, {Articulation::kMarcato});
+  const VoiceEvent combined =
       make_note(pitch(Letter::kC), quarter(), false,
                 {Articulation::kAccent, Articulation::kMarcato});
-  const MidiVelocity result =
-      event_note_on_velocity(event, Dynamic::kMf, std::nullopt);
-  EXPECT_EQ(result,
-            apply_emphasis(velocity_for_dynamic(Dynamic::kMf), true, true));
+  const MidiVelocity base = velocity_for_dynamic(Dynamic::kMf);
+
+  EXPECT_EQ(event_note_on_velocity(accent, Dynamic::kMf, std::nullopt).value(),
+            base.value() + 16u);
+  EXPECT_EQ(event_note_on_velocity(marcato, Dynamic::kMf, std::nullopt).value(),
+            base.value() + 24u);
+  EXPECT_EQ(
+      event_note_on_velocity(combined, Dynamic::kMf, std::nullopt).value(),
+      base.value() + 24u);
 }
 
 TEST(NotationPlaybackTest, VelocityWithHairpinContextIgnoresGoverningDynamic) {
