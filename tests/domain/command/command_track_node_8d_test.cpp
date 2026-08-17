@@ -17,8 +17,11 @@
 // =========================================================================
 
 TEST(CommandTest, AddTrackRoundTripPreservesId) {
-  Project project = make_project();
-  NodeId  node_id = project.add_node("Node");
+  Project     project = make_project();
+  NodeId      node_id = project.add_node("Node");
+  Node* const node    = project.find_node(node_id);
+  node->set_timeline(*NodeTimeline::create(
+      {Measure{*TimeSignature::create(4, 4), KeySignature{}}}, {}));
 
   auto cmd = std::make_unique<AddTrackCommand>(
       "Track", StaffLayout::single_staff(), *MidiChannel::create(0));
@@ -26,19 +29,26 @@ TEST(CommandTest, AddTrackRoundTripPreservesId) {
   ASSERT_TRUE(cmd->execute(project).ok());
   ASSERT_EQ(project.active_tracks().size(), 1u);
   const TrackId created_id = project.active_tracks().front().id();
+  const StaveId created_stave =
+      project.active_tracks().front().layout().staves().front().id;
   EXPECT_EQ(project.active_tracks().front().name(), "Track");
-  EXPECT_TRUE(project.find_node(node_id)->has_lane(created_id));
+  EXPECT_TRUE(node->has_lane(created_id));
+  EXPECT_TRUE(node->lane(created_id)->has_stave(created_stave));
+  EXPECT_TRUE(node->timeline()->has_clef_lane(created_stave));
 
   ASSERT_TRUE(cmd->undo(project).ok());
   EXPECT_EQ(project.find_active_track(created_id), nullptr);
   EXPECT_EQ(project.find_archived_track(created_id), nullptr);
   EXPECT_EQ(project.active_tracks().size(), 0u);
-  EXPECT_FALSE(project.find_node(node_id)->has_lane(created_id));
+  EXPECT_FALSE(node->has_lane(created_id));
+  EXPECT_FALSE(node->timeline()->has_clef_lane(created_stave));
 
   ASSERT_TRUE(cmd->redo(project).ok());
   ASSERT_NE(project.find_active_track(created_id), nullptr);
   EXPECT_EQ(project.find_active_track(created_id)->id(), created_id);
-  EXPECT_TRUE(project.find_node(node_id)->has_lane(created_id));
+  EXPECT_TRUE(node->has_lane(created_id));
+  EXPECT_TRUE(node->lane(created_id)->has_stave(created_stave));
+  EXPECT_TRUE(node->timeline()->has_clef_lane(created_stave));
   EXPECT_EQ(project.active_tracks().size(), 1u);
 }
 
@@ -86,6 +96,33 @@ TEST(CommandTest, AddTrackAtCapFailsNoMutation) {
       "Overflow", StaffLayout::single_staff(), *MidiChannel::create(0));
   EXPECT_EQ(cmd->execute(project).code(), ResultCode::kInvalidArgument);
   EXPECT_EQ(project.active_tracks().size(), 64u);
+}
+
+TEST(CommandTest, AddTrackRejectsReusedStaveIdentityWithoutClefDataLoss) {
+  Project           project         = make_project();
+  const StaffLayout existing_layout = StaffLayout::single_staff();
+  const TrackId     existing_track =
+      *project.add_track("Existing", existing_layout, *MidiChannel::create(0));
+  const NodeId node_id = project.add_node("Node");
+  Node* const  node    = project.find_node(node_id);
+  node->set_timeline(*NodeTimeline::create(
+      {Measure{*TimeSignature::create(4, 4), KeySignature{}}},
+      existing_layout.staves()));
+  const StaveId stave_id = existing_layout.staves().front().id;
+  ASSERT_TRUE(
+      node->timeline()
+          ->add_clef_change(stave_id, Rational(1) / Rational(4), Clef::kBass)
+          .ok());
+
+  AddTrackCommand command("Duplicate stave", existing_layout,
+                          *MidiChannel::create(1));
+  EXPECT_EQ(command.execute(project).code(), ResultCode::kInvalidArgument);
+  ASSERT_EQ(project.active_tracks().size(), 1U);
+  EXPECT_EQ(project.active_tracks().front().id(), existing_track);
+  ASSERT_NE(node->timeline()->clef_lane(stave_id), nullptr);
+  ASSERT_EQ(node->timeline()->clef_lane(stave_id)->changes().size(), 1U);
+  EXPECT_EQ(node->timeline()->clef_lane(stave_id)->changes().front().clef,
+            Clef::kBass);
 }
 
 // Linear-history safety: a later command must undo before the AddTrack does,

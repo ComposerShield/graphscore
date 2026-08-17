@@ -56,9 +56,10 @@ class Project {
     default_dynamic_ = dynamic;
   }
 
-  // Adds an active track and creates an aligned empty lane for it in every
-  // node the project owns. Fails if the project already has
-  // kMaxActiveTracks active tracks.
+  // Adds an active track and creates its aligned empty lane, fixed staves, and
+  // timeline clef lanes in every node the project owns. Fails if the project
+  // already has kMaxActiveTracks active tracks or the layout contains a nil,
+  // repeated, or already-owned StaveId.
   [[nodiscard]] std::optional<TrackId> add_track(std::string name,
                                                  StaffLayout layout,
                                                  MidiChannel channel);
@@ -67,27 +68,29 @@ class Project {
   // supplied id rather than a freshly minted one, so a command's redo can
   // restore the exact same TrackId. Fails, leaving the project unchanged,
   // if the project already has kMaxActiveTracks active tracks, or if `id`
-  // already identifies a track in either the active or archived set
-  // (id-uniqueness across both).
+  // already identifies a track in either the active or archived set, or any
+  // supplied StaveId is nil, repeated, or already owned (identity uniqueness
+  // across active and archived tracks).
   [[nodiscard]] Result add_track_with_id(TrackId id, std::string name,
                                          StaffLayout layout,
                                          MidiChannel channel);
 
-  // Archives an active track: it moves out of the active-track set (so it
-  // is excluded from playback/export), but every lane already recorded for
-  // it, in every node, is left untouched and therefore recoverable.
+  // Archives an active track: it moves out of the active-track set (so it is
+  // excluded from playback/export), but every lane and timeline clef lane
+  // already recorded for it, in every node, is left untouched and therefore
+  // recoverable.
   [[nodiscard]] Result archive_track(TrackId track_id);
 
-  // Restores an archived track to the active set, re-aligning any node
-  // created since it was archived with a fresh empty lane. Nodes that
-  // already had a lane for it keep that lane's data unchanged. Fails if
-  // `track_id` is not archived, or if restoring it would exceed
-  // kMaxActiveTracks.
+  // Restores an archived track to the active set, re-aligning any node created
+  // since it was archived with a fresh empty lane, fixed staves, and timeline
+  // clef lanes. Nodes that already had its lane and clef lanes keep their data
+  // unchanged. Fails if `track_id` is not archived, or if restoring it would
+  // exceed kMaxActiveTracks.
   [[nodiscard]] Result restore_track(TrackId track_id);
 
-  // Undo-only inverse of add_track: fully erases an active track and its
-  // lane from every node, rather than moving it to the archived set. This
-  // is NOT the user-facing "remove track" action -- that is
+  // Undo-only inverse of add_track: fully erases an active track, its lane,
+  // and its timeline clef lanes from every node, rather than moving it to the
+  // archived set. This is NOT the user-facing "remove track" action -- that is
   // Project::archive_track, which is recoverable. hard_remove_track exists
   // solely so AddTrackCommand's undo can leave the project exactly as it
   // was before the track was added. Fails if `track_id` is not currently

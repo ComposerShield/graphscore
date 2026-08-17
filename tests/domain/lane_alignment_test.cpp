@@ -32,8 +32,17 @@ TEST(LaneAlignmentTest, AddingTrackCreatesLaneInEveryExistingNode) {
   const NodeId node_b = project.add_node("B");
   const NodeId node_c = project.add_node("C");
 
-  const auto track_id = project.add_track("Track", StaffLayout::single_staff(),
-                                          *MidiChannel::create(0));
+  for (const NodeId node_id : {node_a, node_b, node_c}) {
+    Node* const node = project.find_node(node_id);
+    node->set_timeline(*graphscore::NodeTimeline::create(
+        {graphscore::Measure{*graphscore::TimeSignature::create(4, 4),
+                             graphscore::KeySignature{}}},
+        {}));
+  }
+
+  const StaffLayout layout = StaffLayout::single_staff();
+  const auto        track_id =
+      project.add_track("Track", layout, *MidiChannel::create(0));
   ASSERT_TRUE(track_id.has_value());
 
   for (const NodeId node_id : {node_a, node_b, node_c}) {
@@ -41,6 +50,10 @@ TEST(LaneAlignmentTest, AddingTrackCreatesLaneInEveryExistingNode) {
     ASSERT_NE(node, nullptr);
     EXPECT_TRUE(node->has_lane(*track_id));
     EXPECT_EQ(node->lane_count(), 1u);
+    ASSERT_NE(node->lane(*track_id), nullptr);
+    EXPECT_TRUE(node->lane(*track_id)->has_stave(layout.staves()[0].id));
+    ASSERT_NE(node->timeline(), nullptr);
+    EXPECT_TRUE(node->timeline()->has_clef_lane(layout.staves()[0].id));
   }
 }
 
@@ -96,14 +109,23 @@ TEST(LaneAlignmentTest, RestoreBackfillsNodesCreatedWhileArchived) {
   ASSERT_TRUE(project.archive_track(*track_id).ok());
 
   const NodeId node_id             = project.add_node("Node During Archive");
-  const Node*  node_before_restore = project.find_node(node_id);
+  Node* const  node_before_restore = project.find_node(node_id);
   ASSERT_NE(node_before_restore, nullptr);
   EXPECT_FALSE(node_before_restore->has_lane(*track_id));
+  node_before_restore->set_timeline(*graphscore::NodeTimeline::create(
+      {graphscore::Measure{*graphscore::TimeSignature::create(4, 4),
+                           graphscore::KeySignature{}}},
+      {}));
 
   ASSERT_TRUE(project.restore_track(*track_id).ok());
   const Node* node_after_restore = project.find_node(node_id);
   ASSERT_NE(node_after_restore, nullptr);
   EXPECT_TRUE(node_after_restore->has_lane(*track_id));
+  const auto& stave =
+      project.find_active_track(*track_id)->layout().staves().front();
+  EXPECT_TRUE(node_after_restore->lane(*track_id)->has_stave(stave.id));
+  ASSERT_NE(node_after_restore->timeline(), nullptr);
+  EXPECT_TRUE(node_after_restore->timeline()->has_clef_lane(stave.id));
 }
 
 TEST(LaneAlignmentTest, RepresentativeSixtyFourTracksAcrossSeveralNodes) {

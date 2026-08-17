@@ -1631,10 +1631,14 @@ TEST(NotationLayoutTest, GraceNotationIsScaledAndComplete) {
 }
 
 TEST(NotationLayoutTest, RejectsDerivedCoordinatesOutsideRendererContract) {
-  std::vector<StaffLayout> layouts(8, StaffLayout::single_staff());
-  Fixture                  fixture(std::move(layouts), 2);
-  const FixedMetrics       metrics;
-  NotationLayoutOptions    huge;
+  std::vector<StaffLayout> layouts;
+  layouts.reserve(8);
+  for (std::size_t index = 0; index < 8; ++index) {
+    layouts.push_back(StaffLayout::single_staff());
+  }
+  Fixture               fixture(std::move(layouts), 2);
+  const FixedMetrics    metrics;
+  NotationLayoutOptions huge;
   huge.staff_space = NotationLayoutOptions::kMaximumCoordinate;
   EXPECT_EQ(
       layout_notation(fixture.project, fixture.node_id, metrics, huge).error,

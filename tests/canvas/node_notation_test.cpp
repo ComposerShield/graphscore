@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -130,6 +131,89 @@ TEST(CanvasNodeNotationTest, ExcludesArchivedTracksFromEveryNode) {
     EXPECT_EQ(node.layout->systems[0].staves[0].track_id, fixture.grand_track);
     EXPECT_EQ(node.layout->systems[0].staves[1].track_id, fixture.grand_track);
   }
+}
+
+TEST(CanvasNodeNotationTest,
+     TrackAddArchiveAndRestoreRefreshesEveryNodeWithoutLosingMusic) {
+  Fixture                    fixture;
+  graphscore::CommandHistory history;
+  ASSERT_TRUE(
+      history
+          .execute_new(std::make_unique<graphscore::AddTrackCommand>(
+                           "Added", graphscore::StaffLayout::single_staff(),
+                           *graphscore::MidiChannel::create(2)),
+                       fixture.project)
+          .ok());
+  const graphscore::Track&   added    = fixture.project.active_tracks().back();
+  const graphscore::TrackId  added_id = added.id();
+  const graphscore::StaveId  stave_id = added.layout().staves().front().id;
+  const graphscore::Duration quarter =
+      *graphscore::Duration::create(graphscore::NoteValue::kQuarter, 0);
+  const graphscore::NotationEntityId note_id =
+      graphscore::NotationEntityId::generate();
+
+  for (const graphscore::NodeId node_id : fixture.node_ids) {
+    graphscore::Node* const node = fixture.project.find_node(node_id);
+    ASSERT_NE(node, nullptr);
+    graphscore::TrackLane* const lane = node->lane(added_id);
+    ASSERT_NE(lane, nullptr);
+    ASSERT_TRUE(lane->has_stave(stave_id));
+    ASSERT_NE(node->timeline()->clef_lane(stave_id), nullptr);
+  }
+  graphscore::VoiceContent& voice =
+      fixture.project.find_node(fixture.node_ids.front())
+          ->lane(added_id)
+          ->stave(stave_id)
+          ->voice(*graphscore::Voice::create(1));
+  graphscore::Note note = graphscore::make_note(
+      *graphscore::SpelledPitch::create(graphscore::Letter::kC, 4), quarter);
+  note.id = note_id;
+  ASSERT_TRUE(voice.append(note).ok());
+
+  const FixedMetrics       metrics;
+  const graphscore::Canvas canvas;
+  const auto added_scene = canvas.layout_nodes(fixture.project, metrics);
+  ASSERT_TRUE(added_scene.complete());
+  for (const auto& node : added_scene.nodes) {
+    ASSERT_TRUE(node.layout.has_value());
+    EXPECT_EQ(node.layout->systems[0].staves.size(), 4U);
+    EXPECT_EQ(node.layout->systems[0].staves.back().track_id, added_id);
+  }
+
+  ASSERT_TRUE(
+      history
+          .execute_new(
+              std::make_unique<graphscore::ArchiveTrackCommand>(added_id),
+              fixture.project)
+          .ok());
+  const auto archived_scene = canvas.layout_nodes(fixture.project, metrics);
+  ASSERT_TRUE(archived_scene.complete());
+  for (const auto& node : archived_scene.nodes) {
+    ASSERT_TRUE(node.layout.has_value());
+    EXPECT_EQ(node.layout->systems[0].staves.size(), 3U);
+  }
+  const graphscore::VoiceContent& archived_voice =
+      fixture.project.find_node(fixture.node_ids.front())
+          ->lane(added_id)
+          ->stave(stave_id)
+          ->voice(*graphscore::Voice::create(1));
+  ASSERT_EQ(archived_voice.events().size(), 1U);
+  EXPECT_EQ(graphscore::event_id(archived_voice.events().front()), note_id);
+
+  ASSERT_TRUE(history.undo(fixture.project).ok());
+  const auto restored_scene = canvas.layout_nodes(fixture.project, metrics);
+  ASSERT_TRUE(restored_scene.complete());
+  for (const auto& node : restored_scene.nodes) {
+    ASSERT_TRUE(node.layout.has_value());
+    EXPECT_EQ(node.layout->systems[0].staves.size(), 4U);
+  }
+  const graphscore::VoiceContent& restored_voice =
+      fixture.project.find_node(fixture.node_ids.front())
+          ->lane(added_id)
+          ->stave(stave_id)
+          ->voice(*graphscore::Voice::create(1));
+  ASSERT_EQ(restored_voice.events().size(), 1U);
+  EXPECT_EQ(graphscore::event_id(restored_voice.events().front()), note_id);
 }
 
 TEST(CanvasNodeNotationTest, RetainsFailuresWithoutHidingOtherNodes) {

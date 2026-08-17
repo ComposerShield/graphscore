@@ -274,7 +274,7 @@ TEST(StaffStepTest, PreviousAndNextWrapAtBothEndsOfTheNodeStaffList) {
   EXPECT_EQ(landing(0, StaffStepDirection::kPrevious), notes[2].id);
 }
 
-TEST(StaffStepTest, StepIsScopedToTheStavesTheNodeCarriesNotTheWholeProject) {
+TEST(StaffStepTest, TrackAddedAfterNodeCreationBecomesAStepTarget) {
   Fixture    fixture({StaffLayout::single_staff(Clef::kTreble),
                       StaffLayout::single_staff(Clef::kTreble)},
                      1);
@@ -287,27 +287,24 @@ TEST(StaffStepTest, StepIsScopedToTheStavesTheNodeCarriesNotTheWholeProject) {
   const NotationLayout layout = require_layout(
       layout_notation(fixture.project, fixture.node_id, metrics));
 
-  // A track added after the node exists gets a lane on that node but no
-  // StaveVoices, so score_ordered_staves grows to three entries while the
-  // node still carries only two staves.
+  // A track added after the node exists is aligned into the node immediately,
+  // including its empty StaveVoices.
   const auto late = fixture.project.add_track(
       "Late", StaffLayout::single_staff(Clef::kTreble),
       *MidiChannel::create(7));
   ASSERT_TRUE(late.has_value());
   ASSERT_EQ(score_ordered_staves(fixture.project).size(), 3u);
 
-  // kNext from the last carried staff wraps back to the first carried
-  // staff rather than stepping onto the project-order staff the node does
-  // not carry.
+  // kNext from the formerly last staff reaches the newly aligned empty staff.
   const auto stepped = selection_after_staff_step(
       fixture.project, layout, notehead_selection(fixture, 1, 0, lower.id),
       StaffStepDirection::kNext);
   ASSERT_TRUE(stepped.has_value());
-  const auto* set = std::get_if<NoteheadSet>(&*stepped);
+  const auto* set = std::get_if<InsertionCaretSet>(&*stepped);
   ASSERT_NE(set, nullptr);
   ASSERT_EQ(set->items().size(), 1u);
-  EXPECT_EQ(set->items()[0].entity, upper.id);
-  EXPECT_EQ(set->items()[0].track, fixture.track_ids[0]);
+  EXPECT_EQ(set->items()[0].position, Rational(0));
+  EXPECT_EQ(set->items()[0].track, *late);
 }
 
 TEST(StaffStepTest, SingleStaffNodeIsANoOpRatherThanAWrapOntoItself) {
