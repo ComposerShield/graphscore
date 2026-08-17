@@ -253,11 +253,10 @@ TEST(PlaybackMappingTest, LegatoInteractsWithEveryArticulationRatio) {
   EXPECT_EQ(tenuto_then_legato, kTenutoSoundedDurationRatio + gap);
 }
 
-TEST(PlaybackMappingTest,
-     LegatoOverridesShorteningWhenCallerBypassesArticulation) {
-  // notation_playback.hpp's precedence: a slurred note bypasses
-  // sounded_duration_for_articulation() entirely and passes the raw
-  // notated duration straight into legato_sounded_duration().
+TEST(PlaybackMappingTest, LegatoPrimitiveExtendsCallerSuppliedDuration) {
+  // This core primitive receives an already-resolved duration. Domain-layer
+  // precedence decides whether that duration is raw or articulated before
+  // calling it.
   const Rational notated = Rational(1);
   const Rational gap     = *Rational::create(1, 4);
   const Rational result  = legato_sounded_duration(notated, gap);

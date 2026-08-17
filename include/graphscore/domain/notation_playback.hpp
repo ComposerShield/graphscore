@@ -12,16 +12,15 @@
 namespace graphscore {
 
 class VoiceContent;
+class Project;
 
 // Thin domain-layer wiring over graphscore/core/playback_mapping.hpp: these
 // functions extract already-attached articulation/duration/grace-note
 // context from this domain's existing Note/Chord/GraceGroup structures and
-// call straight into the core math. The overloads taking VoiceContent below
-// resolve only the grace group's immediate preceding event; all other context
-// (which Dynamic/Hairpin/Slur applies, the gap to the next onset, whether an
-// event is tied) remains an already-resolved parameter, per
-// playback_mapping.hpp's overview, "Scope: math only, not context
-// resolution".
+// call straight into the core math. The VoiceContent overloads resolve the
+// dynamic and hairpin context needed by editor playback; slur, gap, and tie
+// context remain caller-resolved because those spans need the surrounding
+// playback traversal and are not part of this velocity lookup.
 
 // The hairpin/dynamic-span endpoint context event_note_on_velocity()
 // forwards to interpolate_hairpin_velocity() when a Hairpin governs an
@@ -34,27 +33,32 @@ struct HairpinVelocityContext {
   [[nodiscard]] bool operator==(const HairpinVelocityContext&) const = default;
 };
 
+// The resolved dynamic context for one top-level voice event. Point dynamics
+// are effective on their attached event and every later event until another
+// point dynamic appears. A hairpin includes both endpoint events. Because a
+// Hairpin stores direction rather than an endpoint level, a span with no
+// later point dynamic ramps to fff for crescendo or ppp for diminuendo.
+struct NoteOnVelocityContext {
+  Dynamic                               governing_dynamic = Dynamic::kMf;
+  std::optional<HairpinVelocityContext> hairpin;
+
+  [[nodiscard]] bool operator==(const NoteOnVelocityContext&) const = default;
+};
+
 // This event's final sounded (audible) duration. Reads the event's own
-// notated Duration (event_duration()) and, when unslurred, its duration
-// articulation (event_articulations(), via is_duration_articulation());
-// `is_tied` and an active slur's `slurred_gap_to_next_onset` are supplied
-// by the caller, which alone knows the event's tie/slur context.
+// notated Duration (event_duration()) and its duration articulation
+// (event_articulations(), via is_duration_articulation()); `is_tied` and an
+// active slur's `slurred_gap_to_next_onset` are supplied by the caller, which
+// alone knows the event's tie/slur context.
 //
-// Calls, in this order: when `slurred_gap_to_next_onset` has a value, this
-// event's notated duration is passed straight to legato_sounded_duration()
-// UNMODIFIED by sounded_duration_for_articulation() at all -- a slur
-// overrides BOTH duration-articulation shortening (and the plain
-// no-articulation default gap) AND tie-boundary suppression entirely, per
-// playback_mapping.hpp's overview, "Legato (slur) overlap and its
-// precedence over shortening". Concretely: `is_tied` has NO EFFECT on this
-// function's result whenever `slurred_gap_to_next_onset` has a value --
-// slur wins outright over tie-suppression, not merely over articulation
-// shortening, so a caller must not expect `is_tied` to matter for a
-// slurred note even though it is a named parameter here. Otherwise (no
-// slur governs this event), this event's notated duration, its own
-// duration articulation (if any), and `is_tied` are passed to
-// sounded_duration_for_articulation(), whose own overview documents the
-// four ratios and the tie-boundary suppression rule.
+// When `slurred_gap_to_next_onset` has a value and the event has no explicit
+// duration articulation, the event's raw notated duration is passed to
+// legato_sounded_duration() to create the slur's overlap. An explicit
+// duration articulation (staccato, staccatissimo, or tenuto) overrides the
+// slur and is passed to sounded_duration_for_articulation() instead. Accent
+// and marcato are velocity-only and therefore do not override a slur. In the
+// articulation path, `is_tied` retains its normal tie-boundary suppression
+// behavior.
 [[nodiscard]] Rational event_sounded_duration(
     const VoiceEvent& event, bool is_tied,
     std::optional<Rational> slurred_gap_to_next_onset);
@@ -69,6 +73,26 @@ struct HairpinVelocityContext {
 [[nodiscard]] MidiVelocity event_note_on_velocity(
     const VoiceEvent& event, Dynamic governing_dynamic,
     std::optional<HairpinVelocityContext> hairpin);
+
+// Resolves the project/editor playback context for a top-level event in
+// `voice`. The project default is used until the first applicable dynamic
+// marking. Hairpins are inclusive, use exact musical onset positions for
+// interpolation, and are selected in stored marking order when malformed
+// overlapping spans make more than one applicable. Returns nullopt for an
+// event id that is not a top-level event in the voice.
+[[nodiscard]] std::optional<NoteOnVelocityContext>
+resolve_note_on_velocity_context(const VoiceContent& voice,
+                                 NotationEntityId    event,
+                                 Dynamic             project_default);
+
+// Context-resolving overloads for editor playback. The Project overload is
+// the preferred entry point because it cannot accidentally use a stale copy
+// of the project-wide editable default.
+[[nodiscard]] std::optional<MidiVelocity> event_note_on_velocity(
+    const VoiceContent& voice, NotationEntityId event, Dynamic project_default);
+
+[[nodiscard]] std::optional<MidiVelocity> event_note_on_velocity(
+    const Project& project, const VoiceContent& voice, NotationEntityId event);
 
 // The stolen duration for each grace note in `group`, in `group.notes`
 // order, stolen from `available_duration` (the preceding sounded note's
