@@ -2000,6 +2000,122 @@ int clipboard_test() {
     shell.set_input_handler(nullptr);
   }
 
+  // --- test 23: destination tuplets crossing the paste start or end boundary
+  //     are rejected atomically. The invalid preview is suppressed, the
+  //     writer reports a diagnostic, and model/clipboard/history are preserved.
+  {
+    auto fixture = build_tuplet_fixture(metrics);
+    if (!fixture.has_value()) {
+      std::fprintf(stderr, "clipboard-test: tuplet fixture failed (23)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler    handler(std::move(fixture->project),
+                                    std::move(fixture->layout), &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+
+    const graphscore::MusicalSpan source_span{
+        graphscore::Rational(0),
+        graphscore::Rational(1) / graphscore::Rational(4)};
+    const auto source =
+        graphscore::ArbitraryRangeSet::create({graphscore::ArbitraryRangeItem{
+            fixture->node_id, fixture->track_id, fixture->stave_id, voice_one(),
+            source_span}});
+    if (!source.has_value()) {
+      std::fprintf(stderr, "clipboard-test: source range failed (23)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.set_committed_selection(graphscore::Selection{*source});
+    if (!handler.copy_selection()) {
+      std::fprintf(stderr, "clipboard-test: tuplet copy failed (23)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const auto clipboard_before = *handler.clipboard();
+    const auto voice_before     = tuplet_voice(handler, *fixture);
+    const auto caret =
+        graphscore::InsertionCaretSet::create({graphscore::InsertionCaretItem{
+            fixture->node_id, fixture->track_id, fixture->stave_id, voice_one(),
+            graphscore::Rational(1) / graphscore::Rational(24)}});
+    if (!caret.has_value()) {
+      std::fprintf(stderr, "clipboard-test: destination caret failed (23)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.set_committed_selection(graphscore::Selection{*caret});
+    const auto diagnostics_before = handler.diagnostics().size();
+    if (handler.paste_clipboard() ||
+        !(tuplet_voice(handler, *fixture) == voice_before) ||
+        !handler.clipboard()->operator==(clipboard_before) ||
+        handler.test_undo_stack_size() != 0u ||
+        handler.diagnostics().size() != diagnostics_before + 1u ||
+        handler.diagnostics().back() !=
+            "paste: could not commit at the destination") {
+      std::fprintf(stderr,
+                   "clipboard-test: tuplet paste rejection was not atomic "
+                   "(23)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const graphscore::MusicalSpan rest_source_span{
+        graphscore::Rational(1) / graphscore::Rational(4),
+        graphscore::Rational(3) / graphscore::Rational(8)};
+    const auto rest_source =
+        graphscore::ArbitraryRangeSet::create({graphscore::ArbitraryRangeItem{
+            fixture->node_id, fixture->track_id, fixture->stave_id, voice_one(),
+            rest_source_span}});
+    if (!rest_source.has_value()) {
+      std::fprintf(stderr,
+                   "clipboard-test: right-boundary source failed (23)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.set_committed_selection(graphscore::Selection{*rest_source});
+    if (!handler.copy_selection()) {
+      std::fprintf(stderr, "clipboard-test: right-boundary copy failed (23)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto right_clipboard    = *handler.clipboard();
+    const auto right_voice_before = tuplet_voice(handler, *fixture);
+    const auto right_caret =
+        graphscore::InsertionCaretSet::create({graphscore::InsertionCaretItem{
+            fixture->node_id, fixture->track_id, fixture->stave_id, voice_one(),
+            graphscore::Rational(1) / graphscore::Rational(16)}});
+    if (!right_caret.has_value()) {
+      std::fprintf(stderr,
+                   "clipboard-test: right-boundary caret failed (23)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    handler.set_committed_selection(graphscore::Selection{*right_caret});
+    if (!shell.test_snapshot_paste_preview_rects().empty()) {
+      std::fprintf(stderr,
+                   "clipboard-test: invalid tuplet preview survived (23)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto right_diagnostics_before = handler.diagnostics().size();
+    if (handler.paste_clipboard() ||
+        !(tuplet_voice(handler, *fixture) == right_voice_before) ||
+        !handler.clipboard()->operator==(right_clipboard) ||
+        handler.test_undo_stack_size() != 0u ||
+        handler.diagnostics().size() != right_diagnostics_before + 1u ||
+        handler.diagnostics().back() !=
+            "paste: could not commit at the destination") {
+      std::fprintf(stderr,
+                   "clipboard-test: right-boundary paste rejection was not "
+                   "atomic (23)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
   std::printf("clipboard-test: ok\n");
   return 0;
 }
