@@ -2116,6 +2116,214 @@ int clipboard_test() {
     shell.set_input_handler(nullptr);
   }
 
+  // --- test 24: pointer measure actions select the source and destination of
+  //     a complete-measure copy/paste as one undoable edit. -----------------
+  {
+    auto fixture = build_clipboard_fixture(metrics);
+    if (!fixture.has_value()) {
+      std::fprintf(stderr, "clipboard-test: fixture build failed (24)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler    handler(std::move(fixture->project),
+                                    std::move(fixture->layout), &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+
+    if (handler.layout().systems.size() != 1u) {
+      std::fprintf(stderr, "clipboard-test: system geometry failed (24)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const auto& system = handler.layout().systems.front();
+    if (system.measures.size() != 2u || system.staves.size() != 1u) {
+      std::fprintf(stderr, "clipboard-test: measure geometry failed (24)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const double staff_y =
+        system.staves[0].bounds.y + system.staves[0].bounds.height * 0.5;
+    auto measure_event = [&](std::size_t measure_index) {
+      graphscore::PointerEvent event;
+      const auto&              measure = system.measures[measure_index];
+      event.x                 = measure.bounds.x + measure.bounds.width * 0.5;
+      event.y                 = staff_y;
+      event.button            = graphscore::PointerButton::kPrimary;
+      event.measure_selection = true;
+      return event;
+    };
+
+    const graphscore::PointerEvent source_event = measure_event(0);
+    shell.dispatch_test_pointer_event(0, source_event);
+    shell.dispatch_test_pointer_event(2, source_event);
+    const auto& source_selection = handler.drag_state().committed_selection();
+    const auto* source_measures =
+        source_selection.has_value()
+            ? std::get_if<graphscore::FullMeasureSet>(&*source_selection)
+            : nullptr;
+    if (source_measures == nullptr || source_measures->items().size() != 1u ||
+        source_measures->items()[0].measure_index != 0u) {
+      std::fprintf(stderr, "clipboard-test: pointer source failed (24)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_test_key_event(
+        primary_logical(graphscore::LogicalKey::kC, kPlatformPrimaryModifier));
+    const auto source_preview = shell.test_snapshot_paste_preview_rects();
+    if (source_preview.size() != 1u) {
+      std::fprintf(stderr, "clipboard-test: source preview failed (24)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const graphscore::PointerEvent destination_event = measure_event(1);
+    shell.dispatch_test_pointer_event(0, destination_event);
+    shell.dispatch_test_pointer_event(2, destination_event);
+    const auto destination_preview = shell.test_snapshot_paste_preview_rects();
+    if (destination_preview.size() != 1u ||
+        destination_preview == source_preview ||
+        destination_preview != shell.test_snapshot_highlight_rects()) {
+      std::fprintf(stderr, "clipboard-test: measure preview failed (24)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_test_key_event(
+        primary_logical(graphscore::LogicalKey::kV, kPlatformPrimaryModifier));
+    if (pitch_at(handler, *fixture, 1) != spelled(graphscore::Letter::kC, 4) ||
+        handler.test_undo_stack_size() != 1u || !handler.undo_action() ||
+        pitch_at(handler, *fixture, 1) != spelled(graphscore::Letter::kD, 4) ||
+        !handler.redo_action() ||
+        pitch_at(handler, *fixture, 1) != spelled(graphscore::Letter::kC, 4)) {
+      std::fprintf(stderr,
+                   "clipboard-test: pointer measure paste failed (24)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
+  // --- test 25: a pointer-dragged partial range copies from the treble staff
+  //     to a pointer-selected compatible range on the bass staff. -----------
+  {
+    auto fixture = build_arbitrary_clipboard_fixture(metrics);
+    if (!fixture.has_value()) {
+      std::fprintf(stderr, "clipboard-test: fixture build failed (25)\n");
+      return 1;
+    }
+    graphscore::WriterShell shell;
+    SelectionToolHandler    handler(std::move(fixture->project),
+                                    std::move(fixture->layout), &shell);
+    handler.set_metrics(&metrics);
+    shell.set_input_handler(&handler);
+
+    if (handler.layout().systems.size() != 1u) {
+      std::fprintf(stderr, "clipboard-test: system geometry failed (25)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const std::vector<double> notehead_x =
+        notehead_x_positions(handler.layout());
+    const auto& system = handler.layout().systems.front();
+    if (notehead_x.size() != 16u || system.staves.size() != 2u) {
+      std::fprintf(stderr, "clipboard-test: range geometry failed (25)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    const double treble_y =
+        system.staves[0].bounds.y + system.staves[0].bounds.height * 0.5;
+    const double bass_y =
+        system.staves[1].bounds.y + system.staves[1].bounds.height * 0.5;
+    auto pointer_event = [](double x, double y) {
+      return graphscore::PointerEvent{x, y, graphscore::PointerButton::kPrimary,
+                                      false};
+    };
+
+    const graphscore::PointerEvent source_start =
+        pointer_event(notehead_x[0], treble_y);
+    const graphscore::PointerEvent source_end =
+        pointer_event(notehead_x[4], treble_y);
+    shell.dispatch_test_pointer_event(0, source_start);
+    shell.dispatch_test_pointer_event(1, source_end);
+    shell.dispatch_test_pointer_event(2, source_end);
+    const auto& source_selection = handler.drag_state().committed_selection();
+    const auto* source_ranges =
+        source_selection.has_value()
+            ? std::get_if<graphscore::ArbitraryRangeSet>(&*source_selection)
+            : nullptr;
+    const graphscore::MusicalSpan source_span{
+        graphscore::Rational(0),
+        graphscore::Rational(1) / graphscore::Rational(2)};
+    if (source_ranges == nullptr || source_ranges->items().size() != 1u ||
+        source_ranges->items()[0].stave != fixture->treble_stave ||
+        source_ranges->items()[0].span != source_span) {
+      std::fprintf(stderr,
+                   "clipboard-test: pointer range source failed (25)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.dispatch_test_key_event(
+        primary_logical(graphscore::LogicalKey::kC, kPlatformPrimaryModifier));
+    const auto source_preview = shell.test_snapshot_paste_preview_rects();
+    if (source_preview.size() != 1u) {
+      std::fprintf(stderr, "clipboard-test: source preview failed (25)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    const graphscore::PointerEvent destination_start =
+        pointer_event(notehead_x[8], bass_y);
+    const graphscore::PointerEvent destination_end =
+        pointer_event(notehead_x[12], bass_y);
+    shell.dispatch_test_pointer_event(0, destination_start);
+    shell.dispatch_test_pointer_event(1, destination_end);
+    shell.dispatch_test_pointer_event(2, destination_end);
+    const graphscore::MusicalSpan destination_span{
+        graphscore::Rational(1),
+        graphscore::Rational(3) / graphscore::Rational(2)};
+    const auto& destination_selection =
+        handler.drag_state().committed_selection();
+    const auto* destination_ranges =
+        destination_selection.has_value()
+            ? std::get_if<graphscore::ArbitraryRangeSet>(
+                  &*destination_selection)
+            : nullptr;
+    const auto destination_preview = shell.test_snapshot_paste_preview_rects();
+    if (destination_ranges == nullptr ||
+        destination_ranges->items().size() != 1u ||
+        destination_ranges->items()[0].stave != fixture->bass_stave ||
+        destination_ranges->items()[0].span != destination_span ||
+        destination_preview.size() != 1u ||
+        destination_preview == source_preview ||
+        destination_preview != shell.test_snapshot_highlight_rects()) {
+      std::fprintf(stderr,
+                   "clipboard-test: pointer range destination failed (25)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    shell.dispatch_test_key_event(
+        primary_logical(graphscore::LogicalKey::kV, kPlatformPrimaryModifier));
+    if (arbitrary_pitch_at(handler, *fixture, fixture->bass_stave,
+                           graphscore::Rational(1)) !=
+            spelled(graphscore::Letter::kC, 4) ||
+        arbitrary_pitch_at(handler, *fixture, fixture->treble_stave,
+                           graphscore::Rational(1)) !=
+            spelled(graphscore::Letter::kB, 4) ||
+        handler.test_undo_stack_size() != 1u || !handler.undo_action() ||
+        arbitrary_pitch_at(handler, *fixture, fixture->bass_stave,
+                           graphscore::Rational(1)) !=
+            spelled(graphscore::Letter::kF, 3) ||
+        !handler.redo_action() ||
+        arbitrary_pitch_at(handler, *fixture, fixture->bass_stave,
+                           graphscore::Rational(1)) !=
+            spelled(graphscore::Letter::kC, 4)) {
+      std::fprintf(stderr, "clipboard-test: pointer range paste failed (25)\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(nullptr);
+  }
+
   std::printf("clipboard-test: ok\n");
   return 0;
 }

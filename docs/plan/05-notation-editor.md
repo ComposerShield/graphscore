@@ -139,7 +139,7 @@ gates.
 - [ ] M5-phase-48 Every in-scope notation entity can be created, selected, edited, deleted, copied, undone, redone, saved, and rendered.
   - [x] M5-phase-48a Every in-scope notation entity can be created, selected, edited, deleted, copied, undone, redone, and rendered in the in-memory editor.
   - [ ] M5-phase-48b Every in-scope notation entity can be saved and restored. This remains owned by Milestone 03 persistence.
-- [ ] M5-phase-49 A composer can copy a complete measure to another measure and copy a pointer-dragged partial range to another valid musical position on the same or different compatible staves.
+- [x] M5-phase-49 A composer can copy a complete measure to another measure and copy a pointer-dragged partial range to another valid musical position on the same or different compatible staves.
 - [ ] M5-phase-50 Engraving remains deterministic for golden fixtures across supported platforms, allowing documented raster tolerance only at the backend boundary.
 - [ ] M5-phase-51 Four voices, tuplets, grace notes, cross-measure ties, signatures, and markings survive complex measure edits without invalid references.
 - [ ] M5-phase-52 The specified keyboard workflow is covered by automated command tests and manual platform shortcut checks.
