@@ -35,11 +35,15 @@ using graphscore::make_dynamic_marking;
 using graphscore::make_grace_group;
 using graphscore::make_hairpin;
 using graphscore::make_note;
+using graphscore::MidiCc64Event;
+using graphscore::MidiChannel;
 using graphscore::MidiVelocity;
 using graphscore::NotationEntityId;
 using graphscore::Note;
 using graphscore::NoteOnVelocityContext;
 using graphscore::NoteValue;
+using graphscore::pedal_span_cc64_events;
+using graphscore::PedalSpan;
 using graphscore::Project;
 using graphscore::ProjectId;
 using graphscore::Rational;
@@ -65,6 +69,10 @@ Duration eighth() {
 
 MidiVelocity velocity(std::uint8_t value) {
   return *MidiVelocity::create(value);
+}
+
+MidiChannel channel(std::uint8_t value = 0) {
+  return *MidiChannel::create(value);
 }
 
 }  // namespace
@@ -531,4 +539,108 @@ TEST(NotationPlaybackTest, GraceGroupWithDanglingPrincipalUsesFallback) {
   EXPECT_EQ(grace_group_remaining_preceding_duration(voice, group),
             Rational(0));
   EXPECT_EQ(event_duration(voice.events()[0]).resolved(), quarter().resolved());
+}
+
+// -- pedal_span_cc64_events ---------------------------------------------------
+
+TEST(NotationPlaybackTest, PedalSpanGeneratesExplicitCc64DownAndUp) {
+  const PedalSpan span = graphscore::make_pedal_span(Rational(1), Rational(2));
+
+  const std::vector<MidiCc64Event> events =
+      pedal_span_cc64_events(std::vector<PedalSpan>{span}, channel(3));
+
+  ASSERT_EQ(events.size(), 2u);
+  EXPECT_EQ(events[0], (MidiCc64Event{Rational(1), channel(3),
+                                      MidiCc64Event::kDownValue}));
+  EXPECT_EQ(events[1],
+            (MidiCc64Event{Rational(2), channel(3), MidiCc64Event::kUpValue}));
+  EXPECT_EQ(MidiCc64Event::kController, 64u);
+}
+
+TEST(NotationPlaybackTest,
+     OverlappingPedalSpansEmitOneLogicalDownAndLastReleaseUp) {
+  const std::vector<PedalSpan> spans = {
+      graphscore::make_pedal_span(Rational(0), Rational(2)),
+      graphscore::make_pedal_span(Rational(1), Rational(3)),
+  };
+
+  const std::vector<MidiCc64Event> events =
+      pedal_span_cc64_events(spans, channel());
+
+  ASSERT_EQ(events.size(), 2u);
+  EXPECT_EQ(events[0].position, Rational(0));
+  EXPECT_EQ(events[0].value, MidiCc64Event::kDownValue);
+  EXPECT_EQ(events[1].position, Rational(3));
+  EXPECT_EQ(events[1].value, MidiCc64Event::kUpValue);
+}
+
+TEST(NotationPlaybackTest,
+     AdjacentPedalSpansRemainDownAcrossTheirSharedEndpoint) {
+  const std::vector<PedalSpan> spans = {
+      graphscore::make_pedal_span(Rational(0), Rational(1)),
+      graphscore::make_pedal_span(Rational(1), Rational(2)),
+  };
+
+  const std::vector<MidiCc64Event> events =
+      pedal_span_cc64_events(spans, channel());
+
+  ASSERT_EQ(events.size(), 2u);
+  EXPECT_EQ(events[0].position, Rational(0));
+  EXPECT_EQ(events[0].value, MidiCc64Event::kDownValue);
+  EXPECT_EQ(events[1].position, Rational(2));
+  EXPECT_EQ(events[1].value, MidiCc64Event::kUpValue);
+}
+
+TEST(NotationPlaybackTest, MalformedPedalSpanDoesNotGenerateCc64) {
+  const PedalSpan malformed =
+      graphscore::make_pedal_span(Rational(2), Rational(2));
+
+  EXPECT_TRUE(
+      pedal_span_cc64_events(std::vector<PedalSpan>{malformed}, channel())
+          .empty());
+}
+
+TEST(NotationPlaybackTest, EmptyPedalSpanSetGeneratesNoCc64) {
+  EXPECT_TRUE(
+      pedal_span_cc64_events(std::vector<PedalSpan>{}, channel()).empty());
+}
+
+TEST(NotationPlaybackTest,
+     UnsortedFractionalSpansEmitExactOrderedCc64AndSkipReversedSpan) {
+  const Rational               one_eighth    = *Rational::create(1, 8);
+  const Rational               three_eighths = *Rational::create(3, 8);
+  const Rational               five_eighths  = *Rational::create(5, 8);
+  const Rational               seven_eighths = *Rational::create(7, 8);
+  const std::vector<PedalSpan> spans         = {
+      graphscore::make_pedal_span(five_eighths, seven_eighths),
+      graphscore::make_pedal_span(three_eighths, one_eighth),
+      graphscore::make_pedal_span(one_eighth, three_eighths),
+  };
+
+  const std::vector<MidiCc64Event> events =
+      pedal_span_cc64_events(spans, channel(5));
+
+  EXPECT_EQ(events, (std::vector<MidiCc64Event>{
+                        {one_eighth, channel(5), MidiCc64Event::kDownValue},
+                        {three_eighths, channel(5), MidiCc64Event::kUpValue},
+                        {five_eighths, channel(5), MidiCc64Event::kDownValue},
+                        {seven_eighths, channel(5), MidiCc64Event::kUpValue},
+                    }));
+}
+
+TEST(NotationPlaybackTest,
+     NestedSpansWithEqualEndpointsEmitOnlyOuterStateTransitions) {
+  const std::vector<PedalSpan> spans = {
+      graphscore::make_pedal_span(Rational(0), Rational(4)),
+      graphscore::make_pedal_span(Rational(1), Rational(3)),
+      graphscore::make_pedal_span(Rational(1), Rational(3)),
+  };
+
+  const std::vector<MidiCc64Event> events =
+      pedal_span_cc64_events(spans, channel());
+
+  EXPECT_EQ(events, (std::vector<MidiCc64Event>{
+                        {Rational(0), channel(), MidiCc64Event::kDownValue},
+                        {Rational(4), channel(), MidiCc64Event::kUpValue},
+                    }));
 }
