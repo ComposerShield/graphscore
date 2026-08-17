@@ -3,6 +3,7 @@
 #pragma once
 
 #include <graphscore/domain/graph_position.hpp>
+#include <graphscore/notation/notation_layout.hpp>
 
 #include <array>
 #include <compare>
@@ -338,9 +339,39 @@ class CanvasNavigationController {
   ViewportTransform& transform_;
 };
 
+// One retained, node-local notation layout at its graph-canvas position. Every
+// project node has one record, including nodes that cannot yet be laid out; the
+// error then explains why `layout` is empty without hiding unaffected nodes.
+struct CanvasNodeNotation {
+  NodeId                        node_id;
+  GraphPosition                 position;
+  NotationLayoutError           error = NotationLayoutError::kNone;
+  std::optional<NotationLayout> layout;
+
+  [[nodiscard]] explicit operator bool() const noexcept {
+    return layout.has_value();
+  }
+};
+
+struct CanvasNotationScene {
+  // Project order is retained so paint and hit-test ordering never depend on
+  // UUIDs or associative-container traversal.
+  std::vector<CanvasNodeNotation> nodes;
+
+  [[nodiscard]] bool complete() const noexcept;
+};
+
 class Canvas {
  public:
   Canvas() = default;
+
+  // Produces complete notation for every graph node. layout_notation owns the
+  // active-track/staff traversal and common measure geometry; canvas retains
+  // each result at the node's world position rather than introducing a second
+  // engraving or timeline-alignment algorithm.
+  [[nodiscard]] CanvasNotationScene layout_nodes(
+      const Project& project, const GlyphMetrics& metrics,
+      const NotationLayoutOptions& options = {}) const;
 };
 
 [[nodiscard]] int canvas_version() noexcept;

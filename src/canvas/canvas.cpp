@@ -7,6 +7,7 @@
 #include <limits>
 #include <optional>
 #include <type_traits>
+#include <utility>
 
 namespace graphscore {
 
@@ -394,6 +395,26 @@ bool CanvasNavigationController::zoom_in(
 bool CanvasNavigationController::zoom_out(
     ViewportPosition focal_point) noexcept {
   return transform_.zoom_by(1.0 / kKeyboardZoomStep, focal_point);
+}
+
+bool CanvasNotationScene::complete() const noexcept {
+  return std::ranges::all_of(nodes, [](const CanvasNodeNotation& node) {
+    return static_cast<bool>(node);
+  });
+}
+
+CanvasNotationScene Canvas::layout_nodes(
+    const Project& project, const GlyphMetrics& metrics,
+    const NotationLayoutOptions& options) const {
+  CanvasNotationScene scene;
+  scene.nodes.reserve(project.nodes().size());
+  for (const Node& node : project.nodes()) {
+    NotationLayoutResult result =
+        layout_notation(project, node.id(), metrics, options);
+    scene.nodes.push_back(CanvasNodeNotation{
+        node.id(), node.position(), result.error, std::move(result.layout)});
+  }
+  return scene;
 }
 
 int canvas_version() noexcept {
