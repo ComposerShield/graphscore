@@ -127,6 +127,8 @@ TEST(CanvasNodeDragTest, DestinationDragUpdatesOnlyItsAttachedLeg) {
             (graphscore::GraphPosition{550.0, 237.0}));
   EXPECT_EQ(scene.connectors[0].destination_leg.outer,
             (graphscore::GraphPosition{526.0, 237.0}));
+  EXPECT_EQ(scene.connectors[0].action_circle.center,
+            scene.connectors[0].destination_leg.outer);
 }
 
 TEST(CanvasNodeDragTest, EndpointMovesPreserveValidCustomizedInteriorSegments) {

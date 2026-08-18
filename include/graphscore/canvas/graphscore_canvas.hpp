@@ -457,6 +457,19 @@ struct CanvasConnectorEndpointLeg {
       default;
 };
 
+// A compact destination-end affordance with a larger circular activation area.
+// Both diameters are world-space presentation values; the visual circle stays
+// the size of a port while the interaction circle meets a 44-unit target.
+struct CanvasConnectorActionCircle {
+  static constexpr double kDiameter            = 16.0;
+  static constexpr double kInteractionDiameter = 44.0;
+
+  GraphPosition center;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorActionCircle&) const =
+      default;
+};
+
 enum class CanvasConnectorLinePattern : std::uint8_t {
   kSolid = 0,
   kDashed,
@@ -549,6 +562,9 @@ struct CanvasConnectorGeometry {
   ConnectorId                destination_connector;
   CanvasConnectorEndpointLeg source_leg;
   CanvasConnectorEndpointLeg destination_leg;
+  // Centered on the destination outer point so the affordance remains clear of
+  // the input port while following endpoint repair and node movement.
+  CanvasConnectorActionCircle action_circle;
   // Complete derived world-space polyline, including both attachment and
   // outer points. Automatic routes avoid node interiors; customized routes
   // retain their interior points while endpoint joins are repaired as needed.
@@ -651,6 +667,13 @@ canvas_double_click_playback_action_request(const Project&             project,
                                             const NotePaletteState&    palette,
                                             GraphPosition              pointer,
                                             double connector_hit_tolerance);
+
+// Activates the topmost destination action circle through the same stable
+// playback-action request used by connector double-click. The interaction
+// circle is intentionally larger than its visual circle.
+[[nodiscard]] std::optional<CanvasConnectorPlaybackActionRequest>
+canvas_action_circle_playback_action_request(const CanvasNotationScene& scene,
+                                             GraphPosition pointer) noexcept;
 
 struct CanvasConnectorDestinationFields {
   NodeId                     node_id;

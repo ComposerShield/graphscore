@@ -253,4 +253,67 @@ TEST(CanvasDoubleClickPlaybackActionTest,
                    .has_value());
 }
 
+TEST(CanvasActionCirclePlaybackActionTest,
+     RetainsSmallVisualAtTheDestinationWithLargeInteractionTarget) {
+  CanvasFixture fixture;
+  ASSERT_EQ(fixture.scene.connectors.size(), 1U);
+  const auto& connector = fixture.scene.connectors.front();
+
+  EXPECT_EQ(connector.action_circle.center, connector.destination_leg.outer);
+  EXPECT_EQ(graphscore::CanvasConnectorActionCircle::kDiameter, 16.0);
+  EXPECT_EQ(graphscore::CanvasConnectorActionCircle::kInteractionDiameter,
+            44.0);
+  EXPECT_GT(graphscore::CanvasConnectorActionCircle::kInteractionDiameter,
+            graphscore::CanvasConnectorActionCircle::kDiameter);
+}
+
+TEST(CanvasActionCirclePlaybackActionTest,
+     RequestsTheSameConnectorActionOutsideTheVisualCircle) {
+  CanvasFixture fixture;
+  ASSERT_EQ(fixture.scene.connectors.size(), 1U);
+  const auto& connector = fixture.scene.connectors.front();
+  ASSERT_GE(connector.route_points.size(), 4U);
+  constexpr std::size_t kInteriorSegment = 1U;
+  const auto            first  = connector.route_points[kInteriorSegment];
+  const auto            second = connector.route_points[kInteriorSegment + 1U];
+  const graphscore::GraphPosition path_midpoint{(first.x + second.x) / 2.0,
+                                                (first.y + second.y) / 2.0};
+  const graphscore::GraphPosition expanded_target{
+      connector.action_circle.center.x,
+      connector.action_circle.center.y +
+          graphscore::CanvasConnectorActionCircle::kDiameter / 2.0 + 1.0};
+
+  const auto double_click =
+      graphscore::canvas_double_click_playback_action_request(
+          fixture.project, fixture.scene, fixture.palette, path_midpoint, 4.0);
+  const auto action_circle =
+      graphscore::canvas_action_circle_playback_action_request(fixture.scene,
+                                                               expanded_target);
+
+  ASSERT_TRUE(double_click.has_value());
+  ASSERT_TRUE(action_circle.has_value());
+  EXPECT_EQ(*action_circle, *double_click);
+  EXPECT_EQ(action_circle->connector, (graphscore::CanvasConnectorSelection{
+                                          fixture.source, fixture.output}));
+}
+
+TEST(CanvasActionCirclePlaybackActionTest, RejectsMissesAndNonFinitePointers) {
+  CanvasFixture fixture;
+  ASSERT_EQ(fixture.scene.connectors.size(), 1U);
+  const auto center = fixture.scene.connectors.front().action_circle.center;
+  const graphscore::GraphPosition miss{
+      center.x +
+          graphscore::CanvasConnectorActionCircle::kInteractionDiameter / 2.0 +
+          1.0,
+      center.y};
+
+  EXPECT_FALSE(graphscore::canvas_action_circle_playback_action_request(
+                   fixture.scene, miss)
+                   .has_value());
+  EXPECT_FALSE(
+      graphscore::canvas_action_circle_playback_action_request(
+          fixture.scene, {std::numeric_limits<double>::infinity(), center.y})
+          .has_value());
+}
+
 }  // namespace

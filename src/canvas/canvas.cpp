@@ -657,6 +657,7 @@ struct RouteQueueGreater {
                                  destination.connector,
                                  *source_leg,
                                  *destination_leg,
+                                 {destination_leg->outer},
                                  std::move(route_points),
                                  std::move(render_path),
                                  type,
@@ -1554,6 +1555,27 @@ canvas_double_click_playback_action_request(const Project&             project,
     return std::nullopt;
   }
   return CanvasConnectorPlaybackActionRequest{connector->connector};
+}
+
+std::optional<CanvasConnectorPlaybackActionRequest>
+canvas_action_circle_playback_action_request(const CanvasNotationScene& scene,
+                                             GraphPosition pointer) noexcept {
+  if (!is_finite(pointer)) {
+    return std::nullopt;
+  }
+  constexpr double kInteractionRadius =
+      CanvasConnectorActionCircle::kInteractionDiameter / 2.0;
+  for (auto connector = scene.connectors.rbegin();
+       connector != scene.connectors.rend(); ++connector) {
+    const GraphPosition center = connector->action_circle.center;
+    if (is_finite(center) &&
+        std::hypot(pointer.x - center.x, pointer.y - center.y) <=
+            kInteractionRadius) {
+      return CanvasConnectorPlaybackActionRequest{
+          {connector->source_node, connector->source_connector}};
+    }
+  }
+  return std::nullopt;
 }
 
 CanvasNodeDragController::CanvasNodeDragController(
