@@ -1537,6 +1537,25 @@ std::optional<CanvasSingleClickSelection> canvas_single_click_selection(
   return std::nullopt;
 }
 
+std::optional<CanvasConnectorPlaybackActionRequest>
+canvas_double_click_playback_action_request(const Project&             project,
+                                            const CanvasNotationScene& scene,
+                                            const NotePaletteState&    palette,
+                                            GraphPosition              pointer,
+                                            double connector_hit_tolerance) {
+  auto selection = canvas_single_click_selection(
+      project, scene, palette, pointer, connector_hit_tolerance);
+  if (!selection.has_value()) {
+    return std::nullopt;
+  }
+  const auto* const connector =
+      std::get_if<CanvasConnectorPathSelection>(&*selection);
+  if (connector == nullptr) {
+    return std::nullopt;
+  }
+  return CanvasConnectorPlaybackActionRequest{connector->connector};
+}
+
 CanvasNodeDragController::CanvasNodeDragController(
     Project& project, CommandHistory& history,
     CanvasNotationScene& scene) noexcept

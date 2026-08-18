@@ -630,6 +630,28 @@ canvas_single_click_selection(const Project&             project,
                               GraphPosition              pointer,
                               double connector_hit_tolerance);
 
+// A request to invoke a connection's playback action. Availability and the
+// sequential-queue versus vertical-jump dispatch are resolved by the playback
+// controller in later integration phases; canvas gesture recognition carries
+// only the stable output identity.
+struct CanvasConnectorPlaybackActionRequest {
+  CanvasConnectorSelection connector;
+
+  [[nodiscard]] bool operator==(
+      const CanvasConnectorPlaybackActionRequest&) const = default;
+};
+
+// Resolves a normal double-click to a playback-action request only when the
+// same topmost target would be selected as a connector path by a single click.
+// This leaves canvas_single_click_selection's editing behavior independent and
+// unchanged.
+[[nodiscard]] std::optional<CanvasConnectorPlaybackActionRequest>
+canvas_double_click_playback_action_request(const Project&             project,
+                                            const CanvasNotationScene& scene,
+                                            const NotePaletteState&    palette,
+                                            GraphPosition              pointer,
+                                            double connector_hit_tolerance);
+
 struct CanvasConnectorDestinationFields {
   NodeId                     node_id;
   std::optional<std::string> node_name;

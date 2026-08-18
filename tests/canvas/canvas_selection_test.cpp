@@ -207,4 +207,50 @@ TEST(CanvasSingleClickSelectionTest, RejectsMissesAndInvalidTolerance) {
                    .has_value());
 }
 
+TEST(CanvasDoubleClickPlaybackActionTest,
+     RequestsActionForTheSingleClickConnectorIdentity) {
+  CanvasFixture fixture;
+  ASSERT_EQ(fixture.scene.connectors.size(), 1U);
+  const auto& connector = fixture.scene.connectors.front();
+  ASSERT_GE(connector.route_points.size(), 4U);
+  constexpr std::size_t kInteriorSegment = 1U;
+  const auto            first  = connector.route_points[kInteriorSegment];
+  const auto            second = connector.route_points[kInteriorSegment + 1U];
+  const graphscore::GraphPosition midpoint{(first.x + second.x) / 2.0,
+                                           (first.y + second.y) / 2.0};
+
+  const auto selection = graphscore::canvas_single_click_selection(
+      fixture.project, fixture.scene, fixture.palette, midpoint, 4.0);
+  const auto request = graphscore::canvas_double_click_playback_action_request(
+      fixture.project, fixture.scene, fixture.palette, midpoint, 4.0);
+
+  ASSERT_TRUE(selection.has_value());
+  ASSERT_TRUE(request.has_value());
+  const auto& selected_path =
+      std::get<graphscore::CanvasConnectorPathSelection>(*selection);
+  EXPECT_EQ(request->connector, selected_path.connector);
+  EXPECT_EQ(request->connector, (graphscore::CanvasConnectorSelection{
+                                    fixture.source, fixture.output}));
+}
+
+TEST(CanvasDoubleClickPlaybackActionTest,
+     DoesNotRequestActionsForOtherSingleClickTargets) {
+  CanvasFixture fixture;
+  ASSERT_EQ(fixture.scene.nodes.size(), 2U);
+  const auto& source = fixture.scene.nodes.front();
+
+  EXPECT_FALSE(graphscore::canvas_double_click_playback_action_request(
+                   fixture.project, fixture.scene, fixture.palette,
+                   world_center(source, source.header.play_button.bounds), 4.0)
+                   .has_value());
+  EXPECT_FALSE(graphscore::canvas_double_click_playback_action_request(
+                   fixture.project, fixture.scene, fixture.palette,
+                   {source.position.x + 8.0, source.position.y + 8.0}, 4.0)
+                   .has_value());
+  EXPECT_FALSE(graphscore::canvas_double_click_playback_action_request(
+                   fixture.project, fixture.scene, fixture.palette,
+                   {-1000.0, -1000.0}, 4.0)
+                   .has_value());
+}
+
 }  // namespace
