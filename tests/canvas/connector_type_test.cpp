@@ -46,6 +46,19 @@ struct ConnectorTypeFixture {
   }
 };
 
+void expect_distinguishable_without_color(
+    graphscore::CanvasConnectorStyle sequential,
+    graphscore::CanvasConnectorStyle vertical) {
+  sequential.color_rgba = 0U;
+  vertical.color_rgba   = 0U;
+
+  EXPECT_NE(sequential, vertical);
+  EXPECT_EQ(sequential.line_pattern,
+            graphscore::CanvasConnectorLinePattern::kSolid);
+  EXPECT_EQ(vertical.line_pattern,
+            graphscore::CanvasConnectorLinePattern::kDashed);
+}
+
 TEST(CanvasConnectorTypeTest, DerivesRedundantColorAndPatternFromSemanticType) {
   ConnectorTypeFixture fixture;
 
@@ -65,6 +78,29 @@ TEST(CanvasConnectorTypeTest, DerivesRedundantColorAndPatternFromSemanticType) {
             graphscore::CanvasConnectorLinePattern::kSolid);
   EXPECT_EQ(vertical.style.line_pattern,
             graphscore::CanvasConnectorLinePattern::kDashed);
+}
+
+TEST(CanvasConnectorTypeTest,
+     RemainsDistinguishableWhenColorInformationIsUnavailable) {
+  ConnectorTypeFixture fixture;
+  auto                 scene =
+      graphscore::Canvas{}.layout_nodes(fixture.project, fixture.metrics);
+  ASSERT_EQ(scene.connectors.size(), 2U);
+
+  expect_distinguishable_without_color(scene.connectors[0].style,
+                                       scene.connectors[1].style);
+
+  graphscore::CommandHistory           history;
+  graphscore::CanvasNodeDragController drag{fixture.project, history, scene};
+  ASSERT_TRUE(drag.begin(fixture.target_id, {0.0, 0.0}));
+  ASSERT_TRUE(drag.update({120.0, 80.0}));
+  ASSERT_TRUE(drag.finish().ok());
+
+  const auto relaid_scene =
+      graphscore::Canvas{}.layout_nodes(fixture.project, fixture.metrics);
+  ASSERT_EQ(relaid_scene.connectors.size(), 2U);
+  expect_distinguishable_without_color(relaid_scene.connectors[0].style,
+                                       relaid_scene.connectors[1].style);
 }
 
 TEST(CanvasConnectorTypeTest,

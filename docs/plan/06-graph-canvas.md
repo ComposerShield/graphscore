@@ -72,7 +72,7 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 - [x] M6-phase-41 Default routes avoid nodes, custom routes remain orthogonal with rounded corners, and route reset is deterministic.
 - [x] M6-phase-42 Node moves preserve manually positioned interior segments where geometrically valid.
 - [x] M6-phase-43 All graph operations are undoable and survive save/reopen.
-- [ ] M6-phase-44 Sequential and vertical connections remain distinguishable without relying on color alone.
+- [x] M6-phase-44 Sequential and vertical connections remain distinguishable without relying on color alone.
 - [ ] M6-phase-45 Keyboard users can create, inspect, connect, reroute, reset, and delete connections.
 
 ## Test Focus
