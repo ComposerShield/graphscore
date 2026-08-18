@@ -914,8 +914,9 @@ class CanvasNodeOperationsController {
 };
 
 // Stages one orthogonal connector-segment drag. The retained scene is updated
-// during the gesture while the Project remains unchanged; finish() records one
-// SetCustomRouteCommand and cancel() restores the exact starting geometry.
+// during the gesture while the Project and command history remain unchanged;
+// finish() coalesces every preview update into one SetCustomRouteCommand and
+// cancel() restores the exact starting geometry.
 class CanvasConnectorSegmentDragController {
  public:
   CanvasConnectorSegmentDragController(Project&             project,

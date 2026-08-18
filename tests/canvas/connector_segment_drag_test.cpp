@@ -197,7 +197,8 @@ TEST(CanvasConnectorSegmentDragTest, RejectsMalformedAndNonFiniteInput) {
   EXPECT_EQ(moved->at(2U).x, 50.0);
 }
 
-TEST(CanvasConnectorSegmentDragTest, ControllerCommitsOneUndoableRouteEdit) {
+TEST(CanvasConnectorSegmentDragTest,
+     CompleteGestureCommitsOnlyItsFinalRouteAsOneUndoableEdit) {
   graphscore::Project      project{graphscore::ProjectId::generate(), "Drag"};
   const graphscore::NodeId source           = project.add_node("Source");
   const graphscore::NodeId destination      = project.add_node("Destination");
@@ -222,19 +223,30 @@ TEST(CanvasConnectorSegmentDragTest, ControllerCommitsOneUndoableRouteEdit) {
                                                         scene);
 
   ASSERT_TRUE(drag.begin(source, output, 1U, {100.0, original_y}));
-  ASSERT_TRUE(drag.update({100.0, original_y + 100.0}));
-  ASSERT_TRUE(drag.finish().ok());
-  EXPECT_FALSE(
+  ASSERT_TRUE(drag.update({100.0, original_y + 40.0}));
+  EXPECT_TRUE(
       project.find_node(source)->find_output(output)->route().is_automatic());
+  EXPECT_EQ(history.undo_stack_size(), 0U);
+  ASSERT_TRUE(drag.update({100.0, original_y + 140.0}));
+  EXPECT_TRUE(
+      project.find_node(source)->find_output(output)->route().is_automatic());
+  EXPECT_EQ(history.undo_stack_size(), 0U);
+  ASSERT_TRUE(drag.update({100.0, original_y + 100.0}));
+  const std::vector final_route_points = scene.connectors[0].route_points;
+  ASSERT_TRUE(drag.finish().ok());
+  const graphscore::RouteGeometry final_route =
+      project.find_node(source)->find_output(output)->route();
+  EXPECT_FALSE(final_route.is_automatic());
   EXPECT_EQ(history.undo_stack_size(), 1U);
   EXPECT_EQ(scene.connectors[0].route_points.size(), 6U);
+  EXPECT_EQ(scene.connectors[0].route_points, final_route_points);
 
   ASSERT_TRUE(history.undo(project).ok());
   EXPECT_TRUE(
       project.find_node(source)->find_output(output)->route().is_automatic());
   ASSERT_TRUE(history.redo(project).ok());
-  EXPECT_FALSE(
-      project.find_node(source)->find_output(output)->route().is_automatic());
+  EXPECT_EQ(project.find_node(source)->find_output(output)->route(),
+            final_route);
 
   const std::size_t history_size = history.undo_stack_size();
   graphscore::CanvasConnectorSegmentDragController no_op(project, history,
