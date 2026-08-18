@@ -39,6 +39,10 @@ Duration half() {
   return *Duration::create(NoteValue::kHalf, 0);
 }
 
+Duration quarter() {
+  return *Duration::create(NoteValue::kQuarter, 0);
+}
+
 Duration eighth() {
   return *Duration::create(NoteValue::kEighth, 0);
 }
@@ -1079,6 +1083,244 @@ TEST(MeasureCommandIntegrationTest, CompatibilityIsALiveQuery) {
   ASSERT_TRUE(command.undo(fixture.project).ok());
   EXPECT_TRUE(vertical_regions_compatible(*fixture.node()->timeline(),
                                           *other->timeline()));
+}
+
+TEST(MeasureCommandIntegrationTest,
+     ComplexNotationSurvivesMeasureEditSequenceWithoutDanglingReferences) {
+  CascadeProject fixture;
+  Node* const    node = fixture.node();
+  ASSERT_NE(node, nullptr);
+  NodeTimeline* const timeline = node->timeline();
+  ASSERT_NE(timeline, nullptr);
+  ASSERT_TRUE(
+      timeline->set_measure_key_signature(0, *KeySignature::create(-3)).ok());
+  ASSERT_TRUE(
+      timeline->set_measure_key_signature(1, *KeySignature::create(2)).ok());
+  ASSERT_TRUE(
+      timeline->set_measure_key_signature(2, *KeySignature::create(5)).ok());
+
+  StaveVoices* const stave =
+      node->lane(fixture.active_track)->stave(fixture.active_stave);
+  ASSERT_NE(stave, nullptr);
+
+  const Note tied_source =
+      make_note(pitch(Letter::kC), whole(), true, {Articulation::kAccent});
+  const Note   tied_target = make_note(pitch(Letter::kC), whole());
+  VoiceContent voice1;
+  ASSERT_TRUE(voice1.append(tied_source).ok());
+  ASSERT_TRUE(voice1.append(tied_target).ok());
+  ASSERT_TRUE(voice1.append(make_note(pitch(Letter::kD), whole())).ok());
+  ASSERT_TRUE(voice1.append(make_note(pitch(Letter::kE), quarter())).ok());
+  ASSERT_TRUE(voice1.check_complete(rat(13, 4)).ok());
+
+  const VoiceContent voice2 = tuplet_voice(Rational(1), 6, true, rat(13, 4));
+  ASSERT_FALSE(voice2.events().empty());
+  std::optional<TupletGroupId> tuplet_group =
+      event_tuplet_group(voice2.events().front());
+  if (!tuplet_group.has_value()) {
+    for (const VoiceEvent& event : voice2.events()) {
+      if (event_tuplet_group(event).has_value()) {
+        tuplet_group = event_tuplet_group(event);
+        break;
+      }
+    }
+  }
+  ASSERT_TRUE(tuplet_group.has_value());
+  Rational tuplet_position(0);
+  Rational tuplet_end(0);
+  for (const VoiceEvent& event : voice2.events()) {
+    tuplet_position = tuplet_position + event_duration(event).resolved();
+    if (event_tuplet_group(event) == tuplet_group)
+      tuplet_end = tuplet_position;
+  }
+  EXPECT_EQ(tuplet_end, Rational(2));
+
+  VoiceContent voice3;
+  const Note   grace_lead        = make_note(pitch(Letter::kF), whole());
+  const Note   grace_predecessor = make_note(pitch(Letter::kA), whole());
+  const Note   grace_principal   = make_note(pitch(Letter::kG), whole());
+  ASSERT_TRUE(voice3.append(grace_lead).ok());
+  ASSERT_TRUE(voice3.append(grace_predecessor).ok());
+  ASSERT_TRUE(voice3.append(grace_principal).ok());
+  ASSERT_TRUE(voice3.append(make_note(pitch(Letter::kB), quarter())).ok());
+  const GraceGroup grace = make_grace_group(
+      grace_principal.id, {{NotationEntityId{}, pitch(Letter::kF), eighth(),
+                            GraceNoteType::kAppoggiatura, false}});
+  ASSERT_TRUE(voice3.add_grace_group(grace).ok());
+  ASSERT_TRUE(validate_voice_references(voice3).empty());
+
+  VoiceContent voice4;
+  const Note   marked_start =
+      make_note(pitch(Letter::kC), whole(), false, {Articulation::kStaccato},
+                StemDirection::kUp);
+  const Note marked_middle = make_note(pitch(Letter::kD), whole());
+  const Note marked_end    = make_note(pitch(Letter::kE), whole());
+  ASSERT_TRUE(voice4.append(marked_start).ok());
+  ASSERT_TRUE(voice4.append(marked_middle).ok());
+  ASSERT_TRUE(voice4.append(marked_end).ok());
+  ASSERT_TRUE(voice4.append(make_note(pitch(Letter::kF), quarter())).ok());
+  const DynamicMarking dynamic =
+      make_dynamic_marking(marked_start.id, Dynamic::kMf);
+  const Hairpin hairpin = make_hairpin(marked_start.id, marked_end.id,
+                                       HairpinDirection::kCrescendo);
+  const Slur    slur    = make_slur(marked_start.id, marked_end.id);
+  ASSERT_TRUE(voice4.add_dynamic(dynamic).ok());
+  ASSERT_TRUE(voice4.add_hairpin(hairpin).ok());
+  ASSERT_TRUE(voice4.add_slur(slur).ok());
+  ASSERT_TRUE(validate_voice_references(voice4).empty());
+
+  stave->voice(*Voice::create(1)) = voice1;
+  stave->voice(*Voice::create(2)) = voice2;
+  stave->voice(*Voice::create(3)) = voice3;
+  stave->voice(*Voice::create(4)) = voice4;
+  const PedalSpan pedal           = make_pedal_span(rat(3, 4), rat(9, 4));
+  ASSERT_TRUE(node->lane(fixture.active_track)
+                  ->add_pedal_span(fixture.active_stave, pedal)
+                  .ok());
+
+  const auto expect_valid = [&](const Rational expected_grace_position) {
+    const Rational         node_end = fixture.node()->timeline()->node_end();
+    const TrackLane* const lane = fixture.node()->lane(fixture.active_track);
+    ASSERT_NE(lane, nullptr);
+    const StaveVoices* const current_stave = lane->stave(fixture.active_stave);
+    ASSERT_NE(current_stave, nullptr);
+    for (std::uint8_t value = Voice::kMin; value <= Voice::kMax; ++value) {
+      const Voice voice = *Voice::create(value);
+      EXPECT_TRUE(current_stave->voice(voice).check_complete(node_end).ok());
+      EXPECT_TRUE(
+          validate_voice_references(current_stave->voice(voice)).empty());
+    }
+    EXPECT_TRUE(validate_lane_references(*lane, node_end).empty());
+
+    const VoiceContent& current_tuplets =
+        current_stave->voice(*Voice::create(2));
+    std::size_t tuplet_event_count = 0;
+    for (const VoiceEvent& expected : voice2.events()) {
+      if (event_tuplet_group(expected) != tuplet_group)
+        continue;
+      ++tuplet_event_count;
+      const std::optional<Rational> position =
+          current_tuplets.position_of_event(event_id(expected));
+      EXPECT_TRUE(position.has_value());
+      EXPECT_EQ(position, voice2.position_of_event(event_id(expected)));
+      if (!position.has_value())
+        continue;
+      const std::optional<std::size_t> index =
+          current_tuplets.find_event_index_at(*position);
+      ASSERT_TRUE(index.has_value());
+      EXPECT_EQ(current_tuplets.events()[*index], expected);
+    }
+    EXPECT_EQ(tuplet_event_count, 6u);
+    EXPECT_EQ(current_stave->voice(*Voice::create(3))
+                  .position_of_event(grace_principal.id),
+              expected_grace_position);
+  };
+  expect_valid(Rational(2));
+  const Node original = *node;
+
+  CommandHistory history;
+  ASSERT_TRUE(history
+                  .execute_new(std::make_unique<InsertMeasureCommand>(
+                                   fixture.node_id, 2, measure(3, 4)),
+                               fixture.project)
+                  .ok());
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure_count(), 4u);
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure(2), measure(3, 4));
+  EXPECT_EQ(fixture.node()->timeline()->node_end(), Rational(4));
+  expect_valid(rat(11, 4));
+  ASSERT_TRUE(
+      history
+          .execute_new(std::make_unique<SetMeasureTimeSignatureCommand>(
+                           fixture.node_id, 2, *TimeSignature::create(2, 4)),
+                       fixture.project)
+          .ok());
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure_count(), 4u);
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure(2), measure(2, 4));
+  EXPECT_EQ(fixture.node()->timeline()->node_end(), rat(15, 4));
+  expect_valid(rat(5, 2));
+  ASSERT_TRUE(history
+                  .execute_new(std::make_unique<InsertMeasureCommand>(
+                                   fixture.node_id, 4, measure(5, 8)),
+                               fixture.project)
+                  .ok());
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure_count(), 5u);
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure(2), measure(2, 4));
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure(4), measure(5, 8));
+  EXPECT_EQ(fixture.node()->timeline()->node_end(), rat(35, 8));
+  expect_valid(rat(5, 2));
+  ASSERT_TRUE(history
+                  .execute_new(std::make_unique<DeleteMeasureCommand>(
+                                   fixture.node_id, 2),
+                               fixture.project)
+                  .ok());
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure_count(), 4u);
+  EXPECT_EQ(fixture.node()->timeline()->node_end(), rat(31, 8));
+  expect_valid(Rational(2));
+
+  const Node                edited          = *fixture.node();
+  const NodeTimeline* const edited_timeline = edited.timeline();
+  ASSERT_NE(edited_timeline, nullptr);
+  ASSERT_EQ(edited_timeline->measures().measure_count(), 4u);
+  EXPECT_EQ(edited_timeline->measures().measure(0).key_signature,
+            *KeySignature::create(-3));
+  EXPECT_EQ(edited_timeline->measures().measure(1).key_signature,
+            *KeySignature::create(2));
+  EXPECT_EQ(edited_timeline->measures().measure(2).key_signature,
+            *KeySignature::create(5));
+  EXPECT_EQ(edited_timeline->measures().measure(3), measure(5, 8));
+
+  const StaveVoices* const edited_stave =
+      edited.lane(fixture.active_track)->stave(fixture.active_stave);
+  ASSERT_NE(edited_stave, nullptr);
+  const VoiceContent& edited_voice1 = edited_stave->voice(*Voice::create(1));
+  ASSERT_GE(edited_voice1.events().size(), 2u);
+  EXPECT_EQ(std::get<Note>(edited_voice1.events()[0]), tied_source);
+  EXPECT_EQ(std::get<Note>(edited_voice1.events()[1]), tied_target);
+  EXPECT_EQ(edited_stave->voice(*Voice::create(3)).grace_groups(),
+            (std::vector<GraceGroup>{grace}));
+  const VoiceContent& edited_voice4 = edited_stave->voice(*Voice::create(4));
+  EXPECT_EQ(std::get<Note>(edited_voice4.events().front()), marked_start);
+  EXPECT_EQ(edited_voice4.dynamics(), (std::vector<DynamicMarking>{dynamic}));
+  EXPECT_EQ(edited_voice4.hairpins(), (std::vector<Hairpin>{hairpin}));
+  EXPECT_EQ(edited_voice4.slurs(), (std::vector<Slur>{slur}));
+  EXPECT_EQ(
+      *edited.lane(fixture.active_track)->pedal_spans(fixture.active_stave),
+      (std::vector<PedalSpan>{pedal}));
+
+  ASSERT_TRUE(history.undo(fixture.project).ok());
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure_count(), 5u);
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure(2), measure(2, 4));
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure(4), measure(5, 8));
+  EXPECT_EQ(fixture.node()->timeline()->node_end(), rat(35, 8));
+  expect_valid(rat(5, 2));
+  ASSERT_TRUE(history.undo(fixture.project).ok());
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure_count(), 4u);
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure(2), measure(2, 4));
+  EXPECT_EQ(fixture.node()->timeline()->node_end(), rat(15, 4));
+  expect_valid(rat(5, 2));
+  ASSERT_TRUE(history.undo(fixture.project).ok());
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure(2), measure(3, 4));
+  EXPECT_EQ(fixture.node()->timeline()->node_end(), Rational(4));
+  expect_valid(rat(11, 4));
+  ASSERT_TRUE(history.undo(fixture.project).ok());
+  EXPECT_EQ(*fixture.node(), original);
+  expect_valid(Rational(2));
+
+  ASSERT_TRUE(history.redo(fixture.project).ok());
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure(2), measure(3, 4));
+  EXPECT_EQ(fixture.node()->timeline()->node_end(), Rational(4));
+  expect_valid(rat(11, 4));
+  ASSERT_TRUE(history.redo(fixture.project).ok());
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure(2), measure(2, 4));
+  EXPECT_EQ(fixture.node()->timeline()->node_end(), rat(15, 4));
+  expect_valid(rat(5, 2));
+  ASSERT_TRUE(history.redo(fixture.project).ok());
+  EXPECT_EQ(fixture.node()->timeline()->measures().measure(4), measure(5, 8));
+  EXPECT_EQ(fixture.node()->timeline()->node_end(), rat(35, 8));
+  expect_valid(rat(5, 2));
+  ASSERT_TRUE(history.redo(fixture.project).ok());
+  EXPECT_EQ(*fixture.node(), edited);
+  expect_valid(Rational(2));
 }
 
 TEST(MeasureCommandIntegrationTest,
