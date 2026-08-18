@@ -4,6 +4,7 @@ add_executable(graphscore_canvas_test
   viewport_transform_test.cpp
   trackpad_gesture_test.cpp
   canvas_navigation_test.cpp
+  canvas_selection_test.cpp
   spatial_index_test.cpp
   node_notation_test.cpp
   node_header_test.cpp

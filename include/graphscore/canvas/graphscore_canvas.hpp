@@ -6,8 +6,10 @@
 #include <graphscore/domain/connector.hpp>
 #include <graphscore/domain/event_listener.hpp>
 #include <graphscore/domain/graph_position.hpp>
+#include <graphscore/domain/selection.hpp>
 #include <graphscore/domain/validation_service.hpp>
 #include <graphscore/notation/notation_layout.hpp>
+#include <graphscore/notation/notation_palette.hpp>
 
 #include <array>
 #include <compare>
@@ -17,6 +19,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace graphscore {
@@ -357,11 +360,14 @@ enum class CanvasNodeHeaderAction : std::uint8_t {
   kPlay,
 };
 
-// A distinct toolkit-neutral button identity. Geometry, activation routing,
-// and accessibility behavior are layered onto these stable actions by their
-// dedicated canvas phases.
+// A distinct toolkit-neutral button identity with node-local click geometry.
+// Activation routing and accessibility behavior remain layered onto these
+// stable actions by their dedicated canvas phases.
 struct CanvasNodeHeaderButton {
+  static constexpr double kSize = 32.0;
+
   CanvasNodeHeaderAction action = CanvasNodeHeaderAction::kEditFreeformNotes;
+  NotationRect           bounds;
 
   [[nodiscard]] bool operator==(const CanvasNodeHeaderButton&) const = default;
 };
@@ -377,8 +383,8 @@ struct CanvasNodeHeader {
   bool                      has_tempo_lane = false;
   CanvasNodeHeaderButton    freeform_notes_button;
   CanvasNodeHeaderButton    tempo_lane_button{
-      CanvasNodeHeaderAction::kOpenTempoLane};
-  CanvasNodeHeaderButton play_button{CanvasNodeHeaderAction::kPlay};
+      CanvasNodeHeaderAction::kOpenTempoLane, {}};
+  CanvasNodeHeaderButton play_button{CanvasNodeHeaderAction::kPlay, {}};
 
   [[nodiscard]] bool operator==(const CanvasNodeHeader&) const = default;
 };
@@ -566,6 +572,63 @@ struct CanvasConnectorSelection {
   [[nodiscard]] bool operator==(const CanvasConnectorSelection&) const =
       default;
 };
+
+struct CanvasNotationScene;
+
+struct CanvasPortSelection {
+  NodeId              node_id;
+  ConnectorId         connector_id;
+  CanvasPortDirection direction = CanvasPortDirection::kInput;
+
+  [[nodiscard]] bool operator==(const CanvasPortSelection&) const = default;
+};
+
+// A connector path click also names the authoritative orthogonal segment at
+// the click. The stable connector identity drives inspector/editing selection;
+// an editable interior segment index can start a route-edit gesture.
+struct CanvasConnectorPathSelection {
+  CanvasConnectorSelection connector;
+  std::size_t              segment_index = 0;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorPathSelection&) const =
+      default;
+};
+
+struct CanvasNodeSelection {
+  NodeId node_id;
+
+  [[nodiscard]] bool operator==(const CanvasNodeSelection&) const = default;
+};
+
+struct CanvasControlSelection {
+  NodeId                 node_id;
+  CanvasNodeHeaderAction action = CanvasNodeHeaderAction::kEditFreeformNotes;
+
+  [[nodiscard]] bool operator==(const CanvasControlSelection&) const = default;
+};
+
+struct CanvasNotationSelection {
+  NodeId    node_id;
+  Selection selection;
+
+  [[nodiscard]] bool operator==(const CanvasNotationSelection&) const = default;
+};
+
+using CanvasSingleClickSelection =
+    std::variant<CanvasPortSelection, CanvasConnectorPathSelection,
+                 CanvasNodeSelection, CanvasControlSelection,
+                 CanvasNotationSelection>;
+
+// Resolves one normal world-space click to the topmost editable canvas target.
+// Node-local controls, ports, and notation take precedence over their node;
+// nodes paint above connector paths, and later scene entries paint above
+// earlier entries. Connector tolerance is expressed in world coordinates.
+[[nodiscard]] std::optional<CanvasSingleClickSelection>
+canvas_single_click_selection(const Project&             project,
+                              const CanvasNotationScene& scene,
+                              const NotePaletteState&    palette,
+                              GraphPosition              pointer,
+                              double connector_hit_tolerance);
 
 struct CanvasConnectorDestinationFields {
   NodeId                     node_id;

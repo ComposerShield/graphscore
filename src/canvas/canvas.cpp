@@ -16,6 +16,7 @@
 #include <graphscore/domain/set_output_type_command.hpp>
 #include <graphscore/domain/set_output_weight_command.hpp>
 #include <graphscore/domain/validation_service.hpp>
+#include <graphscore/notation/notation_selection.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -49,6 +50,46 @@ constexpr int kCanvasVersion = 1;
 
 [[nodiscard]] bool is_finite(ViewportPosition position) noexcept {
   return std::isfinite(position.x) && std::isfinite(position.y);
+}
+
+[[nodiscard]] bool contains(const NotationRect& bounds,
+                            GraphPosition       point) noexcept {
+  if (!std::isfinite(bounds.x) || !std::isfinite(bounds.y) ||
+      !std::isfinite(bounds.width) || !std::isfinite(bounds.height) ||
+      bounds.width < 0.0 || bounds.height < 0.0 || !is_finite(point)) {
+    return false;
+  }
+  const double right  = bounds.x + bounds.width;
+  const double bottom = bounds.y + bounds.height;
+  return std::isfinite(right) && std::isfinite(bottom) && point.x >= bounds.x &&
+         point.x <= right && point.y >= bounds.y && point.y <= bottom;
+}
+
+[[nodiscard]] CanvasNodeHeader node_header(const Node&               node,
+                                           CanvasNodeValidationState validation,
+                                           double                    width) {
+  constexpr double kButtonGap     = 8.0;
+  constexpr double kButtonPadding = 16.0;
+  constexpr double kButtonY =
+      (CanvasNodeGeometry::kHeaderHeight - CanvasNodeHeaderButton::kSize) / 2.0;
+  const double play_x  = width - kButtonPadding - CanvasNodeHeaderButton::kSize;
+  const double tempo_x = play_x - kButtonGap - CanvasNodeHeaderButton::kSize;
+  const double notes_x = tempo_x - kButtonGap - CanvasNodeHeaderButton::kSize;
+  return CanvasNodeHeader{
+      node.name(),
+      node.color(),
+      !node.notes().empty(),
+      validation,
+      node.timeline() != nullptr && node.timeline()->tempo() != nullptr,
+      {CanvasNodeHeaderAction::kEditFreeformNotes,
+       {notes_x, kButtonY, CanvasNodeHeaderButton::kSize,
+        CanvasNodeHeaderButton::kSize}},
+      {CanvasNodeHeaderAction::kOpenTempoLane,
+       {tempo_x, kButtonY, CanvasNodeHeaderButton::kSize,
+        CanvasNodeHeaderButton::kSize}},
+      {CanvasNodeHeaderAction::kPlay,
+       {play_x, kButtonY, CanvasNodeHeaderButton::kSize,
+        CanvasNodeHeaderButton::kSize}}};
 }
 
 [[nodiscard]] bool diagnostic_applies_to_node(const Diagnostic& diagnostic,
@@ -1426,6 +1467,76 @@ bool CanvasNotationScene::complete() const noexcept {
   });
 }
 
+std::optional<CanvasSingleClickSelection> canvas_single_click_selection(
+    const Project& project, const CanvasNotationScene& scene,
+    const NotePaletteState& palette, GraphPosition pointer,
+    double connector_hit_tolerance) {
+  if (!is_finite(pointer) || !std::isfinite(connector_hit_tolerance) ||
+      connector_hit_tolerance < 0.0) {
+    return std::nullopt;
+  }
+
+  for (auto node_iterator = scene.nodes.rbegin();
+       node_iterator != scene.nodes.rend(); ++node_iterator) {
+    const CanvasNodeNotation& node = *node_iterator;
+    const GraphPosition       local{pointer.x - node.position.x,
+                              pointer.y - node.position.y};
+    if (!is_finite(local)) {
+      continue;
+    }
+
+    for (const CanvasNodePort& port : node.ports) {
+      if (contains(port.bounds, local)) {
+        return CanvasPortSelection{node.node_id, port.connector_id,
+                                   port.direction};
+      }
+    }
+
+    constexpr std::size_t kHeaderButtonCount = 3U;
+    const std::array<const CanvasNodeHeaderButton*, kHeaderButtonCount> buttons{
+        &node.header.freeform_notes_button, &node.header.tempo_lane_button,
+        &node.header.play_button};
+    for (const CanvasNodeHeaderButton* button : buttons) {
+      if (contains(button->bounds, local)) {
+        return CanvasControlSelection{node.node_id, button->action};
+      }
+    }
+
+    if (node.layout.has_value() &&
+        contains(node.geometry.notation_bounds, local)) {
+      const NotationPoint notation_point{
+          local.x - node.geometry.notation_bounds.x,
+          local.y - node.geometry.notation_bounds.y};
+      if (std::isfinite(notation_point.x) && std::isfinite(notation_point.y)) {
+        auto selection = resolve_selection_at(project, *node.layout, palette,
+                                              notation_point);
+        if (selection.has_value()) {
+          return CanvasNotationSelection{node.node_id, std::move(*selection)};
+        }
+      }
+    }
+
+    if (contains(
+            {0.0, 0.0, node.geometry.bounds.width, node.geometry.bounds.height},
+            local)) {
+      return CanvasNodeSelection{node.node_id};
+    }
+  }
+
+  for (auto connector_iterator = scene.connectors.rbegin();
+       connector_iterator != scene.connectors.rend(); ++connector_iterator) {
+    const auto hit = canvas_connector_segment_hover(
+        connector_iterator->route_points, pointer, connector_hit_tolerance);
+    if (hit.has_value()) {
+      return CanvasConnectorPathSelection{
+          {connector_iterator->source_node,
+           connector_iterator->source_connector},
+          hit->segment_index};
+    }
+  }
+  return std::nullopt;
+}
+
 CanvasNodeDragController::CanvasNodeDragController(
     Project& project, CommandHistory& history,
     CanvasNotationScene& scene) noexcept
@@ -2282,19 +2393,12 @@ CanvasNotationScene Canvas::layout_nodes(
   for (const Node& node : project.nodes()) {
     NotationLayoutResult result =
         layout_notation(project, node.id(), metrics, options);
-    const NodeTimeline* const timeline = node.timeline();
-    const CanvasNodeGeometry  geometry =
+    const CanvasNodeGeometry geometry =
         node_geometry(node.position(), result.layout);
     scene.nodes.push_back(CanvasNodeNotation{
         node.id(), node.position(),
-        CanvasNodeHeader{node.name(),
-                         node.color(),
-                         !node.notes().empty(),
-                         validation_state_for_node(validation, node.id()),
-                         timeline != nullptr && timeline->tempo() != nullptr,
-                         {CanvasNodeHeaderAction::kEditFreeformNotes},
-                         {CanvasNodeHeaderAction::kOpenTempoLane},
-                         {CanvasNodeHeaderAction::kPlay}},
+        node_header(node, validation_state_for_node(validation, node.id()),
+                    geometry.bounds.width),
         geometry, node_ports(node, geometry), result.error,
         std::move(result.layout)});
   }
