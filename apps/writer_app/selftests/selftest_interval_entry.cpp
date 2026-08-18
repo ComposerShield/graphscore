@@ -845,6 +845,122 @@ int interval_entry_test() {
     shell.set_input_handler(nullptr);
   }
 
+  // --- test 8: interval spelling in every standard key signature (fifths
+  //     -7..7). For each key, every interval 2..8 above and below the
+  //     selected C4 is spelled with that key's own accidental, recomputed
+  //     here from the sharp (F C G D A E B) and flat (B E A D G C F) orders
+  //     rather than the production table -- the app-routing twin of
+  //     NoteIntervalTest.IntervalTargetPitchUsesKeySignatureAccidental, and
+  //     the exhaustive complement to test 3b's single E-major spot check.
+  {
+    constexpr std::array<graphscore::Letter, 7> kSharps = {
+        graphscore::Letter::kF, graphscore::Letter::kC, graphscore::Letter::kG,
+        graphscore::Letter::kD, graphscore::Letter::kA, graphscore::Letter::kE,
+        graphscore::Letter::kB};
+    constexpr std::array<graphscore::Letter, 7> kFlats = {
+        graphscore::Letter::kB, graphscore::Letter::kE, graphscore::Letter::kA,
+        graphscore::Letter::kD, graphscore::Letter::kG, graphscore::Letter::kC,
+        graphscore::Letter::kF};
+
+    const auto key_accidental = [&](std::int8_t        fifths,
+                                    graphscore::Letter letter) {
+      if (fifths > 0 && std::find(kSharps.begin(), kSharps.begin() + fifths,
+                                  letter) != kSharps.begin() + fifths) {
+        return graphscore::Accidental::kSharp;
+      }
+      if (fifths < 0 && std::find(kFlats.begin(), kFlats.begin() + (-fifths),
+                                  letter) != kFlats.begin() + (-fifths)) {
+        return graphscore::Accidental::kFlat;
+      }
+      return graphscore::Accidental::kNatural;
+    };
+
+    for (std::int8_t fifths = graphscore::KeySignature::kMinFifths;
+         fifths <= graphscore::KeySignature::kMaxFifths; ++fifths) {
+      auto fx = build_interval_note_fixture(metrics, fifths);
+      if (!fx.has_value()) {
+        std::fprintf(stderr,
+                     "interval-entry-test: fixture build failed (8, fifths "
+                     "%d)\n",
+                     static_cast<int>(fifths));
+        return 1;
+      }
+      graphscore::WriterShell shell;
+      SelectionToolHandler    handler(std::move(fx->project),
+                                      std::move(fx->layout), &shell);
+      handler.set_metrics(&metrics);
+      shell.set_input_handler(&handler);
+      handler.set_active_tool(graphscore::ActiveTool::kSelection);
+
+      const auto select_source = [&](SelectionToolHandler& h) {
+        return select_noteheads(h, {graphscore::NoteheadItem{
+                                       fx->node_id, fx->track_id, fx->stave_id,
+                                       voice_one(), fx->source_id}});
+      };
+      const auto assert_chord = [&](const graphscore::SpelledPitch& expected,
+                                    const char*                     direction) {
+        const std::optional<graphscore::Chord> chord = first_chord(
+            handler.project(), fx->node_id, fx->track_id, fx->stave_id);
+        if (!chord.has_value() || chord->notes.size() != 2u ||
+            chord->notes[0].id != fx->source_id ||
+            chord->notes[0].pitch != spelled(graphscore::Letter::kC, 4) ||
+            chord->notes[1].pitch != expected) {
+          std::fprintf(stderr,
+                       "interval-entry-test: key-spelled %s wrong (8, fifths "
+                       "%d)\n",
+                       direction, static_cast<int>(fifths));
+          return false;
+        }
+        return true;
+      };
+
+      for (const DigitCase& digit : kDigits) {
+        if (!select_source(handler)) {
+          std::fprintf(stderr,
+                       "interval-entry-test: selection rejected (8 above)\n");
+          shell.set_input_handler(nullptr);
+          return 1;
+        }
+        shell.dispatch_test_key_event(plain_key(digit.code));
+        if (!assert_chord(spelled(digit.above_letter, digit.above_octave,
+                                  key_accidental(fifths, digit.above_letter)),
+                          "above")) {
+          shell.set_input_handler(nullptr);
+          return 1;
+        }
+        if (!handler.test_undo() || handler.test_undo_stack_size() != 0u) {
+          std::fprintf(stderr,
+                       "interval-entry-test: key-spelling undo failed (8)\n");
+          shell.set_input_handler(nullptr);
+          return 1;
+        }
+      }
+
+      for (const DigitCase& digit : kDigits) {
+        if (!select_source(handler)) {
+          std::fprintf(stderr,
+                       "interval-entry-test: selection rejected (8 below)\n");
+          shell.set_input_handler(nullptr);
+          return 1;
+        }
+        shell.dispatch_test_key_event(shift_key(digit.code));
+        if (!assert_chord(spelled(digit.below_letter, digit.below_octave,
+                                  key_accidental(fifths, digit.below_letter)),
+                          "below")) {
+          shell.set_input_handler(nullptr);
+          return 1;
+        }
+        if (!handler.test_undo() || handler.test_undo_stack_size() != 0u) {
+          std::fprintf(stderr,
+                       "interval-entry-test: key-spelling undo failed (8)\n");
+          shell.set_input_handler(nullptr);
+          return 1;
+        }
+      }
+      shell.set_input_handler(nullptr);
+    }
+  }
+
   std::printf("interval-entry-test: ok\n");
   return 0;
 }
