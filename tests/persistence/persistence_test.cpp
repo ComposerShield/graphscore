@@ -6,7 +6,10 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -96,6 +99,98 @@ TEST(PersistenceTest, RejectsIncompleteOrDuplicateMetadataAtomically) {
   EXPECT_EQ(project.find_node(first)->notes(), "unchanged first");
   EXPECT_EQ(project.find_node(second)->color(), 0x22222222U);
   EXPECT_EQ(project.find_node(second)->notes(), "unchanged second");
+}
+
+TEST(PersistenceTest, GraphOperationsUndoRedoAndSurviveSaveReopen) {
+  const graphscore::ProjectId project_id = graphscore::ProjectId::generate();
+  graphscore::Project         project{project_id, "Graph"};
+  const graphscore::NodeId    source      = project.add_node("Source");
+  const graphscore::NodeId    destination = project.add_node("Destination");
+  const graphscore::EventId   event = *project.events().add_event("Advance");
+  graphscore::CommandHistory  history;
+
+  auto execute = [&](std::unique_ptr<graphscore::Command> command) {
+    ASSERT_TRUE(history.execute_new(std::move(command), project).ok());
+  };
+  execute(std::make_unique<graphscore::SetNodePositionCommand>(
+      source, graphscore::GraphPosition{120.0, -45.0}));
+  execute(std::make_unique<graphscore::SetNodeNameCommand>(source,
+                                                           "Edited source"));
+  execute(
+      std::make_unique<graphscore::SetNodeColorCommand>(source, 0x12345678U));
+  execute(
+      std::make_unique<graphscore::SetNodeNotesCommand>(source, "Graph notes"));
+  execute(std::make_unique<graphscore::AddOutputConnectorCommand>(
+      source, "Output", graphscore::ConnectorType::kSequential));
+  execute(std::make_unique<graphscore::AddInputConnectorCommand>(destination,
+                                                                 "Input"));
+  const graphscore::ConnectorId output =
+      project.find_node(source)->outputs().back().id();
+  const graphscore::ConnectorId input =
+      project.find_node(destination)->inputs().back().id();
+  execute(std::make_unique<graphscore::SetOutputConnectorNameCommand>(
+      source, output, "Renamed output"));
+  execute(std::make_unique<graphscore::SetInputConnectorNameCommand>(
+      destination, input, "Renamed input"));
+  execute(std::make_unique<graphscore::BindOutputEventCommand>(source, output,
+                                                               event));
+  execute(std::make_unique<graphscore::SetListenerPolicyCommand>(
+      source, event, graphscore::QueuePolicy::kFifo, 7U));
+  execute(std::make_unique<graphscore::SetOutputPriorityCommand>(source, output,
+                                                                 12));
+  execute(std::make_unique<graphscore::SetOutputWeightCommand>(
+      source, output, *graphscore::Rational::create(1, 3)));
+  execute(std::make_unique<graphscore::ConnectCommand>(source, output,
+                                                       destination, input));
+  const std::vector<graphscore::RoutePoint> route = {
+      {130.0, -20.0}, {300.0, -20.0}, {300.0, 40.0}};
+  execute(std::make_unique<graphscore::SetCustomRouteCommand>(source, output,
+                                                              route));
+  execute(std::make_unique<graphscore::SetStartNodeCommand>(source));
+
+  const graphscore::ProjectGraphSaveModel edited =
+      graphscore::Persistence{}.capture_graph(project);
+  const std::size_t command_count = history.undo_stack_size();
+  for (std::size_t index = 0; index < command_count; ++index)
+    ASSERT_TRUE(history.undo(project).ok());
+  EXPECT_EQ(project.find_node(source)->name(), "Source");
+  EXPECT_TRUE(project.find_node(source)->outputs().empty());
+  EXPECT_TRUE(project.find_node(destination)->inputs().empty());
+  EXPECT_FALSE(project.start_node().has_value());
+
+  for (std::size_t index = 0; index < command_count; ++index)
+    ASSERT_TRUE(history.redo(project).ok());
+  EXPECT_EQ(graphscore::Persistence{}.capture_graph(project), edited);
+
+  graphscore::Project reopened = project;
+  ASSERT_TRUE(reopened.remove_node(source).ok());
+  ASSERT_TRUE(reopened.remove_node(destination).ok());
+  ASSERT_TRUE(graphscore::Persistence{}.restore_graph(edited, reopened).ok());
+  EXPECT_EQ(graphscore::Persistence{}.capture_graph(reopened), edited);
+}
+
+TEST(PersistenceTest, RejectsMalformedGraphAtomically) {
+  const graphscore::ProjectId   project_id = graphscore::ProjectId::generate();
+  graphscore::Project           project{project_id, "Graph"};
+  const graphscore::NodeId      source      = project.add_node("Source");
+  const graphscore::NodeId      destination = project.add_node("Destination");
+  const graphscore::ConnectorId output =
+      project.find_node(source)->add_output("Output");
+  const graphscore::ConnectorId input =
+      project.find_node(destination)->add_input("Input");
+  ASSERT_TRUE(graphscore::Graph(project)
+                  .connect(source, output, destination, input)
+                  .ok());
+  const graphscore::ProjectGraphSaveModel before =
+      graphscore::Persistence{}.capture_graph(project);
+  graphscore::ProjectGraphSaveModel malformed = before;
+  malformed.nodes.pop_back();
+
+  const graphscore::Result result =
+      graphscore::Persistence{}.restore_graph(malformed, project);
+
+  EXPECT_EQ(result.code(), graphscore::ResultCode::kCorruptedData);
+  EXPECT_EQ(graphscore::Persistence{}.capture_graph(project), before);
 }
 
 }  // namespace
