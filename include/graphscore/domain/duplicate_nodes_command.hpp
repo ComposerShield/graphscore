@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -76,15 +77,25 @@ class DuplicateNodesCommand : public Command {
   explicit DuplicateNodesCommand(NodeSet selection, GraphPosition offset = {})
       : selection_(std::move(selection)), offset_(offset) {}
 
+  // Clipboard form: duplicates immutable node snapshots rather than resolving
+  // live source ids. This lets paste remain valid after the copied nodes are
+  // edited or deleted. Snapshots must be non-empty and have distinct NodeIds.
+  explicit DuplicateNodesCommand(std::vector<Node> snapshots,
+                                 GraphPosition     offset = {})
+      : snapshots_(std::move(snapshots)), offset_(offset) {}
+
   Result execute(Project& project) noexcept override;
   Result undo(Project& project) noexcept override;
   Result redo(Project& project) noexcept override;
 
+  [[nodiscard]] std::vector<NodeId> created_node_ids() const;
+
  private:
-  NodeSet           selection_;
-  GraphPosition     offset_;
-  std::vector<Node> created_;
-  State             state_ = State::kFresh;
+  std::optional<NodeSet> selection_;
+  std::vector<Node>      snapshots_;
+  GraphPosition          offset_;
+  std::vector<Node>      created_;
+  State                  state_ = State::kFresh;
 };
 
 }  // namespace graphscore

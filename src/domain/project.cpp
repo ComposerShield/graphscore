@@ -281,6 +281,15 @@ Result Project::restore_node(Node node) {
   return Result();
 }
 
+Result Project::restore_node_at(Node node, std::size_t index) {
+  if (find_node(node.id()) != nullptr || index > nodes_.size())
+    return Result(ResultCode::kInvalidArgument);
+
+  nodes_.insert(nodes_.begin() + static_cast<std::ptrdiff_t>(index),
+                std::move(node));
+  return Result();
+}
+
 Node* Project::find_node(NodeId node_id) {
   const auto it = std::find_if(
       nodes_.begin(), nodes_.end(),

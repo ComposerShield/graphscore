@@ -6,6 +6,7 @@
 #include <graphscore/domain/connector.hpp>
 #include <graphscore/domain/event_listener.hpp>
 #include <graphscore/domain/graph_position.hpp>
+#include <graphscore/domain/node.hpp>
 #include <graphscore/domain/selection.hpp>
 #include <graphscore/domain/validation_service.hpp>
 #include <graphscore/notation/notation_layout.hpp>
@@ -826,6 +827,65 @@ class CanvasNodeDragController {
   GraphPosition                        position_start_;
   std::vector<CanvasConnectorGeometry> connectors_start_;
   bool                                 active_ = false;
+};
+
+// Owns homogeneous node selection and the organization operations which act
+// on it. Selection order follows project order, so every group command and
+// connector remap is deterministic. Structural edits relayout the retained
+// scene transactionally; a failed publication rolls the domain command back.
+class CanvasNodeOperationsController {
+ public:
+  CanvasNodeOperationsController(Project& project, CommandHistory& history,
+                                 CanvasNotationScene&  scene,
+                                 const GlyphMetrics&   metrics,
+                                 NotationLayoutOptions options = {}) noexcept;
+  ~CanvasNodeOperationsController();
+
+  CanvasNodeOperationsController(const CanvasNodeOperationsController&) =
+      delete;
+  CanvasNodeOperationsController& operator=(
+      const CanvasNodeOperationsController&)                       = delete;
+  CanvasNodeOperationsController(CanvasNodeOperationsController&&) = delete;
+  CanvasNodeOperationsController& operator=(CanvasNodeOperationsController&&) =
+      delete;
+
+  [[nodiscard]] bool select(NodeId node_id, bool additive = false);
+  void               clear_selection() noexcept;
+  [[nodiscard]] const std::vector<NodeId>& selection() const noexcept;
+
+  [[nodiscard]] bool begin_move(NodeId anchor, GraphPosition pointer) noexcept;
+  [[nodiscard]] bool update_move(GraphPosition pointer) noexcept;
+  [[nodiscard]] Result finish_move() noexcept;
+  void                 cancel_move() noexcept;
+
+  [[nodiscard]] bool move_active() const noexcept { return move_active_; }
+
+  [[nodiscard]] Result duplicate_selected(GraphPosition offset = {
+                                              40.0, 40.0}) noexcept;
+  [[nodiscard]] Result copy_selected() noexcept;
+  [[nodiscard]] Result paste(GraphPosition offset = {40.0, 40.0}) noexcept;
+  [[nodiscard]] Result delete_selected() noexcept;
+
+  [[nodiscard]] bool has_clipboard() const noexcept {
+    return !clipboard_.empty();
+  }
+
+ private:
+  [[nodiscard]] bool   selection_is_current() const noexcept;
+  [[nodiscard]] Result duplicate_nodes(std::vector<Node> snapshots,
+                                       GraphPosition     offset) noexcept;
+
+  Project&                             project_;
+  CommandHistory&                      history_;
+  CanvasNotationScene&                 scene_;
+  const GlyphMetrics&                  metrics_;
+  NotationLayoutOptions                options_;
+  std::vector<NodeId>                  selection_;
+  std::vector<Node>                    clipboard_;
+  std::vector<GraphPosition>           move_starts_;
+  std::vector<CanvasConnectorGeometry> connectors_start_;
+  GraphPosition                        pointer_start_;
+  bool                                 move_active_ = false;
 };
 
 // Stages one orthogonal connector-segment drag. The retained scene is updated

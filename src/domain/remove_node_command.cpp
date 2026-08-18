@@ -2,6 +2,8 @@
 
 #include <graphscore/domain/remove_node_command.hpp>
 
+#include <algorithm>
+#include <iterator>
 #include <new>
 #include <optional>
 #include <stdexcept>
@@ -57,6 +59,12 @@ Result RemoveNodeCommand::execute(Project& project) noexcept {
   const Node* node = project.find_node(node_id_);
   if (node == nullptr)
     return Result(ResultCode::kInvalidArgument);
+  const auto node_iterator =
+      std::ranges::find(project.nodes(), node_id_, &Node::id);
+  if (node_iterator == project.nodes().end())
+    return Result(ResultCode::kInternalError);
+  const std::size_t removed_index = static_cast<std::size_t>(
+      std::distance(project.nodes().begin(), node_iterator));
 
   std::optional<Node>             snapshot;
   std::vector<ClearedInboundEdge> cleared;
@@ -94,6 +102,7 @@ Result RemoveNodeCommand::execute(Project& project) noexcept {
     return result;
 
   removed_node_    = std::move(snapshot);
+  removed_index_   = removed_index;
   was_start_       = was_start;
   cleared_inbound_ = std::move(cleared);
   state_           = State::kDone;
@@ -119,7 +128,8 @@ Result RemoveNodeCommand::undo(Project& project) noexcept {
 
   Result restore_result;
   try {
-    restore_result = project.restore_node(std::move(*prepared_node));
+    restore_result =
+        project.restore_node_at(std::move(*prepared_node), removed_index_);
   } catch (const std::bad_alloc&) {
     return Result(ResultCode::kOutOfMemory);
   } catch (const std::length_error&) {

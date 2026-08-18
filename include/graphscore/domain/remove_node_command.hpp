@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <optional>
 #include <vector>
 
@@ -34,13 +35,13 @@ namespace graphscore {
 // connector id, the destination input connector id, and its prior
 // RouteGeometry.
 //
-// Undo restores the node via Project::restore_node -- a pure value
-// reinsertion that does not re-align lanes, relying on CommandHistory's
-// linear-undo guarantee that the active-track set is unchanged between
-// this command's execute and its undo -- restores the start node if it
-// was one, then reconnects every snapshotted cross-node output via
-// Graph::connect and restores each output's exact prior route. Redo
-// re-runs Project::remove_node.
+// Undo restores the node at its original project-order index via
+// Project::restore_node_at -- a pure value reinsertion that does not re-align
+// lanes, relying on CommandHistory's linear-undo guarantee that the active-
+// track set is unchanged between this command's execute and its undo --
+// restores the start node if it was one, then reconnects every snapshotted
+// cross-node output via Graph::connect and restores each output's exact prior
+// route. Redo re-runs Project::remove_node.
 class RemoveNodeCommand : public Command {
  public:
   explicit RemoveNodeCommand(NodeId node_id) : node_id_(node_id) {}
@@ -59,7 +60,8 @@ class RemoveNodeCommand : public Command {
 
   NodeId                          node_id_;
   std::optional<Node>             removed_node_;
-  bool                            was_start_ = false;
+  std::size_t                     removed_index_ = 0;
+  bool                            was_start_     = false;
   std::vector<ClearedInboundEdge> cleared_inbound_;
   State                           state_ = State::kFresh;
 };

@@ -3,10 +3,13 @@
 #include <graphscore/accessibility/graphscore_accessibility.hpp>
 #include <graphscore/canvas/graphscore_canvas.hpp>
 #include <graphscore/domain/bind_output_event_command.hpp>
+#include <graphscore/domain/command_transaction.hpp>
 #include <graphscore/domain/connect_command.hpp>
 #include <graphscore/domain/disconnect_command.hpp>
+#include <graphscore/domain/duplicate_nodes_command.hpp>
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/project.hpp>
+#include <graphscore/domain/remove_node_command.hpp>
 #include <graphscore/domain/reset_route_command.hpp>
 #include <graphscore/domain/set_custom_route_command.hpp>
 #include <graphscore/domain/set_listener_policy_command.hpp>
@@ -1756,6 +1759,316 @@ bool CanvasNodeDragController::set_preview_position(
     return false;
   }
   return true;
+}
+
+CanvasNodeOperationsController::CanvasNodeOperationsController(
+    Project& project, CommandHistory& history, CanvasNotationScene& scene,
+    const GlyphMetrics& metrics, NotationLayoutOptions options) noexcept
+    : project_(project),
+      history_(history),
+      scene_(scene),
+      metrics_(metrics),
+      options_(options) {}
+
+CanvasNodeOperationsController::~CanvasNodeOperationsController() {
+  cancel_move();
+}
+
+bool CanvasNodeOperationsController::select(NodeId node_id, bool additive) {
+  if (move_active_ || project_.find_node(node_id) == nullptr ||
+      find_scene_node(scene_, node_id) == nullptr) {
+    return false;
+  }
+  try {
+    std::vector<NodeId> next = additive ? selection_ : std::vector<NodeId>{};
+    const auto          existing = std::ranges::find(next, node_id);
+    if (additive && existing != next.end()) {
+      next.erase(existing);
+    } else if (existing == next.end()) {
+      next.push_back(node_id);
+    }
+    std::vector<NodeId> ordered;
+    ordered.reserve(next.size());
+    for (const Node& node : project_.nodes()) {
+      if (std::ranges::find(next, node.id()) != next.end())
+        ordered.push_back(node.id());
+    }
+    selection_ = std::move(ordered);
+  } catch (...) {
+    return false;
+  }
+  return true;
+}
+
+void CanvasNodeOperationsController::clear_selection() noexcept {
+  if (!move_active_)
+    selection_.clear();
+}
+
+const std::vector<NodeId>& CanvasNodeOperationsController::selection()
+    const noexcept {
+  return selection_;
+}
+
+bool CanvasNodeOperationsController::selection_is_current() const noexcept {
+  if (selection_.empty() || scene_.nodes.size() != project_.nodes().size())
+    return false;
+  if (!scene_nodes_match_project(scene_, project_) ||
+      !scene_connectors_match_project(scene_, project_)) {
+    return false;
+  }
+  for (const NodeId id : selection_) {
+    const Node* const               node     = project_.find_node(id);
+    const CanvasNodeNotation* const retained = find_scene_node(scene_, id);
+    if (node == nullptr || retained == nullptr ||
+        node->position() != retained->position) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool CanvasNodeOperationsController::begin_move(
+    NodeId anchor, GraphPosition pointer) noexcept {
+  if (move_active_ || !is_finite(pointer) ||
+      std::ranges::find(selection_, anchor) == selection_.end() ||
+      !selection_is_current()) {
+    return false;
+  }
+  try {
+    move_starts_.clear();
+    move_starts_.reserve(selection_.size());
+    for (const NodeId id : selection_)
+      move_starts_.push_back(find_scene_node(scene_, id)->position);
+    connectors_start_ = scene_.connectors;
+  } catch (...) {
+    move_starts_.clear();
+    connectors_start_.clear();
+    return false;
+  }
+  pointer_start_ = pointer;
+  move_active_   = true;
+  return true;
+}
+
+bool CanvasNodeOperationsController::update_move(
+    GraphPosition pointer) noexcept {
+  if (!move_active_ || !is_finite(pointer))
+    return false;
+  const GraphPosition delta{pointer.x - pointer_start_.x,
+                            pointer.y - pointer_start_.y};
+  if (!is_finite(delta))
+    return false;
+
+  std::vector<GraphPosition> positions;
+  try {
+    positions.reserve(selection_.size());
+    for (const GraphPosition start : move_starts_) {
+      const GraphPosition position{start.x + delta.x, start.y + delta.y};
+      if (!is_finite(position) || (delta.x != 0.0 && position.x == start.x) ||
+          (delta.y != 0.0 && position.y == start.y)) {
+        return false;
+      }
+      positions.push_back(position);
+    }
+  } catch (...) {
+    return false;
+  }
+  for (std::size_t index = 0; index < selection_.size(); ++index) {
+    CanvasNodeNotation* const node = find_scene_node(scene_, selection_[index]);
+    if (node == nullptr) {
+      cancel_move();
+      return false;
+    }
+    node->position               = positions[index];
+    node->geometry.bounds.origin = positions[index];
+  }
+  if (!refresh_connector_routes(scene_, project_)) {
+    cancel_move();
+    return false;
+  }
+  return true;
+}
+
+Result CanvasNodeOperationsController::finish_move() noexcept {
+  if (!move_active_)
+    return Result(ResultCode::kInvalidArgument);
+  std::unique_ptr<CommandTransaction> transaction;
+  try {
+    transaction = std::make_unique<CommandTransaction>();
+    for (std::size_t index = 0; index < selection_.size(); ++index) {
+      const CanvasNodeNotation* const node =
+          find_scene_node(scene_, selection_[index]);
+      const Node* const project_node = project_.find_node(selection_[index]);
+      if (node == nullptr || project_node == nullptr ||
+          project_node->position() != move_starts_[index]) {
+        cancel_move();
+        return Result(ResultCode::kInvalidArgument);
+      }
+      if (node->position != move_starts_[index]) {
+        const Result add =
+            transaction->add_command(std::make_unique<SetNodePositionCommand>(
+                selection_[index], node->position));
+        if (!add.ok()) {
+          cancel_move();
+          return add;
+        }
+      }
+    }
+  } catch (...) {
+    cancel_move();
+    return Result(ResultCode::kOutOfMemory);
+  }
+  if (transaction->child_count() == 0U) {
+    connectors_start_.clear();
+    move_starts_.clear();
+    move_active_ = false;
+    return Result();
+  }
+  const Result result = history_.execute_new(std::move(transaction), project_);
+  if (!result.ok()) {
+    cancel_move();
+    return result;
+  }
+  connectors_start_.clear();
+  move_starts_.clear();
+  move_active_ = false;
+  return Result();
+}
+
+void CanvasNodeOperationsController::cancel_move() noexcept {
+  if (!move_active_)
+    return;
+  for (std::size_t index = 0; index < selection_.size(); ++index) {
+    CanvasNodeNotation* const node = find_scene_node(scene_, selection_[index]);
+    if (node != nullptr) {
+      node->position               = move_starts_[index];
+      node->geometry.bounds.origin = move_starts_[index];
+    }
+  }
+  scene_.connectors = std::move(connectors_start_);
+  move_starts_.clear();
+  move_active_ = false;
+}
+
+Result CanvasNodeOperationsController::copy_selected() noexcept {
+  if (move_active_ || !selection_is_current())
+    return Result(ResultCode::kInvalidArgument);
+  try {
+    std::vector<Node> copied;
+    copied.reserve(selection_.size());
+    for (const NodeId id : selection_)
+      copied.push_back(*project_.find_node(id));
+    clipboard_ = std::move(copied);
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  return Result();
+}
+
+Result CanvasNodeOperationsController::duplicate_nodes(
+    std::vector<Node> snapshots, GraphPosition offset) noexcept {
+  if (move_active_ || snapshots.empty() || !is_finite(offset))
+    return Result(ResultCode::kInvalidArgument);
+  std::unique_ptr<DuplicateNodesCommand> command;
+  try {
+    command =
+        std::make_unique<DuplicateNodesCommand>(std::move(snapshots), offset);
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  DuplicateNodesCommand* const command_ptr = command.get();
+  CommandHistory::Transaction  transaction =
+      history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active())
+    return Result(history_.poisoned() ? ResultCode::kCommandFaulted
+                                      : ResultCode::kInvalidArgument);
+
+  CanvasNotationScene next;
+  std::vector<NodeId> created;
+  try {
+    next    = Canvas{}.layout_nodes(project_, metrics_, options_);
+    created = command_ptr->created_node_ids();
+    if (!scene_nodes_match_project(next, project_) ||
+        !scene_connectors_match_project(next, project_)) {
+      const Result abort = transaction.abort();
+      return abort.ok() ? Result(ResultCode::kInvalidArgument) : abort;
+    }
+  } catch (...) {
+    const Result abort = transaction.abort();
+    return abort.ok() ? Result(ResultCode::kOutOfMemory) : abort;
+  }
+  const Result commit = transaction.commit();
+  if (!commit.ok())
+    return commit;
+  scene_     = std::move(next);
+  selection_ = std::move(created);
+  return Result();
+}
+
+Result CanvasNodeOperationsController::duplicate_selected(
+    GraphPosition offset) noexcept {
+  if (!selection_is_current())
+    return Result(ResultCode::kInvalidArgument);
+  std::vector<Node> snapshots;
+  try {
+    snapshots.reserve(selection_.size());
+    for (const NodeId id : selection_)
+      snapshots.push_back(*project_.find_node(id));
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  return duplicate_nodes(std::move(snapshots), offset);
+}
+
+Result CanvasNodeOperationsController::paste(GraphPosition offset) noexcept {
+  std::vector<Node> snapshots;
+  try {
+    snapshots = clipboard_;
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  return duplicate_nodes(std::move(snapshots), offset);
+}
+
+Result CanvasNodeOperationsController::delete_selected() noexcept {
+  if (move_active_ || !selection_is_current())
+    return Result(ResultCode::kInvalidArgument);
+  std::unique_ptr<CommandTransaction> command;
+  try {
+    command = std::make_unique<CommandTransaction>();
+    for (const NodeId id : selection_) {
+      const Result add =
+          command->add_command(std::make_unique<RemoveNodeCommand>(id));
+      if (!add.ok())
+        return add;
+    }
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  CommandHistory::Transaction transaction =
+      history_.begin_transaction(std::move(command), project_);
+  if (!transaction.active())
+    return Result(history_.poisoned() ? ResultCode::kCommandFaulted
+                                      : ResultCode::kInvalidArgument);
+  CanvasNotationScene next;
+  try {
+    next = Canvas{}.layout_nodes(project_, metrics_, options_);
+    if (!scene_nodes_match_project(next, project_) ||
+        !scene_connectors_match_project(next, project_)) {
+      const Result abort = transaction.abort();
+      return abort.ok() ? Result(ResultCode::kInvalidArgument) : abort;
+    }
+  } catch (...) {
+    const Result abort = transaction.abort();
+    return abort.ok() ? Result(ResultCode::kOutOfMemory) : abort;
+  }
+  const Result commit = transaction.commit();
+  if (!commit.ok())
+    return commit;
+  scene_ = std::move(next);
+  selection_.clear();
+  return Result();
 }
 
 CanvasConnectorSegmentDragController::CanvasConnectorSegmentDragController(

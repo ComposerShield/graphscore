@@ -151,6 +151,10 @@ class Project {
   // than surfacing it.
   [[nodiscard]] Result restore_node(Node node);
 
+  // Command-only ordered reinsertion. `index` may equal nodes().size() to
+  // append; larger indexes and duplicate ids are rejected atomically.
+  [[nodiscard]] Result restore_node_at(Node node, std::size_t index);
+
   [[nodiscard]] const std::vector<Node>& nodes() const noexcept {
     return nodes_;
   }

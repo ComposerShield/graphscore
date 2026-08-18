@@ -2,9 +2,11 @@
 
 #include <graphscore/domain/duplicate_nodes_command.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <new>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -151,6 +153,11 @@ std::optional<Node> build_duplicate_node(const Project& project,
   GraphPosition position = source.position();
   position.x += offset.x;
   position.y += offset.y;
+  if (!std::isfinite(position.x) || !std::isfinite(position.y) ||
+      (offset.x != 0.0 && position.x == source.position().x) ||
+      (offset.y != 0.0 && position.y == source.position().y)) {
+    return std::nullopt;
+  }
   dup.set_position(position);
 
   for (const InputConnector& input : source.inputs())
@@ -199,6 +206,25 @@ std::optional<Node> build_duplicate_node(const Project& project,
   if (source.has_timeline())
     dup.set_timeline(*source.timeline());
 
+  // Clipboard snapshots can predate a newly added active track. Align the
+  // duplicate with current project structure while preserving every lane the
+  // snapshot did contain.
+  for (const Track& track : project.active_tracks()) {
+    dup.ensure_lane(track.id());
+    TrackLane* const lane = dup.lane(track.id());
+    if (lane == nullptr)
+      return std::nullopt;
+    for (const StaveDefinition& stave : track.layout().staves()) {
+      lane->ensure_stave(stave.id);
+      NodeTimeline* const timeline = dup.timeline();
+      if (timeline != nullptr && !timeline->has_clef_lane(stave.id) &&
+          !timeline->create_clef_lane(stave.id, ClefLane(stave.default_clef))
+               .ok()) {
+        return std::nullopt;
+      }
+    }
+  }
+
   return dup;
 }
 
@@ -210,12 +236,12 @@ std::optional<Node> build_duplicate_node(const Project& project,
 // output with a fresh, automatic RouteGeometry, and never copies the
 // source's (N8).
 void wire_duplicate_edges(
-    const Project& project, const std::vector<NodeId>& order,
+    std::span<const Node* const> sources, const std::vector<NodeId>& order,
     const std::unordered_map<NodeId, NodeId>&          node_id_map,
     const std::unordered_map<NodeId, ConnectorIdMaps>& connector_maps,
     std::vector<Node>&                                 duplicates) {
   for (std::size_t i = 0; i < order.size(); ++i) {
-    const Node* source = project.find_node(order[i]);
+    const Node* source = sources[i];
     if (source == nullptr)
       continue;
     const auto maps_it = connector_maps.find(order[i]);
@@ -259,13 +285,16 @@ void wire_duplicate_edges(
 // std::nullopt on any failure -- including the defensive (practically
 // unreachable) check that no freshly minted NodeId already exists in the
 // project -- with nothing yet published to `project`.
-std::optional<std::vector<Node>> build_duplicates(const Project& project,
-                                                  const NodeSet& selection,
-                                                  GraphPosition  offset) {
+std::optional<std::vector<Node>> build_duplicates(
+    const Project& project, std::span<const Node* const> sources,
+    GraphPosition offset) {
   std::vector<NodeId> order;
-  order.reserve(selection.items().size());
-  for (const NodeItem& item : selection.items())
-    order.push_back(item.node);
+  order.reserve(sources.size());
+  for (const Node* source : sources) {
+    if (source == nullptr)
+      return std::nullopt;
+    order.push_back(source->id());
+  }
 
   std::unordered_map<NodeId, NodeId> node_id_map;
   node_id_map.reserve(order.size());
@@ -277,10 +306,9 @@ std::optional<std::vector<Node>> build_duplicates(const Project& project,
   std::unordered_map<NodeId, ConnectorIdMaps> connector_maps;
   connector_maps.reserve(order.size());
 
-  for (const NodeId source_id : order) {
-    const Node* source = project.find_node(source_id);
-    if (source == nullptr)
-      return std::nullopt;
+  for (std::size_t index = 0; index < order.size(); ++index) {
+    const NodeId source_id = order[index];
+    const Node*  source    = sources[index];
 
     ConnectorIdMaps     maps;
     std::optional<Node> dup = build_duplicate_node(
@@ -292,7 +320,7 @@ std::optional<std::vector<Node>> build_duplicates(const Project& project,
     duplicates.push_back(std::move(*dup));
   }
 
-  wire_duplicate_edges(project, order, node_id_map, connector_maps, duplicates);
+  wire_duplicate_edges(sources, order, node_id_map, connector_maps, duplicates);
 
   for (const Node& dup : duplicates) {
     if (project.find_node(dup.id()) != nullptr)
@@ -451,9 +479,26 @@ Result DuplicateNodesCommand::execute(Project& project) noexcept {
   if (state_ != State::kFresh)
     return Result(ResultCode::kInvalidArgument);
 
-  bool selection_ok = false;
+  std::vector<const Node*> sources;
   try {
-    selection_ok = validate_selection(project, Selection(selection_)).empty();
+    if (selection_.has_value()) {
+      if (!validate_selection(project, Selection(*selection_)).empty())
+        return Result(ResultCode::kInvalidArgument);
+      sources.reserve(selection_->items().size());
+      for (const NodeItem& item : selection_->items())
+        sources.push_back(project.find_node(item.node));
+    } else {
+      if (snapshots_.empty())
+        return Result(ResultCode::kInvalidArgument);
+      sources.reserve(snapshots_.size());
+      std::unordered_map<NodeId, bool> ids;
+      ids.reserve(snapshots_.size());
+      for (const Node& snapshot : snapshots_) {
+        if (!ids.emplace(snapshot.id(), true).second)
+          return Result(ResultCode::kInvalidArgument);
+        sources.push_back(&snapshot);
+      }
+    }
   } catch (const std::bad_alloc&) {
     return Result(ResultCode::kOutOfMemory);
   } catch (const std::length_error&) {
@@ -461,13 +506,10 @@ Result DuplicateNodesCommand::execute(Project& project) noexcept {
   } catch (...) {
     return Result(ResultCode::kInternalError);
   }
-  if (!selection_ok)
-    return Result(ResultCode::kInvalidArgument);
-
   std::optional<std::vector<Node>> built;
   std::vector<Node>                snapshot;
   try {
-    built = build_duplicates(project, selection_, offset_);
+    built = build_duplicates(project, sources, offset_);
     if (built.has_value())
       snapshot = *built;
   } catch (const std::bad_alloc&) {
@@ -549,6 +591,14 @@ Result DuplicateNodesCommand::redo(Project& project) noexcept {
   static_assert(std::is_nothrow_assignable_v<decltype(state_)&, State>);
   state_ = State::kDone;
   return Result();
+}
+
+std::vector<NodeId> DuplicateNodesCommand::created_node_ids() const {
+  std::vector<NodeId> ids;
+  ids.reserve(created_.size());
+  for (const Node& node : created_)
+    ids.push_back(node.id());
+  return ids;
 }
 
 }  // namespace graphscore
