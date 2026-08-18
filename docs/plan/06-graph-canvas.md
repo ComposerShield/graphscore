@@ -44,7 +44,7 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 - [x] M6-phase-22 Render all 90-degree turns with consistent rounded corners.
 - [x] M6-phase-23 Hovering a segment presents a bidirectional cursor perpendicular to its movement axis.
 - [x] M6-phase-24 Dragging any segment inserts/moves/removes bends as needed while preserving orthogonality and minimum endpoint clearance.
-- [ ] M6-phase-25 Preserve valid customized interior segments when either endpoint node moves; repair only endpoint legs and invalid collisions.
+- [x] M6-phase-25 Preserve valid customized interior segments when either endpoint node moves; repair only endpoint legs and invalid collisions.
 - [ ] M6-phase-26 Primary+Shift+R returns a selected connector to automatic routing.
 - [ ] M6-phase-27 Delete removes a selected connector through the undoable command path.
 - [ ] M6-phase-28 Keep route geometry writer-only and out of cooked exports.

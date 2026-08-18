@@ -5,8 +5,12 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <limits>
 #include <memory>
+#include <vector>
 
 namespace {
 
@@ -23,6 +27,19 @@ class DragMetrics final : public graphscore::GlyphMetrics {
   }
 };
 
+[[nodiscard]] bool segment_crosses_interior(
+    graphscore::GraphPosition first, graphscore::GraphPosition second,
+    const graphscore::WorldBounds& bounds) {
+  const double right  = bounds.origin.x + bounds.width;
+  const double bottom = bounds.origin.y + bounds.height;
+  return (first.x == second.x && first.x > bounds.origin.x && first.x < right &&
+          std::min(first.y, second.y) < bottom &&
+          std::max(first.y, second.y) > bounds.origin.y) ||
+         (first.y == second.y && first.y > bounds.origin.y &&
+          first.y < bottom && std::min(first.x, second.x) < right &&
+          std::max(first.x, second.x) > bounds.origin.x);
+}
+
 struct DragFixture {
   graphscore::Project project{graphscore::ProjectId::generate(), "Drag"};
   graphscore::NodeId  source_id           = project.add_node("Source");
@@ -30,6 +47,10 @@ struct DragFixture {
   graphscore::NodeId  unrelated_source_id = project.add_node("Other source");
   graphscore::NodeId  unrelated_destination_id =
       project.add_node("Other destination");
+  graphscore::ConnectorId output =
+      project.find_node(source_id)->add_output("Out");
+  graphscore::ConnectorId input =
+      project.find_node(destination_id)->add_input("In");
   graphscore::CommandHistory history;
   DragMetrics                metrics;
 
@@ -45,8 +66,6 @@ struct DragFixture {
     unrelated_source->set_position({0.0, 500.0});
     unrelated_destination->set_position({500.0, 500.0});
 
-    const graphscore::ConnectorId output = source->add_output("Out");
-    const graphscore::ConnectorId input  = destination->add_input("In");
     EXPECT_TRUE(graphscore::Graph(project)
                     .connect(source_id, output, destination_id, input)
                     .ok());
@@ -108,6 +127,113 @@ TEST(CanvasNodeDragTest, DestinationDragUpdatesOnlyItsAttachedLeg) {
             (graphscore::GraphPosition{550.0, 237.0}));
   EXPECT_EQ(scene.connectors[0].destination_leg.outer,
             (graphscore::GraphPosition{526.0, 237.0}));
+}
+
+TEST(CanvasNodeDragTest, EndpointMovesPreserveValidCustomizedInteriorSegments) {
+  DragFixture          fixture;
+  constexpr std::array custom_points{
+      graphscore::RoutePoint{400.0, 112.0},
+      graphscore::RoutePoint{400.0, 350.0},
+      graphscore::RoutePoint{450.0, 350.0},
+      graphscore::RoutePoint{450.0, 212.0},
+  };
+  ASSERT_TRUE(fixture.project.find_node(fixture.source_id)
+                  ->find_output(fixture.output)
+                  ->route()
+                  .set_custom_route(std::vector<graphscore::RoutePoint>(
+                      custom_points.begin(), custom_points.end()))
+                  .ok());
+  graphscore::CanvasNotationScene scene =
+      graphscore::Canvas{}.layout_nodes(fixture.project, fixture.metrics);
+  graphscore::CanvasNodeDragController drag(fixture.project, fixture.history,
+                                            scene);
+
+  ASSERT_TRUE(drag.begin(fixture.source_id, {0.0, 0.0}));
+  ASSERT_TRUE(drag.update({0.0, 50.0}));
+  const std::array expected_source_move{
+      graphscore::GraphPosition{400.0, 112.0},
+      graphscore::GraphPosition{400.0, 350.0},
+      graphscore::GraphPosition{450.0, 350.0},
+      graphscore::GraphPosition{450.0, 212.0},
+  };
+  EXPECT_FALSE(std::ranges::search(scene.connectors[0].route_points,
+                                   expected_source_move)
+                   .empty());
+  drag.cancel();
+
+  ASSERT_TRUE(drag.begin(fixture.destination_id, {500.0, 100.0}));
+  ASSERT_TRUE(drag.update({500.0, 150.0}));
+  EXPECT_FALSE(std::ranges::search(scene.connectors[0].route_points,
+                                   expected_source_move)
+                   .empty());
+}
+
+TEST(CanvasNodeDragTest, EndpointMoveRepairsOnlyCollidingCustomizedSegments) {
+  DragFixture fixture;
+  fixture.project.find_node(fixture.unrelated_source_id)
+      ->set_position({0.0, 2000.0});
+  fixture.project.find_node(fixture.unrelated_destination_id)
+      ->set_position({500.0, 2000.0});
+  constexpr std::array custom_points{
+      graphscore::RoutePoint{250.0, 250.0},
+      graphscore::RoutePoint{400.0, 250.0},
+      graphscore::RoutePoint{400.0, 1000.0},
+      graphscore::RoutePoint{700.0, 1000.0},
+      graphscore::RoutePoint{700.0, 212.0},
+  };
+  const std::vector stored_route(custom_points.begin(), custom_points.end());
+  ASSERT_TRUE(fixture.project.find_node(fixture.source_id)
+                  ->find_output(fixture.output)
+                  ->route()
+                  .set_custom_route(stored_route)
+                  .ok());
+  graphscore::CanvasNotationScene scene =
+      graphscore::Canvas{}.layout_nodes(fixture.project, fixture.metrics);
+  graphscore::CanvasNodeDragController drag(fixture.project, fixture.history,
+                                            scene);
+
+  ASSERT_TRUE(drag.begin(fixture.destination_id, {500.0, 100.0}));
+  ASSERT_TRUE(drag.update({300.0, 300.0}));
+
+  constexpr std::array preserved_source_segment{
+      graphscore::GraphPosition{250.0, 250.0},
+      graphscore::GraphPosition{400.0, 250.0},
+  };
+  constexpr std::array preserved_destination_segment{
+      graphscore::GraphPosition{400.0, 1000.0},
+      graphscore::GraphPosition{700.0, 1000.0},
+      graphscore::GraphPosition{700.0, 212.0},
+  };
+  EXPECT_FALSE(std::ranges::search(scene.connectors[0].route_points,
+                                   preserved_source_segment)
+                   .empty());
+  EXPECT_FALSE(std::ranges::search(scene.connectors[0].route_points,
+                                   preserved_destination_segment)
+                   .empty());
+  EXPECT_EQ(fixture.project.find_node(fixture.source_id)
+                ->find_output(fixture.output)
+                ->route()
+                .waypoints(),
+            stored_route);
+  const graphscore::WorldBounds moved_bounds = scene.nodes[1].geometry.bounds;
+  const double clearance = graphscore::CanvasConnectorGeometry::kCornerRadius;
+  const graphscore::WorldBounds expanded_bounds{
+      {moved_bounds.origin.x - clearance, moved_bounds.origin.y - clearance},
+      moved_bounds.width + clearance * 2.0,
+      moved_bounds.height + clearance * 2.0,
+  };
+  for (std::size_t index = 2U;
+       index + 1U < scene.connectors[0].route_points.size(); ++index) {
+    const graphscore::GraphPosition first =
+        scene.connectors[0].route_points[index - 1U];
+    const graphscore::GraphPosition second =
+        scene.connectors[0].route_points[index];
+    EXPECT_TRUE(std::isfinite(first.x));
+    EXPECT_TRUE(std::isfinite(first.y));
+    EXPECT_NE(first, second);
+    EXPECT_TRUE(first.x == second.x || first.y == second.y);
+    EXPECT_FALSE(segment_crosses_interior(first, second, expanded_bounds));
+  }
 }
 
 TEST(CanvasNodeDragTest, FinishCommitsOneUndoablePositionChange) {

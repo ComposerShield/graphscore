@@ -501,6 +501,55 @@ struct RouteQueueGreater {
   return simplified;
 }
 
+[[nodiscard]] std::optional<std::vector<GraphPosition>> customized_route(
+    GraphPosition start, GraphPosition finish,
+    std::span<const RoutePoint>       waypoints,
+    const std::vector<RouteObstacle>& obstacles) {
+  const auto append_route = [](std::vector<GraphPosition>&    target,
+                               std::span<const GraphPosition> addition) {
+    for (const GraphPosition point : addition) {
+      if (target.empty() || target.back() != point) {
+        target.push_back(point);
+      }
+    }
+  };
+  const auto append_repair = [&](std::vector<GraphPosition>& target,
+                                 GraphPosition from, GraphPosition to) {
+    const auto repair = automatic_route(from, to, obstacles);
+    if (!repair.has_value()) {
+      return false;
+    }
+    append_route(target, *repair);
+    return true;
+  };
+
+  std::vector<GraphPosition> route;
+  route.reserve(waypoints.size() + 2U);
+  route.push_back(start);
+  GraphPosition anchor         = start;
+  bool          repair_pending = true;
+  for (const RoutePoint waypoint : waypoints) {
+    const GraphPosition point{waypoint.x, waypoint.y};
+    if (!point_clear(point, obstacles)) {
+      repair_pending = true;
+      continue;
+    }
+    if (repair_pending || !segment_clear(anchor, point, obstacles)) {
+      if (!append_repair(route, anchor, point)) {
+        return std::nullopt;
+      }
+    } else if (route.back() != point) {
+      route.push_back(point);
+    }
+    anchor         = point;
+    repair_pending = false;
+  }
+  if (!append_repair(route, anchor, finish)) {
+    return std::nullopt;
+  }
+  return route;
+}
+
 [[nodiscard]] std::optional<CanvasConnectorGeometry> connector_geometry(
     const CanvasNotationScene& scene, NodeId source_node,
     ConnectorId source_connector, const ConnectorDestination& destination,
@@ -543,41 +592,9 @@ struct RouteQueueGreater {
           destination_leg->outer};
     }
   } else {
-    // Customized waypoints are absolute writer-space points. Re-route only
-    // the two endpoint joins so moving a node does not discard interior work.
-    const auto append_route = [](std::vector<GraphPosition>&    target,
-                                 std::span<const GraphPosition> addition) {
-      for (const GraphPosition point : addition) {
-        if (target.empty() || target.back() != point) {
-          target.push_back(point);
-        }
-      }
-    };
-    const auto append_point = [](std::vector<GraphPosition>& target,
-                                 GraphPosition               point) {
-      if (target.empty() || target.back() != point) {
-        target.push_back(point);
-      }
-    };
     try {
-      std::vector<GraphPosition> custom;
-      const auto&                waypoints = route_geometry.waypoints();
-      const GraphPosition        first_waypoint{waypoints.front().x,
-                                         waypoints.front().y};
-      const GraphPosition last_waypoint{waypoints.back().x, waypoints.back().y};
-      const auto          prefix =
-          automatic_route(source_leg->outer, first_waypoint, *obstacles);
-      const auto suffix =
-          automatic_route(last_waypoint, destination_leg->outer, *obstacles);
-      if (prefix.has_value() && suffix.has_value()) {
-        custom.reserve(prefix->size() + waypoints.size() + suffix->size());
-        append_route(custom, *prefix);
-        for (const RoutePoint point : waypoints) {
-          append_point(custom, {point.x, point.y});
-        }
-        append_route(custom, *suffix);
-        route = std::move(custom);
-      }
+      route = customized_route(source_leg->outer, destination_leg->outer,
+                               route_geometry.waypoints(), *obstacles);
     } catch (...) {
       return std::nullopt;
     }
