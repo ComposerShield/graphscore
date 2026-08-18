@@ -14,6 +14,7 @@ add_executable(graphscore_canvas_test
   connector_inspector_test.cpp
   connector_route_test.cpp
   connector_segment_hover_test.cpp
+  connector_segment_drag_test.cpp
   node_drag_test.cpp
 )
 

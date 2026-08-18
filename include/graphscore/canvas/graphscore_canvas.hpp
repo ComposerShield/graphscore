@@ -524,6 +524,15 @@ canvas_connector_segment_hover(std::span<const GraphPosition> route_points,
                                GraphPosition                  pointer,
                                double hit_tolerance) noexcept;
 
+// Moves an orthogonal segment to the pointer's perpendicular coordinate. The
+// two endpoint clearance legs remain fixed; dragging a segment adjacent to one
+// of those legs inserts the bends needed to move the editable part of the
+// route. Collinear and zero-length interior bends are removed.
+[[nodiscard]] std::optional<std::vector<GraphPosition>>
+canvas_connector_drag_segment(std::span<const GraphPosition> route_points,
+                              std::size_t                    segment_index,
+                              GraphPosition                  pointer) noexcept;
+
 struct CanvasConnectorGeometry {
   static constexpr double kEndpointClearance = 24.0;
   static constexpr double kCornerRadius      = 12.0;
@@ -535,8 +544,8 @@ struct CanvasConnectorGeometry {
   CanvasConnectorEndpointLeg source_leg;
   CanvasConnectorEndpointLeg destination_leg;
   // Complete derived world-space polyline, including both attachment and
-  // outer points. Consecutive points are orthogonal and avoid every node
-  // interior not already covering a fixed endpoint clearance point.
+  // outer points. Automatic routes avoid node interiors; customized routes
+  // retain their interior points while endpoint joins are repaired as needed.
   std::vector<GraphPosition> route_points;
   // Derived from route_points for painting. The orthogonal polyline remains
   // authoritative for routing and hit testing.
@@ -640,6 +649,63 @@ class CanvasNodeDragController {
   GraphPosition                        position_start_;
   std::vector<CanvasConnectorGeometry> connectors_start_;
   bool                                 active_ = false;
+};
+
+// Stages one orthogonal connector-segment drag. The retained scene is updated
+// during the gesture while the Project remains unchanged; finish() records one
+// SetCustomRouteCommand and cancel() restores the exact starting geometry.
+class CanvasConnectorSegmentDragController {
+ public:
+  CanvasConnectorSegmentDragController(Project&             project,
+                                       CommandHistory&      history,
+                                       CanvasNotationScene& scene) noexcept;
+  ~CanvasConnectorSegmentDragController();
+
+  CanvasConnectorSegmentDragController(
+      const CanvasConnectorSegmentDragController&) = delete;
+  CanvasConnectorSegmentDragController& operator=(
+      const CanvasConnectorSegmentDragController&) = delete;
+  CanvasConnectorSegmentDragController(CanvasConnectorSegmentDragController&&) =
+      delete;
+  CanvasConnectorSegmentDragController& operator=(
+      CanvasConnectorSegmentDragController&&) = delete;
+
+  [[nodiscard]] bool   begin(NodeId source_node, ConnectorId source_output,
+                             std::size_t   segment_index,
+                             GraphPosition pointer) noexcept;
+  [[nodiscard]] bool   update(GraphPosition pointer) noexcept;
+  [[nodiscard]] Result finish() noexcept;
+  void                 cancel() noexcept;
+
+  [[nodiscard]] bool active() const noexcept { return active_; }
+
+ private:
+  [[nodiscard]] bool set_preview_route(
+      std::vector<GraphPosition> route_points) noexcept;
+
+  Project&                                project_;
+  CommandHistory&                         history_;
+  CanvasNotationScene&                    scene_;
+  NodeId                                  source_node_;
+  ConnectorId                             source_output_;
+  GraphPosition                           source_position_start_;
+  GraphPosition                           destination_position_start_;
+  std::size_t                             connector_index_ = 0;
+  std::size_t                             segment_index_   = 0;
+  std::vector<GraphPosition>              route_start_;
+  std::vector<CanvasConnectorPathElement> render_start_;
+  std::vector<RoutePoint>                 domain_waypoints_start_;
+  std::vector<CanvasConnectorGeometry>    connectors_start_;
+  std::vector<NodeId>                     node_ids_start_;
+  std::vector<GraphPosition>              node_positions_start_;
+  std::vector<WorldBounds>                node_bounds_start_;
+  std::vector<GraphPosition>              preview_route_;
+  std::vector<CanvasConnectorPathElement> preview_render_path_;
+  std::optional<ConnectorDestination>     destination_start_;
+  ConnectorType type_start_          = ConnectorType::kSequential;
+  bool          route_was_automatic_ = true;
+  bool          preview_changed_     = false;
+  bool          active_              = false;
 };
 
 // Owns one toolkit-neutral output-to-input attachment gesture. begin() accepts

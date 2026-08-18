@@ -6,6 +6,7 @@
 #include <graphscore/domain/connect_command.hpp>
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/project.hpp>
+#include <graphscore/domain/set_custom_route_command.hpp>
 #include <graphscore/domain/set_listener_policy_command.hpp>
 #include <graphscore/domain/set_node_position_command.hpp>
 #include <graphscore/domain/set_output_connector_name_command.hpp>
@@ -503,7 +504,7 @@ struct RouteQueueGreater {
 [[nodiscard]] std::optional<CanvasConnectorGeometry> connector_geometry(
     const CanvasNotationScene& scene, NodeId source_node,
     ConnectorId source_connector, const ConnectorDestination& destination,
-    ConnectorType type) {
+    ConnectorType type, const RouteGeometry& route_geometry) {
   const CanvasNodeNotation* const source = find_scene_node(scene, source_node);
   const CanvasNodeNotation* const target =
       find_scene_node(scene, destination.node);
@@ -521,8 +522,66 @@ struct RouteQueueGreater {
   if (!obstacles.has_value()) {
     return std::nullopt;
   }
-  const auto route =
-      automatic_route(source_leg->outer, destination_leg->outer, *obstacles);
+  std::optional<std::vector<GraphPosition>> route;
+  if (route_geometry.is_automatic()) {
+    route =
+        automatic_route(source_leg->outer, destination_leg->outer, *obstacles);
+  } else if (route_geometry.waypoints().empty()) {
+    // An empty customized route is the explicit straight-path form. Keep it
+    // distinct from automatic routing so an obstacle does not erase a user's
+    // cleared bends on the next relayout.
+    if (source_leg->outer == destination_leg->outer) {
+      route = std::vector<GraphPosition>{source_leg->outer};
+    } else if (source_leg->outer.x == destination_leg->outer.x ||
+               source_leg->outer.y == destination_leg->outer.y) {
+      route =
+          std::vector<GraphPosition>{source_leg->outer, destination_leg->outer};
+    } else {
+      route = std::vector<GraphPosition>{
+          source_leg->outer,
+          {destination_leg->outer.x, source_leg->outer.y},
+          destination_leg->outer};
+    }
+  } else {
+    // Customized waypoints are absolute writer-space points. Re-route only
+    // the two endpoint joins so moving a node does not discard interior work.
+    const auto append_route = [](std::vector<GraphPosition>&    target,
+                                 std::span<const GraphPosition> addition) {
+      for (const GraphPosition point : addition) {
+        if (target.empty() || target.back() != point) {
+          target.push_back(point);
+        }
+      }
+    };
+    const auto append_point = [](std::vector<GraphPosition>& target,
+                                 GraphPosition               point) {
+      if (target.empty() || target.back() != point) {
+        target.push_back(point);
+      }
+    };
+    try {
+      std::vector<GraphPosition> custom;
+      const auto&                waypoints = route_geometry.waypoints();
+      const GraphPosition        first_waypoint{waypoints.front().x,
+                                         waypoints.front().y};
+      const GraphPosition last_waypoint{waypoints.back().x, waypoints.back().y};
+      const auto          prefix =
+          automatic_route(source_leg->outer, first_waypoint, *obstacles);
+      const auto suffix =
+          automatic_route(last_waypoint, destination_leg->outer, *obstacles);
+      if (prefix.has_value() && suffix.has_value()) {
+        custom.reserve(prefix->size() + waypoints.size() + suffix->size());
+        append_route(custom, *prefix);
+        for (const RoutePoint point : waypoints) {
+          append_point(custom, {point.x, point.y});
+        }
+        append_route(custom, *suffix);
+        route = std::move(custom);
+      }
+    } catch (...) {
+      return std::nullopt;
+    }
+  }
   if (!route.has_value()) {
     return std::nullopt;
   }
@@ -570,6 +629,18 @@ struct RouteQueueGreater {
   return scene_index == scene.connectors.size();
 }
 
+[[nodiscard]] bool scene_nodes_match_project(const CanvasNotationScene& scene,
+                                             const Project& project) noexcept {
+  if (scene.nodes.size() != project.nodes().size()) {
+    return false;
+  }
+  return std::ranges::all_of(scene.nodes, [&project](const auto& scene_node) {
+    const Node* const node = project.find_node(scene_node.node_id);
+    return node != nullptr && scene_node.position == node->position() &&
+           scene_node.geometry.bounds.origin == scene_node.position;
+  });
+}
+
 [[nodiscard]] std::optional<std::size_t> connector_insertion_index(
     const Project& project, NodeId source_node,
     ConnectorId source_output) noexcept {
@@ -587,17 +658,24 @@ struct RouteQueueGreater {
   return std::nullopt;
 }
 
-[[nodiscard]] bool refresh_connector_routes(
-    CanvasNotationScene& scene) noexcept {
+[[nodiscard]] bool refresh_connector_routes(CanvasNotationScene& scene,
+                                            const Project& project) noexcept {
   try {
     std::vector<CanvasConnectorGeometry> refreshed;
     refreshed.reserve(scene.connectors.size());
     for (const CanvasConnectorGeometry& connector : scene.connectors) {
       const ConnectorDestination destination{connector.destination_node,
                                              connector.destination_connector};
-      auto geometry = connector_geometry(scene, connector.source_node,
-                                         connector.source_connector,
-                                         destination, connector.type);
+      const Node* const source = project.find_node(connector.source_node);
+      const OutputConnector* const output =
+          source == nullptr ? nullptr
+                            : source->find_output(connector.source_connector);
+      if (output == nullptr) {
+        return false;
+      }
+      auto geometry = connector_geometry(
+          scene, connector.source_node, connector.source_connector, destination,
+          connector.type, output->route());
       if (!geometry.has_value()) {
         return false;
       }
@@ -1091,6 +1169,238 @@ std::optional<CanvasConnectorSegmentHover> canvas_connector_segment_hover(
   return hover;
 }
 
+std::optional<std::vector<GraphPosition>> canvas_connector_drag_segment(
+    std::span<const GraphPosition> route_points, std::size_t segment_index,
+    GraphPosition pointer) noexcept {
+  if (route_points.size() < 3U || !is_finite(pointer) ||
+      segment_index >= route_points.size() - 1U) {
+    return std::nullopt;
+  }
+
+  for (std::size_t index = 1U; index < route_points.size(); ++index) {
+    const GraphPosition first  = route_points[index - 1U];
+    const GraphPosition second = route_points[index];
+    if (!is_finite(first) || !is_finite(second) || first == second ||
+        (first.x != second.x && first.y != second.y)) {
+      return std::nullopt;
+    }
+  }
+
+  const GraphPosition first      = route_points[segment_index];
+  const GraphPosition second     = route_points[segment_index + 1U];
+  const bool          horizontal = first.y == second.y;
+  const bool          vertical   = first.x == second.x;
+  if (horizontal == vertical) {
+    return std::nullopt;
+  }
+
+  try {
+    std::vector<GraphPosition> edited(route_points.begin(), route_points.end());
+    if (edited.size() == 3U) {
+      const GraphPosition shared_outer = edited[1U];
+      const double        target       = horizontal ? pointer.y : pointer.x;
+      if (target == (horizontal ? shared_outer.y : shared_outer.x)) {
+        return edited;
+      }
+      const double detour =
+          horizontal
+              ? shared_outer.x +
+                    std::copysign(CanvasConnectorGeometry::kEndpointClearance,
+                                  shared_outer.x - edited.front().x)
+              : shared_outer.y +
+                    std::copysign(CanvasConnectorGeometry::kEndpointClearance,
+                                  shared_outer.y - edited.front().y);
+      if (!std::isfinite(detour)) {
+        return std::nullopt;
+      }
+      const GraphPosition first_bend =
+          horizontal ? GraphPosition{shared_outer.x, target}
+                     : GraphPosition{target, shared_outer.y};
+      const GraphPosition second_bend = horizontal
+                                            ? GraphPosition{detour, target}
+                                            : GraphPosition{target, detour};
+      const GraphPosition third_bend =
+          horizontal ? GraphPosition{detour, shared_outer.y}
+                     : GraphPosition{shared_outer.x, detour};
+      edited.insert(edited.begin() + 2,
+                    {first_bend, second_bend, third_bend, shared_outer});
+      return edited;
+    }
+    const std::size_t last_editable_segment = edited.size() - 3U;
+    double            target = horizontal ? pointer.y : pointer.x;
+    const auto        constrain_endpoint_clearance =
+        [&target, horizontal](GraphPosition attachment, GraphPosition outer) {
+          if (horizontal) {
+            return;
+          }
+          // The endpoint legs leave the node horizontally in the current
+          // canvas model. Keep a dragged vertical segment on the outside of
+          // its fixed outer point rather than allowing it back through the
+          // node body.
+          if (outer.x > attachment.x) {
+            target = std::max(target, outer.x);
+          } else {
+            target = std::min(target, outer.x);
+          }
+        };
+    if (segment_index == 1U) {
+      constrain_endpoint_clearance(edited[0U], edited[1U]);
+    }
+    if (segment_index == last_editable_segment) {
+      constrain_endpoint_clearance(edited.back(), edited[edited.size() - 2U]);
+    }
+    if (target == (horizontal ? first.y : first.x)) {
+      return edited;
+    }
+    const auto moved = [horizontal, target](GraphPosition point) {
+      if (horizontal) {
+        point.y = target;
+      } else {
+        point.x = target;
+      }
+      return point;
+    };
+    const auto bend_from_source = [horizontal, target](GraphPosition point) {
+      return horizontal ? GraphPosition{point.x, target}
+                        : GraphPosition{target, point.y};
+    };
+    const auto bend_to_destination = [horizontal, target](GraphPosition point) {
+      return horizontal ? GraphPosition{point.x, target}
+                        : GraphPosition{target, point.y};
+    };
+
+    if (segment_index == 0U && last_editable_segment == 1U) {
+      const GraphPosition source_outer      = edited[1U];
+      const GraphPosition destination_outer = edited[edited.size() - 2U];
+      edited.erase(edited.begin() + 2, edited.end() - 2);
+      edited.insert(edited.begin() + 2,
+                    {bend_from_source(source_outer),
+                     bend_to_destination(destination_outer)});
+    } else if (segment_index == edited.size() - 2U &&
+               last_editable_segment == 1U) {
+      const GraphPosition source_outer      = edited[1U];
+      const GraphPosition destination_outer = edited[edited.size() - 2U];
+      edited.erase(edited.begin() + 2, edited.end() - 2);
+      edited.insert(edited.begin() + 2,
+                    {bend_from_source(source_outer),
+                     bend_to_destination(destination_outer)});
+    } else if (segment_index == 0U) {
+      const GraphPosition source_outer = edited[1U];
+      const GraphPosition next_point   = edited[2U];
+      if ((horizontal && next_point.x == source_outer.x) ||
+          (vertical && next_point.y == source_outer.y)) {
+        const double detour =
+            horizontal
+                ? source_outer.x +
+                      std::copysign(CanvasConnectorGeometry::kEndpointClearance,
+                                    source_outer.x - edited.front().x)
+                : source_outer.y +
+                      std::copysign(CanvasConnectorGeometry::kEndpointClearance,
+                                    source_outer.y - edited.front().y);
+        if (!std::isfinite(detour)) {
+          return std::nullopt;
+        }
+        edited.insert(edited.begin() + 2,
+                      {bend_from_source(source_outer),
+                       horizontal ? GraphPosition{detour, target}
+                                  : GraphPosition{target, detour},
+                       horizontal ? GraphPosition{detour, next_point.y}
+                                  : GraphPosition{next_point.x, detour},
+                       next_point});
+      } else {
+        edited.insert(edited.begin() + 2, {bend_from_source(source_outer),
+                                           bend_from_source(next_point)});
+      }
+    } else if (segment_index == edited.size() - 2U) {
+      const GraphPosition destination_outer = edited[edited.size() - 2U];
+      const GraphPosition previous_point    = edited[edited.size() - 3U];
+      if ((horizontal && previous_point.x == destination_outer.x) ||
+          (vertical && previous_point.y == destination_outer.y)) {
+        const double detour =
+            horizontal
+                ? destination_outer.x +
+                      std::copysign(CanvasConnectorGeometry::kEndpointClearance,
+                                    destination_outer.x - edited.back().x)
+                : destination_outer.y +
+                      std::copysign(CanvasConnectorGeometry::kEndpointClearance,
+                                    destination_outer.y - edited.back().y);
+        if (!std::isfinite(detour)) {
+          return std::nullopt;
+        }
+        edited.insert(
+            edited.end() - 2,
+            {bend_to_destination(previous_point),
+             horizontal ? GraphPosition{detour, target}
+                        : GraphPosition{target, detour},
+             horizontal ? GraphPosition{detour, destination_outer.y}
+                        : GraphPosition{destination_outer.x, detour}});
+      } else {
+        edited.insert(edited.end() - 2,
+                      {bend_to_destination(previous_point),
+                       bend_to_destination(destination_outer)});
+      }
+    } else if (segment_index == 1U && segment_index == last_editable_segment) {
+      // The only editable segment is between both fixed outer points. Keep
+      // both endpoint clearances and insert the parallel detour between them.
+      const GraphPosition source_outer      = edited[1U];
+      const GraphPosition destination_outer = edited[edited.size() - 2U];
+      edited.erase(edited.begin() + 2, edited.end() - 2);
+      edited.insert(edited.begin() + 2,
+                    {bend_from_source(source_outer),
+                     bend_to_destination(destination_outer)});
+    } else if (segment_index == 1U) {
+      const GraphPosition source_outer = edited[1U];
+      edited[segment_index + 1U]       = moved(edited[segment_index + 1U]);
+      edited.insert(edited.begin() + 2, bend_from_source(source_outer));
+    } else if (segment_index == last_editable_segment) {
+      edited[segment_index] = moved(edited[segment_index]);
+      edited.insert(
+          edited.begin() + static_cast<std::ptrdiff_t>(segment_index + 1U),
+          bend_to_destination(edited[edited.size() - 2U]));
+    } else {
+      edited[segment_index]      = moved(edited[segment_index]);
+      edited[segment_index + 1U] = moved(edited[segment_index + 1U]);
+    }
+
+    // A drag that aligns adjacent runs removes the now-superfluous corner.
+    // The two outer points are deliberately excluded: they are the minimum
+    // clearance contract for the node attachments.
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      for (std::size_t index = 2U; index + 1U < edited.size() - 1U; ++index) {
+        const GraphPosition before  = edited[index - 1U];
+        const GraphPosition current = edited[index];
+        const GraphPosition after   = edited[index + 1U];
+        if (current == before || current == after ||
+            (before.x == current.x && current.x == after.x) ||
+            (before.y == current.y && current.y == after.y)) {
+          edited.erase(edited.begin() + static_cast<std::ptrdiff_t>(index));
+          changed = true;
+          break;
+        }
+      }
+    }
+
+    if (edited[1U] != route_points[1U] ||
+        edited[edited.size() - 2U] != route_points[route_points.size() - 2U] ||
+        edited.size() < 4U) {
+      return std::nullopt;
+    }
+    for (std::size_t index = 1U; index < edited.size(); ++index) {
+      const GraphPosition before  = edited[index - 1U];
+      const GraphPosition current = edited[index];
+      if (!is_finite(current) || before == current ||
+          (before.x != current.x && before.y != current.y)) {
+        return std::nullopt;
+      }
+    }
+    return edited;
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
 bool CanvasNotationScene::complete() const noexcept {
   return std::ranges::all_of(nodes, [](const CanvasNodeNotation& node) {
     return static_cast<bool>(node);
@@ -1216,12 +1526,305 @@ bool CanvasNodeDragController::set_preview_position(
   const GraphPosition previous = node->position;
   node->position               = position;
   node->geometry.bounds.origin = position;
-  if (!refresh_connector_routes(scene_)) {
+  if (!refresh_connector_routes(scene_, project_)) {
     node->position               = previous;
     node->geometry.bounds.origin = previous;
     return false;
   }
   return true;
+}
+
+CanvasConnectorSegmentDragController::CanvasConnectorSegmentDragController(
+    Project& project, CommandHistory& history,
+    CanvasNotationScene& scene) noexcept
+    : project_(project), history_(history), scene_(scene) {}
+
+CanvasConnectorSegmentDragController::~CanvasConnectorSegmentDragController() {
+  cancel();
+}
+
+bool CanvasConnectorSegmentDragController::begin(
+    NodeId source_node, ConnectorId source_output, std::size_t segment_index,
+    GraphPosition pointer) noexcept {
+  if (active_ || !is_finite(pointer) ||
+      !scene_connectors_match_project(scene_, project_) ||
+      !scene_nodes_match_project(scene_, project_)) {
+    return false;
+  }
+  const Node* const            node = project_.find_node(source_node);
+  const OutputConnector* const output =
+      node == nullptr ? nullptr : node->find_output(source_output);
+  if (output == nullptr || !output->destination().has_value()) {
+    return false;
+  }
+  const Node* const destination_node =
+      project_.find_node(output->destination()->node);
+  const CanvasNodeNotation* const source_scene =
+      find_scene_node(scene_, source_node);
+  const CanvasNodeNotation* const destination_scene =
+      find_scene_node(scene_, output->destination()->node);
+  if (destination_node == nullptr || source_scene == nullptr ||
+      destination_scene == nullptr ||
+      source_scene->position != node->position() ||
+      destination_scene->position != destination_node->position()) {
+    return false;
+  }
+  const auto found = std::ranges::find_if(
+      scene_.connectors,
+      [source_node, source_output](const CanvasConnectorGeometry& connector) {
+        return connector.source_node == source_node &&
+               connector.source_connector == source_output;
+      });
+  if (found == scene_.connectors.end() ||
+      !canvas_connector_drag_segment(found->route_points, segment_index,
+                                     pointer)
+           .has_value()) {
+    return false;
+  }
+  try {
+    const auto current = connector_geometry(scene_, source_node, source_output,
+                                            *output->destination(),
+                                            output->type(), output->route());
+    if (!current.has_value() || current->route_points != found->route_points ||
+        current->source_leg != found->source_leg ||
+        current->destination_leg != found->destination_leg ||
+        current->render_path != found->render_path) {
+      return false;
+    }
+  } catch (...) {
+    return false;
+  }
+
+  try {
+    connectors_start_       = scene_.connectors;
+    route_start_            = found->route_points;
+    render_start_           = found->render_path;
+    domain_waypoints_start_ = output->route().waypoints();
+    destination_start_      = output->destination();
+    type_start_             = output->type();
+    node_ids_start_.reserve(scene_.nodes.size());
+    node_positions_start_.reserve(scene_.nodes.size());
+    node_bounds_start_.reserve(scene_.nodes.size());
+    for (const CanvasNodeNotation& scene_node : scene_.nodes) {
+      node_ids_start_.push_back(scene_node.node_id);
+      node_positions_start_.push_back(scene_node.position);
+      node_bounds_start_.push_back(scene_node.geometry.bounds);
+    }
+  } catch (...) {
+    connectors_start_.clear();
+    route_start_.clear();
+    render_start_.clear();
+    domain_waypoints_start_.clear();
+    node_ids_start_.clear();
+    node_positions_start_.clear();
+    node_bounds_start_.clear();
+    destination_start_.reset();
+    return false;
+  }
+  connector_index_ =
+      static_cast<std::size_t>(found - scene_.connectors.begin());
+  segment_index_              = segment_index;
+  source_node_                = source_node;
+  source_output_              = source_output;
+  source_position_start_      = node->position();
+  destination_position_start_ = destination_node->position();
+  route_was_automatic_        = output->route().is_automatic();
+  preview_changed_            = false;
+  active_                     = true;
+  return true;
+}
+
+bool CanvasConnectorSegmentDragController::update(
+    GraphPosition pointer) noexcept {
+  if (!active_ || !is_finite(pointer)) {
+    return false;
+  }
+  const auto route =
+      canvas_connector_drag_segment(route_start_, segment_index_, pointer);
+  if (!route.has_value()) {
+    return false;
+  }
+  return set_preview_route(std::move(*route));
+}
+
+Result CanvasConnectorSegmentDragController::finish() noexcept {
+  if (!active_) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (connector_index_ >= scene_.connectors.size()) {
+    cancel();
+    return Result(ResultCode::kInvalidArgument);
+  }
+  const CanvasConnectorGeometry& geometry = scene_.connectors[connector_index_];
+  if (geometry.route_points.size() < 3U) {
+    cancel();
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (!scene_connectors_match_project(scene_, project_) ||
+      !scene_nodes_match_project(scene_, project_) ||
+      scene_.nodes.size() != node_ids_start_.size() ||
+      scene_.connectors.size() != connectors_start_.size()) {
+    cancel();
+    return Result(ResultCode::kInvalidArgument);
+  }
+  for (std::size_t index = 0U; index < scene_.nodes.size(); ++index) {
+    if (scene_.nodes[index].node_id != node_ids_start_[index] ||
+        scene_.nodes[index].position != node_positions_start_[index] ||
+        scene_.nodes[index].geometry.bounds != node_bounds_start_[index]) {
+      cancel();
+      return Result(ResultCode::kInvalidArgument);
+    }
+  }
+  for (std::size_t index = 0U; index < scene_.connectors.size(); ++index) {
+    const CanvasConnectorGeometry& current = scene_.connectors[index];
+    const CanvasConnectorGeometry& start   = connectors_start_[index];
+    const bool                     metadata_matches =
+        current.source_node == start.source_node &&
+        current.source_connector == start.source_connector &&
+        current.destination_node == start.destination_node &&
+        current.destination_connector == start.destination_connector &&
+        current.source_leg == start.source_leg &&
+        current.destination_leg == start.destination_leg &&
+        current.type == start.type && current.style == start.style;
+    if (!metadata_matches || (index != connector_index_ && current != start)) {
+      cancel();
+      return Result(ResultCode::kInvalidArgument);
+    }
+  }
+  Node* const            node = project_.find_node(source_node_);
+  OutputConnector* const output =
+      node == nullptr ? nullptr : node->find_output(source_output_);
+  const Node* const destination_node =
+      output == nullptr || !output->destination().has_value()
+          ? nullptr
+          : project_.find_node(output->destination()->node);
+  const CanvasNodeNotation* const source_scene =
+      find_scene_node(scene_, source_node_);
+  const CanvasNodeNotation* const destination_scene =
+      destination_start_.has_value()
+          ? find_scene_node(scene_, destination_start_->node)
+          : nullptr;
+  if (output == nullptr || !output->destination().has_value() ||
+      destination_node == nullptr || source_scene == nullptr ||
+      destination_scene == nullptr ||
+      node->position() != source_position_start_ ||
+      destination_node->position() != destination_position_start_ ||
+      source_scene->position != source_position_start_ ||
+      destination_scene->position != destination_position_start_ ||
+      output->destination() != destination_start_ ||
+      geometry.source_node != source_node_ ||
+      geometry.source_connector != source_output_ ||
+      geometry.destination_node != destination_start_->node ||
+      geometry.destination_connector != destination_start_->connector ||
+      output->type() != type_start_ || geometry.type != type_start_ ||
+      output->route().is_automatic() != route_was_automatic_ ||
+      output->route().waypoints() != domain_waypoints_start_) {
+    cancel();
+    return Result(ResultCode::kInvalidArgument);
+  }
+
+  if (!preview_changed_ && geometry.route_points != route_start_) {
+    cancel();
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (!preview_changed_ && geometry.render_path != render_start_) {
+    cancel();
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (preview_changed_ && (geometry.route_points != preview_route_ ||
+                           geometry.render_path != preview_render_path_)) {
+    cancel();
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (!preview_changed_) {
+    connectors_start_.clear();
+    route_start_.clear();
+    render_start_.clear();
+    domain_waypoints_start_.clear();
+    node_ids_start_.clear();
+    node_positions_start_.clear();
+    node_bounds_start_.clear();
+    preview_route_.clear();
+    preview_render_path_.clear();
+    destination_start_.reset();
+    active_ = false;
+    return Result();
+  }
+
+  std::vector<RoutePoint> waypoints;
+  try {
+    if (geometry.route_points.size() > 4U) {
+      waypoints.reserve(geometry.route_points.size() - 4U);
+    }
+    for (std::size_t index = 2U; index + 2U < geometry.route_points.size();
+         ++index) {
+      waypoints.push_back(
+          {geometry.route_points[index].x, geometry.route_points[index].y});
+    }
+    auto command = std::make_unique<SetCustomRouteCommand>(
+        source_node_, source_output_, std::move(waypoints));
+    const Result result = history_.execute_new(std::move(command), project_);
+    if (!result.ok()) {
+      cancel();
+      return result;
+    }
+  } catch (...) {
+    cancel();
+    return Result(ResultCode::kOutOfMemory);
+  }
+
+  connectors_start_.clear();
+  route_start_.clear();
+  render_start_.clear();
+  domain_waypoints_start_.clear();
+  node_ids_start_.clear();
+  node_positions_start_.clear();
+  node_bounds_start_.clear();
+  preview_route_.clear();
+  preview_render_path_.clear();
+  destination_start_.reset();
+  active_ = false;
+  return Result();
+}
+
+void CanvasConnectorSegmentDragController::cancel() noexcept {
+  if (!active_) {
+    return;
+  }
+  static_assert(
+      std::is_nothrow_move_assignable_v<std::vector<CanvasConnectorGeometry>>);
+  scene_.connectors = std::move(connectors_start_);
+  route_start_.clear();
+  render_start_.clear();
+  domain_waypoints_start_.clear();
+  node_ids_start_.clear();
+  node_positions_start_.clear();
+  node_bounds_start_.clear();
+  preview_route_.clear();
+  preview_render_path_.clear();
+  destination_start_.reset();
+  preview_changed_ = false;
+  active_          = false;
+}
+
+bool CanvasConnectorSegmentDragController::set_preview_route(
+    std::vector<GraphPosition> route_points) noexcept {
+  if (connector_index_ >= scene_.connectors.size()) {
+    return false;
+  }
+  try {
+    preview_changed_ = route_points != route_start_;
+    std::vector<CanvasConnectorPathElement> render_path =
+        canvas_connector_render_path(route_points);
+    preview_route_                    = route_points;
+    preview_render_path_              = render_path;
+    CanvasConnectorGeometry& geometry = scene_.connectors[connector_index_];
+    geometry.route_points             = std::move(route_points);
+    geometry.render_path              = std::move(render_path);
+    return true;
+  } catch (...) {
+    return false;
+  }
 }
 
 CanvasConnectorAttachmentController::CanvasConnectorAttachmentController(
@@ -1276,7 +1879,7 @@ Result CanvasConnectorAttachmentController::finish(
   try {
     const ConnectorDestination destination{destination_node, destination_input};
     geometry = connector_geometry(scene_, source_node_, source_output_,
-                                  destination, output->type());
+                                  destination, output->type(), output->route());
     if (!geometry.has_value()) {
       return Result(ResultCode::kInvalidArgument);
     }
@@ -1546,7 +2149,8 @@ CanvasNotationScene Canvas::layout_nodes(
         continue;
       }
       auto geometry = connector_geometry(scene, node.id(), output.id(),
-                                         *output.destination(), output.type());
+                                         *output.destination(), output.type(),
+                                         output.route());
       if (geometry.has_value()) {
         scene.connectors.push_back(std::move(*geometry));
       }

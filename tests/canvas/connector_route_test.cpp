@@ -177,6 +177,49 @@ TEST(CanvasConnectorRouteTest, DetoursAroundInterveningNodeBounds) {
   }
 }
 
+TEST(CanvasConnectorRouteTest, CustomizedEmptyRouteRetainsStraightPath) {
+  RouteFixture             fixture;
+  const graphscore::NodeId obstacle_id = fixture.project.add_node("Obstacle");
+  fixture.project.find_node(obstacle_id)->set_position({375.0, 0.0});
+  fixture.project.find_node(fixture.destination_id)->set_position({750.0, 0.0});
+  ASSERT_TRUE(fixture.project.find_node(fixture.source_id)
+                  ->find_output(fixture.output)
+                  ->route()
+                  .set_custom_route({})
+                  .ok());
+
+  const auto scene =
+      graphscore::Canvas{}.layout_nodes(fixture.project, fixture.metrics);
+
+  ASSERT_EQ(scene.connectors.size(), 1U);
+  ASSERT_EQ(scene.connectors[0].route_points.size(), 4U);
+  EXPECT_EQ(scene.connectors[0].route_points[1U].y,
+            scene.connectors[0].route_points[2U].y);
+}
+
+TEST(CanvasConnectorRouteTest, CustomizedEmptyOffsetRouteIgnoresObstacles) {
+  RouteFixture             fixture;
+  const graphscore::NodeId obstacle_id = fixture.project.add_node("Obstacle");
+  fixture.project.find_node(obstacle_id)->set_position({375.0, 100.0});
+  fixture.project.find_node(fixture.destination_id)
+      ->set_position({750.0, 200.0});
+  ASSERT_TRUE(fixture.project.find_node(fixture.source_id)
+                  ->find_output(fixture.output)
+                  ->route()
+                  .set_custom_route({})
+                  .ok());
+
+  const auto scene =
+      graphscore::Canvas{}.layout_nodes(fixture.project, fixture.metrics);
+
+  ASSERT_EQ(scene.connectors.size(), 1U);
+  ASSERT_EQ(scene.connectors[0].route_points.size(), 5U);
+  EXPECT_EQ(
+      scene.connectors[0].route_points[2],
+      (graphscore::GraphPosition{scene.connectors[0].destination_leg.outer.x,
+                                 scene.connectors[0].source_leg.outer.y}));
+}
+
 TEST(CanvasConnectorRouteTest, AvoidsMultipleNodeObstaclesDeterministically) {
   RouteFixture             fixture;
   const graphscore::NodeId first  = fixture.project.add_node("First obstacle");
