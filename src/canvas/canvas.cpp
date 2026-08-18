@@ -55,6 +55,39 @@ constexpr int kCanvasVersion = 1;
   return std::isfinite(position.x) && std::isfinite(position.y);
 }
 
+[[nodiscard]] constexpr unsigned char fold_ascii(unsigned char value) noexcept {
+  if (value >= static_cast<unsigned char>('A') &&
+      value <= static_cast<unsigned char>('Z')) {
+    return static_cast<unsigned char>(value + ('a' - 'A'));
+  }
+  return value;
+}
+
+[[nodiscard]] bool contains_ascii_case_insensitive(
+    std::string_view text, std::string_view query) noexcept {
+  if (query.empty()) {
+    return true;
+  }
+  if (query.size() > text.size()) {
+    return false;
+  }
+  for (std::size_t start = 0; start + query.size() <= text.size(); ++start) {
+    bool matches = true;
+    for (std::size_t offset = 0; offset < query.size(); ++offset) {
+      const auto text_byte  = static_cast<unsigned char>(text[start + offset]);
+      const auto query_byte = static_cast<unsigned char>(query[offset]);
+      if (fold_ascii(text_byte) != fold_ascii(query_byte)) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      return true;
+    }
+  }
+  return false;
+}
+
 [[nodiscard]] bool contains(const NotationRect& bounds,
                             GraphPosition       point) noexcept {
   if (!std::isfinite(bounds.x) || !std::isfinite(bounds.y) ||
@@ -2069,6 +2102,36 @@ Result CanvasNodeOperationsController::delete_selected() noexcept {
   scene_ = std::move(next);
   selection_.clear();
   return Result();
+}
+
+std::vector<CanvasNodeSearchResult> canvas_search_nodes(
+    const Project& project, std::string_view query) {
+  std::vector<CanvasNodeSearchResult> results;
+  results.reserve(project.nodes().size());
+  for (const Node& node : project.nodes()) {
+    std::string uuid = node.id().to_string();
+    if (contains_ascii_case_insensitive(node.name(), query) ||
+        contains_ascii_case_insensitive(uuid, query)) {
+      results.push_back({node.id(), node.name(), std::move(uuid)});
+    }
+  }
+  return results;
+}
+
+bool canvas_focus_node(const CanvasNotationScene& scene, NodeId node_id,
+                       ViewportPosition   viewport_focus,
+                       ViewportTransform& transform) noexcept {
+  if (!is_finite(viewport_focus)) {
+    return false;
+  }
+  const CanvasNodeNotation* const node = find_scene_node(scene, node_id);
+  if (node == nullptr || !is_valid_world_bounds(node->geometry.bounds)) {
+    return false;
+  }
+  const WorldBounds&  bounds = node->geometry.bounds;
+  const GraphPosition center{bounds.origin.x + bounds.width / 2.0,
+                             bounds.origin.y + bounds.height / 2.0};
+  return is_finite(center) && transform.set_anchor(center, viewport_focus);
 }
 
 CanvasConnectorSegmentDragController::CanvasConnectorSegmentDragController(

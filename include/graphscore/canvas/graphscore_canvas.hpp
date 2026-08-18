@@ -20,6 +20,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -792,6 +793,30 @@ struct CanvasNotationScene {
 
   [[nodiscard]] bool complete() const noexcept;
 };
+
+// One stable, display-ready node-search row. Results preserve project order so
+// duplicate names never introduce UUID-dependent ordering.
+struct CanvasNodeSearchResult {
+  NodeId      node_id;
+  std::string name;
+  std::string uuid;
+
+  [[nodiscard]] bool operator==(const CanvasNodeSearchResult&) const = default;
+};
+
+// Finds nodes whose name or canonical UUID contains `query`. ASCII matching is
+// case-insensitive; non-ASCII UTF-8 bytes are preserved exactly. An empty query
+// returns every node in project order.
+[[nodiscard]] std::vector<CanvasNodeSearchResult> canvas_search_nodes(
+    const Project& project, std::string_view query);
+
+// Centers a retained node on `viewport_focus` without changing zoom. Missing
+// nodes, invalid retained geometry, and non-finite focus points are rejected
+// without changing the transform.
+[[nodiscard]] bool canvas_focus_node(const CanvasNotationScene& scene,
+                                     NodeId                     node_id,
+                                     ViewportPosition           viewport_focus,
+                                     ViewportTransform& transform) noexcept;
 
 // Stages one node drag in retained canvas geometry. Pointer updates move the
 // node and every attached endpoint leg immediately, while the Project remains
