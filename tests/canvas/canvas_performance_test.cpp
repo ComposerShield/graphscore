@@ -5,8 +5,10 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -170,6 +172,41 @@ TEST(CanvasPerformanceTest,
   ASSERT_TRUE(connector_drag_succeeded);
   expect_within_frame_budget(connector_drag_elapsed, "connector segment drag");
   connector_drag.cancel();
+}
+
+TEST(CanvasPerformanceTest, OffscreenWorkIsCulledAcrossEveryRetainedItemClass) {
+  constexpr std::array kKinds{
+      graphscore::CanvasItemKind::kNode,
+      graphscore::CanvasItemKind::kLabel,
+      graphscore::CanvasItemKind::kControl,
+      graphscore::CanvasItemKind::kConnectorSegment,
+      graphscore::CanvasItemKind::kHitRegion,
+  };
+  graphscore::CanvasScene scene;
+  for (std::size_t kind_index = 0; kind_index < kKinds.size(); ++kind_index) {
+    ASSERT_TRUE(scene.insert({
+        {kKinds[kind_index], 0U},
+        {{10.0 + static_cast<double>(kind_index) * 10.0, 10.0}, 4.0, 4.0},
+    }));
+    for (std::uint64_t item_index = 1U; item_index < kNodeCount; ++item_index) {
+      ASSERT_TRUE(scene.insert({
+          {kKinds[kind_index], item_index},
+          {{100000.0 + static_cast<double>(item_index) * 20.0,
+            100000.0 + static_cast<double>(kind_index) * 20.0},
+           4.0,
+           4.0},
+      }));
+    }
+  }
+
+  graphscore::ViewportTransform transform;
+  const auto                    result =
+      scene.index().query_viewport(transform, 100.0, 100.0, 8.0);
+  ASSERT_TRUE(result);
+  EXPECT_EQ(result->items.size(), kKinds.size());
+  EXPECT_LT(result->statistics.candidates_tested, 20U);
+  EXPECT_LT(result->statistics.nodes_visited, 100U);
+  EXPECT_EQ(scene.index().size(), kKinds.size() * kNodeCount);
 }
 
 }  // namespace
