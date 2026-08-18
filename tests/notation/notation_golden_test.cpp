@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -31,6 +32,23 @@ class GoldenMetrics final : public graphscore::GlyphMetrics {
   [[nodiscard]] double kerning(char32_t left, char32_t right,
                                double staff_space) const override {
     return left == right ? staff_space * 0.125 : 0.0;
+  }
+};
+
+class CompactGoldenMetrics final : public graphscore::GlyphMetrics {
+ public:
+  [[nodiscard]] graphscore::GlyphMetricsValue glyph_metrics(
+      char32_t code_point, double staff_space) const override {
+    const double width =
+        code_point >= U'0' && code_point <= U'9' ? 0.625 : 1.25;
+    return {{-staff_space * 0.125, -staff_space * 0.625, staff_space * width,
+             staff_space * 1.75},
+            staff_space * width};
+  }
+
+  [[nodiscard]] double kerning(char32_t left, char32_t right,
+                               double staff_space) const override {
+    return left != right ? staff_space * 0.0625 : 0.0;
   }
 };
 
@@ -219,6 +237,111 @@ void add(LayoutFingerprint& fingerprint, const graphscore::HitRegion& hit) {
   return result.value();
 }
 
+void expect_nonnegative(const graphscore::NotationRect& bounds) {
+  EXPECT_GE(bounds.width, 0.0);
+  EXPECT_GE(bounds.height, 0.0);
+}
+
+void expect_contains(const graphscore::NotationRect& outer,
+                     const graphscore::NotationRect& inner) {
+  EXPECT_GE(inner.x, outer.x);
+  EXPECT_GE(inner.y, outer.y);
+  EXPECT_LE(inner.x + inner.width, outer.x + outer.width);
+  EXPECT_LE(inner.y + inner.height, outer.y + outer.height);
+}
+
+void expect_semantic_geometry(const graphscore::NotationLayout& layout) {
+  ASSERT_TRUE(layout.geometry_is_finite());
+  expect_nonnegative(layout.bounds);
+  ASSERT_FALSE(layout.systems.empty());
+
+  std::size_t next_measure  = 0;
+  double      next_system_y = layout.bounds.y;
+  for (const auto& system : layout.systems) {
+    EXPECT_FALSE(system.id.value.empty());
+    expect_nonnegative(system.bounds);
+    expect_contains(layout.bounds, system.bounds);
+    EXPECT_GE(system.bounds.y, next_system_y);
+    EXPECT_EQ(system.first_measure, next_measure);
+    ASSERT_FALSE(system.measures.empty());
+
+    double next_measure_x = system.bounds.x;
+    for (const auto& measure : system.measures) {
+      EXPECT_FALSE(measure.id.value.empty());
+      EXPECT_EQ(measure.ordinal, next_measure);
+      expect_nonnegative(measure.bounds);
+      expect_contains(system.bounds, measure.bounds);
+      EXPECT_GE(measure.bounds.x, next_measure_x);
+      next_measure_x = measure.bounds.x + measure.bounds.width;
+      ++next_measure;
+    }
+
+    ASSERT_FALSE(system.staves.empty());
+    for (const auto& staff : system.staves) {
+      EXPECT_FALSE(staff.id.value.empty());
+      expect_nonnegative(staff.bounds);
+      expect_contains(system.bounds, staff.bounds);
+      ASSERT_EQ(staff.measure_bounds.size(), system.measures.size());
+      for (std::size_t index = 0; index < staff.measure_bounds.size();
+           ++index) {
+        const auto& staff_measure = staff.measure_bounds[index];
+        const auto& measure       = system.measures[index].bounds;
+        expect_nonnegative(staff_measure);
+        EXPECT_EQ(staff_measure.x, measure.x);
+        EXPECT_EQ(staff_measure.width, measure.width);
+        EXPECT_EQ(staff_measure.y, staff.bounds.y);
+        EXPECT_EQ(staff_measure.height, staff.bounds.height);
+      }
+      ASSERT_EQ(staff.voices.size(), graphscore::Voice::kMax);
+      for (std::size_t index = 0; index < staff.voices.size(); ++index) {
+        EXPECT_FALSE(staff.voices[index].id.value.empty());
+        EXPECT_EQ(staff.voices[index].voice.index(), index + 1);
+      }
+    }
+    next_system_y = system.bounds.y + system.bounds.height;
+  }
+
+  for (const auto& command : layout.commands) {
+    std::visit(
+        [](const auto& concrete) {
+          EXPECT_FALSE(concrete.id.value.empty());
+          using Command = std::decay_t<decltype(concrete)>;
+          if constexpr (std::is_same_v<Command, graphscore::GlyphCommand>) {
+            EXPECT_GT(concrete.staff_space, 0.0);
+          }
+          if constexpr (std::is_same_v<Command, graphscore::LineCommand>) {
+            EXPECT_GT(concrete.width, 0.0);
+          }
+          if constexpr (std::is_same_v<Command, graphscore::PathCommand>) {
+            EXPECT_FALSE(concrete.elements.empty());
+            EXPECT_GE(concrete.stroke_width, 0.0);
+          }
+          if constexpr (std::is_same_v<Command, graphscore::ClipCommand>) {
+            expect_nonnegative(concrete.bounds);
+          }
+        },
+        command);
+  }
+
+  for (const auto& hit : layout.hit_regions) {
+    EXPECT_FALSE(hit.id.value.empty());
+    EXPECT_FALSE(hit.semantic_id.value.empty());
+    expect_nonnegative(hit.bounds);
+    if (hit.owner_system_id.has_value()) {
+      EXPECT_TRUE(std::ranges::any_of(layout.systems, [&](const auto& system) {
+        return system.id == *hit.owner_system_id;
+      }));
+    }
+    if (hit.owner_staff_id.has_value()) {
+      EXPECT_TRUE(std::ranges::any_of(layout.systems, [&](const auto& system) {
+        return std::ranges::any_of(system.staves, [&](const auto& staff) {
+          return staff.id == *hit.owner_staff_id;
+        });
+      }));
+    }
+  }
+}
+
 template <typename Id>
 [[nodiscard]] Id fixed_id(std::uint8_t suffix) {
   std::array<std::uint8_t, graphscore::Uuid::kSize> bytes{};
@@ -310,6 +433,30 @@ TEST(NotationGoldenTest, SemanticLayoutMatchesExactPlatformIndependentGolden) {
   // The semantic golden uses a sub-pixel fixed-point encoding. Any visible
   // per-platform antialiasing tolerance belongs only to raster tests.
   EXPECT_EQ(fingerprint(*first.layout), 0xDDE29C713AF47458ULL);
+}
+
+TEST(NotationGoldenTest,
+     SemanticGeometryMatchesCompactMetricsPlatformIndependentGolden) {
+  const CompactGoldenMetrics        metrics;
+  auto                              fixture = make_golden_fixture();
+  graphscore::NotationLayoutOptions options;
+  options.system_width          = 300.0;
+  options.left_margin           = 18.0;
+  options.right_margin          = 18.0;
+  options.top_margin            = 16.0;
+  options.bottom_margin         = 16.0;
+  options.staff_space           = 8.0;
+  options.stave_gap             = 36.0;
+  options.system_gap            = 44.0;
+  options.minimum_measure_width = 126.0;
+  options.whole_note_spacing    = 132.0;
+
+  const auto layout = graphscore::layout_notation(
+      fixture.project, fixture.node_id, metrics, options);
+  ASSERT_TRUE(layout);
+  expect_semantic_geometry(*layout.layout);
+  EXPECT_EQ(layout.layout->systems.size(), 3U);
+  EXPECT_EQ(fingerprint(*layout.layout), 0xDAB3EEC41F4144E1ULL);
 }
 
 }  // namespace
