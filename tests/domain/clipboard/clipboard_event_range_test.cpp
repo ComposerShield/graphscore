@@ -2,6 +2,7 @@
 
 #include "clipboard_test_support.hpp"
 
+#include <algorithm>
 #include <utility>
 #include <vector>
 
@@ -121,6 +122,68 @@ TEST(ClipboardCommandTest, PasteEndBoundaryTupletStraddleFailsModelUnchanged) {
   const Result         result = command.execute(fx.project);
   EXPECT_EQ(result.code(), ResultCode::kInvalidArgument);
   EXPECT_TRUE(fx.lane_of(fx.track_a) == before);
+}
+
+TEST(ClipboardCommandTest,
+     PasteWhollyContainedTupletRemapsIdentityAndSupportsUndoRedo) {
+  Fixture fx;
+  fx.assign(fx.track_a, fx.stave_a_treble, kVoice1,
+            build_voice({make_note(pitch(Letter::kC), tuplet_eighth()),
+                         make_note(pitch(Letter::kD), tuplet_eighth()),
+                         make_note(pitch(Letter::kE), tuplet_eighth())}));
+  fx.assign_and_complete(fx.track_b, fx.stave_b, kVoice1,
+                         {make_note(pitch(Letter::kG), quarter()),
+                          make_note(pitch(Letter::kA), quarter()),
+                          make_note(pitch(Letter::kB), quarter()),
+                          make_note(pitch(Letter::kC, 5), quarter())});
+
+  const Selection source = *ArbitraryRangeSet::create(
+      {ArbitraryRangeItem{fx.node_id, fx.track_a, fx.stave_a_treble, kVoice1,
+                          MusicalSpan{Rational(0), rat(1, 4)}}});
+  const FragmentExtraction extraction = extract_fragment(fx.project, source);
+  ASSERT_TRUE(extraction.status.ok());
+  ASSERT_TRUE(extraction.fragment.has_value());
+  ASSERT_EQ(extraction.fragment->parts().size(), 1u);
+  ASSERT_EQ(extraction.fragment->parts()[0].content.events().size(), 3u);
+  const auto source_tuplet_group =
+      std::get<Note>(extraction.fragment->parts()[0].content.events()[0])
+          .tuplet_group;
+  ASSERT_TRUE(source_tuplet_group.has_value());
+
+  std::vector<NotationEntityId> fragment_ids;
+  collect_ids(extraction.fragment->parts()[0].content, fragment_ids);
+  const TrackLane   before = fx.lane_of(fx.track_b);
+  const PasteAnchor anchor{fx.node_id, fx.track_b, fx.stave_b, rat(1, 2)};
+
+  PasteFragmentCommand command(*extraction.fragment, anchor);
+  ASSERT_TRUE(command.execute(fx.project).ok());
+  const TrackLane     after        = fx.lane_of(fx.track_b);
+  const VoiceContent& pasted       = after.stave(fx.stave_b)->voice(kVoice1);
+  const auto          first_pasted = pasted.find_event_index_at(rat(1, 2));
+  ASSERT_TRUE(first_pasted.has_value());
+  ASSERT_GE(pasted.events().size(), *first_pasted + 3U);
+
+  std::vector<NotationEntityId> pasted_ids;
+  for (std::size_t i = 0; i < 3U; ++i) {
+    const Note& note = std::get<Note>(pasted.events()[*first_pasted + i]);
+    EXPECT_EQ(note.duration, tuplet_eighth());
+    ASSERT_TRUE(note.tuplet_group.has_value());
+    pasted_ids.push_back(note.id);
+  }
+  EXPECT_EQ(std::get<Note>(pasted.events()[*first_pasted]).tuplet_group,
+            std::get<Note>(pasted.events()[*first_pasted + 1]).tuplet_group);
+  EXPECT_EQ(std::get<Note>(pasted.events()[*first_pasted]).tuplet_group,
+            std::get<Note>(pasted.events()[*first_pasted + 2]).tuplet_group);
+  EXPECT_NE(std::get<Note>(pasted.events()[*first_pasted]).tuplet_group,
+            source_tuplet_group);
+  for (const NotationEntityId fragment_id : fragment_ids) {
+    EXPECT_EQ(std::ranges::count(pasted_ids, fragment_id), 0);
+  }
+
+  ASSERT_TRUE(command.undo(fx.project).ok());
+  EXPECT_TRUE(fx.lane_of(fx.track_b) == before);
+  ASSERT_TRUE(command.redo(fx.project).ok());
+  EXPECT_TRUE(fx.lane_of(fx.track_b) == after);
 }
 
 TEST(ClipboardCommandTest,
