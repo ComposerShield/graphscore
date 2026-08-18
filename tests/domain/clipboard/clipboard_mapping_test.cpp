@@ -90,7 +90,15 @@ TEST(ClipboardCommandTest, PasteMultiStaveFragmentOntoGrandStaff) {
 
 TEST(ClipboardCommandTest,
      PastePlacementMatchesCommandIntervalAndAffectedStavesWithoutMutation) {
-  Fixture                fx;
+  Fixture fx;
+  fx.assign_and_complete(fx.track_a, fx.stave_a_treble, kVoice1,
+                         {make_note(pitch(Letter::kG), quarter()),
+                          make_note(pitch(Letter::kA), quarter()),
+                          make_note(pitch(Letter::kB), quarter())});
+  fx.assign_and_complete(fx.track_a, fx.stave_a_bass, kVoice2,
+                         {make_note(pitch(Letter::kG, 3), quarter()),
+                          make_note(pitch(Letter::kA, 3), quarter()),
+                          make_note(pitch(Letter::kB, 3), quarter())});
   const TrackLane        before   = fx.lane_of(fx.track_a);
   const NotationFragment fragment = make_fragment(
       rat(1, 2), {FragmentTrackShape{2}},
@@ -112,7 +120,29 @@ TEST(ClipboardCommandTest,
 
   PasteFragmentCommand command(fragment, anchor);
   ASSERT_TRUE(command.execute(fx.project).ok());
-  EXPECT_FALSE(fx.lane_of(fx.track_a) == before);
+  const TrackLane after = fx.lane_of(fx.track_a);
+  EXPECT_FALSE(after == before);
+  EXPECT_EQ(
+      std::get<Note>(after.stave(fx.stave_a_treble)->voice(kVoice1).events()[1])
+          .pitch,
+      pitch(Letter::kC));
+  EXPECT_EQ(
+      std::get<Note>(after.stave(fx.stave_a_bass)->voice(kVoice2).events()[1])
+          .pitch,
+      pitch(Letter::kE));
+  for (const Voice voice : {kVoice2, kVoice3, kVoice4}) {
+    EXPECT_TRUE(after.stave(fx.stave_a_treble)->voice(voice) ==
+                before.stave(fx.stave_a_treble)->voice(voice));
+  }
+  for (const Voice voice : {kVoice1, kVoice3, kVoice4}) {
+    EXPECT_TRUE(after.stave(fx.stave_a_bass)->voice(voice) ==
+                before.stave(fx.stave_a_bass)->voice(voice));
+  }
+
+  ASSERT_TRUE(command.undo(fx.project).ok());
+  EXPECT_TRUE(fx.lane_of(fx.track_a) == before);
+  ASSERT_TRUE(command.redo(fx.project).ok());
+  EXPECT_TRUE(fx.lane_of(fx.track_a) == after);
 }
 
 TEST(ClipboardCommandTest,
