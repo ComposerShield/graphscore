@@ -9,6 +9,12 @@ add_test(NAME graphscore_claude_md_symlink
     -P "${CMAKE_CURRENT_SOURCE_DIR}/check_symlink.cmake"
 )
 
+add_test(NAME graphscore_cooked_export_excludes_route_geometry
+  COMMAND ${CMAKE_COMMAND}
+    -D "GRAPHSCORE_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/check_cooked_export_route_boundary.cmake"
+)
+
 add_test(NAME graphscore_offline_dependencies
   COMMAND ${CMAKE_COMMAND}
     -D "GRAPHSCORE_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
