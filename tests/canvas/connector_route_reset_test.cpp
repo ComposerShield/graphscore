@@ -5,7 +5,10 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <memory>
+#include <ranges>
 #include <vector>
 
 namespace {
@@ -41,6 +44,46 @@ struct ResetRouteFixture {
                     .ok());
   }
 };
+
+[[nodiscard]] bool segment_crosses_interior(
+    graphscore::GraphPosition first, graphscore::GraphPosition second,
+    const graphscore::WorldBounds& bounds) {
+  const double right  = bounds.origin.x + bounds.width;
+  const double bottom = bounds.origin.y + bounds.height;
+  if (first.x == second.x) {
+    return first.x > bounds.origin.x && first.x < right &&
+           std::min(first.y, second.y) < bottom &&
+           std::max(first.y, second.y) > bounds.origin.y;
+  }
+  return first.y == second.y && first.y > bounds.origin.y && first.y < bottom &&
+         std::min(first.x, second.x) < right &&
+         std::max(first.x, second.x) > bounds.origin.x;
+}
+
+void expect_orthogonal_with_rounded_turns(
+    const graphscore::CanvasConnectorGeometry& connector) {
+  ASSERT_GE(connector.route_points.size(), 2U);
+  for (std::size_t index = 1U; index < connector.route_points.size(); ++index) {
+    const graphscore::GraphPosition first  = connector.route_points[index - 1U];
+    const graphscore::GraphPosition second = connector.route_points[index];
+    EXPECT_TRUE(first.x == second.x || first.y == second.y);
+  }
+
+  std::size_t turn_count = 0U;
+  for (std::size_t index = 1U; index + 1U < connector.route_points.size();
+       ++index) {
+    const graphscore::GraphPosition before = connector.route_points[index - 1U];
+    const graphscore::GraphPosition corner = connector.route_points[index];
+    const graphscore::GraphPosition after  = connector.route_points[index + 1U];
+    turn_count += static_cast<std::size_t>((before.y == corner.y) !=
+                                           (corner.y == after.y));
+  }
+  ASSERT_GT(turn_count, 0U);
+  EXPECT_EQ(std::ranges::count(connector.render_path,
+                               graphscore::CanvasConnectorPathVerb::kQuadratic,
+                               &graphscore::CanvasConnectorPathElement::verb),
+            turn_count);
+}
 
 TEST(CanvasConnectorRouteResetTest,
      ResetsSelectedCustomRouteThroughOneUndoableCommand) {
@@ -89,6 +132,58 @@ TEST(CanvasConnectorRouteResetTest, AutomaticRouteIsASuccessfulNoOp) {
   ASSERT_TRUE(controller.select(fixture.source_id, fixture.output));
   EXPECT_TRUE(controller.reset_selected_route().ok());
   EXPECT_EQ(history.undo_stack_size(), 0U);
+}
+
+TEST(CanvasConnectorRouteResetTest,
+     ResetRestoresTheDeterministicObstacleAvoidingRoute) {
+  ResetRouteFixture fixture;
+  fixture.target->set_position({750.0, 0.0});
+  const graphscore::NodeId obstacle_id = fixture.project.add_node("Obstacle");
+  fixture.project.find_node(obstacle_id)->set_position({375.0, 0.0});
+
+  const graphscore::CanvasNotationScene automatic_scene =
+      graphscore::Canvas{}.layout_nodes(fixture.project, fixture.metrics);
+  ASSERT_EQ(automatic_scene.connectors.size(), 1U);
+  ASSERT_GT(automatic_scene.connectors.front().route_points.size(), 4U);
+  const auto obstacle =
+      std::ranges::find(automatic_scene.nodes, obstacle_id,
+                        &graphscore::CanvasNodeNotation::node_id);
+  ASSERT_NE(obstacle, automatic_scene.nodes.end());
+  for (std::size_t index = 1U;
+       index < automatic_scene.connectors.front().route_points.size();
+       ++index) {
+    EXPECT_FALSE(segment_crosses_interior(
+        automatic_scene.connectors.front().route_points[index - 1U],
+        automatic_scene.connectors.front().route_points[index],
+        obstacle->geometry.bounds));
+  }
+
+  ASSERT_TRUE(fixture.project.find_node(fixture.source_id)
+                  ->find_output(fixture.output)
+                  ->route()
+                  .set_custom_route({{400.0, 300.0}, {500.0, 300.0}})
+                  .ok());
+  graphscore::CanvasNotationScene scene =
+      graphscore::Canvas{}.layout_nodes(fixture.project, fixture.metrics);
+  ASSERT_EQ(scene.connectors.size(), 1U);
+  expect_orthogonal_with_rounded_turns(scene.connectors.front());
+  ASSERT_NE(scene.connectors.front().route_points,
+            automatic_scene.connectors.front().route_points);
+  graphscore::CommandHistory                     history;
+  graphscore::CanvasConnectorSelectionController controller{fixture.project,
+                                                            history, scene};
+
+  ASSERT_TRUE(controller.select(fixture.source_id, fixture.output));
+  ASSERT_TRUE(controller.reset_selected_route().ok());
+
+  EXPECT_EQ(scene.connectors.front(), automatic_scene.connectors.front());
+  ASSERT_TRUE(history.undo(fixture.project).ok());
+  ASSERT_TRUE(history.redo(fixture.project).ok());
+  const graphscore::CanvasNotationScene replayed_scene =
+      graphscore::Canvas{}.layout_nodes(fixture.project, fixture.metrics);
+  ASSERT_EQ(replayed_scene.connectors.size(), 1U);
+  EXPECT_EQ(replayed_scene.connectors.front(),
+            automatic_scene.connectors.front());
 }
 
 TEST(CanvasConnectorRouteResetTest, RejectsMissingOrStaleSelection) {
