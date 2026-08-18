@@ -99,17 +99,25 @@ int key_events_test() {
   shell.set_input_handler(&handler);
 
   // --- test: every KeyCode value round-trips unchanged -------------------
-  constexpr std::array<graphscore::KeyCode, 20> kAllCodes{
-      graphscore::KeyCode::kUnknown, graphscore::KeyCode::kLeft,
-      graphscore::KeyCode::kRight,   graphscore::KeyCode::kUp,
-      graphscore::KeyCode::kDown,    graphscore::KeyCode::kHome,
-      graphscore::KeyCode::kEnd,     graphscore::KeyCode::kMinus,
-      graphscore::KeyCode::kEquals,  graphscore::KeyCode::kBackspace,
-      graphscore::KeyCode::kDelete,  graphscore::KeyCode::kR,
-      graphscore::KeyCode::kDigit1,  graphscore::KeyCode::kDigit2,
-      graphscore::KeyCode::kDigit3,  graphscore::KeyCode::kDigit4,
-      graphscore::KeyCode::kDigit5,  graphscore::KeyCode::kDigit6,
-      graphscore::KeyCode::kDigit7,  graphscore::KeyCode::kDigit8,
+  constexpr std::array<graphscore::KeyCode, 35> kAllCodes{
+      graphscore::KeyCode::kUnknown,       graphscore::KeyCode::kLeft,
+      graphscore::KeyCode::kRight,         graphscore::KeyCode::kUp,
+      graphscore::KeyCode::kDown,          graphscore::KeyCode::kHome,
+      graphscore::KeyCode::kEnd,           graphscore::KeyCode::kMinus,
+      graphscore::KeyCode::kEquals,        graphscore::KeyCode::kBackspace,
+      graphscore::KeyCode::kDelete,        graphscore::KeyCode::kR,
+      graphscore::KeyCode::kDigit1,        graphscore::KeyCode::kDigit2,
+      graphscore::KeyCode::kDigit3,        graphscore::KeyCode::kDigit4,
+      graphscore::KeyCode::kDigit5,        graphscore::KeyCode::kDigit6,
+      graphscore::KeyCode::kDigit7,        graphscore::KeyCode::kDigit8,
+      graphscore::KeyCode::kDigit9,        graphscore::KeyCode::kDigit0,
+      graphscore::KeyCode::kReturn,        graphscore::KeyCode::kEscape,
+      graphscore::KeyCode::kTab,           graphscore::KeyCode::kSpace,
+      graphscore::KeyCode::kNumPad1,       graphscore::KeyCode::kNumPad2,
+      graphscore::KeyCode::kNumPad3,       graphscore::KeyCode::kNumPad4,
+      graphscore::KeyCode::kNumPad5,       graphscore::KeyCode::kNumPad6,
+      graphscore::KeyCode::kNumPad7,       graphscore::KeyCode::kNumPad0,
+      graphscore::KeyCode::kNumPadDecimal,
   };
   for (const graphscore::KeyCode code : kAllCodes) {
     const std::size_t    before = handler.events.size();
@@ -338,18 +346,29 @@ int key_events_shell_test() {
 
   // Logical letter-mnemonic keycodes (SDL_Keycode == lowercase ASCII): the
   // third dispatch parameter is the layout-mapped keycode, and the app binds
-  // letters by it, independent of the physical scancode (§4). `r` and `n`
-  // (0x72 / 0x6e) map to LogicalKey::kR/kN; an unmapped letter `t` (0x74) is
-  // kUnknown.
+  // letters by it, independent of the physical scancode (§4). Exercise every
+  // mnemonic in the keyboard workflow, plus an unmapped letter.
   struct LogicalCase {
     std::uint32_t          keycode;
     graphscore::LogicalKey expected;
   };
 
-  constexpr std::array<LogicalCase, 3> kLogicalCases{{
-      {0x72, graphscore::LogicalKey::kR},        // 'r'
+  constexpr std::array<LogicalCase, 15> kLogicalCases{{
+      {0x61, graphscore::LogicalKey::kA},        // 'a'
+      {0x62, graphscore::LogicalKey::kB},        // 'b'
+      {0x63, graphscore::LogicalKey::kC},        // 'c'
+      {0x64, graphscore::LogicalKey::kD},        // 'd'
+      {0x65, graphscore::LogicalKey::kE},        // 'e'
+      {0x66, graphscore::LogicalKey::kF},        // 'f'
+      {0x67, graphscore::LogicalKey::kG},        // 'g'
       {0x6e, graphscore::LogicalKey::kN},        // 'n'
+      {0x72, graphscore::LogicalKey::kR},        // 'r'
+      {0x78, graphscore::LogicalKey::kX},        // 'x'
+      {0x76, graphscore::LogicalKey::kV},        // 'v'
+      {0x7a, graphscore::LogicalKey::kZ},        // 'z'
+      {0x6b, graphscore::LogicalKey::kK},        // 'k'
       {0x74, graphscore::LogicalKey::kUnknown},  // 't'
+      {0x79, graphscore::LogicalKey::kUnknown},  // 'y'
   }};
   for (const LogicalCase& test_case : kLogicalCases) {
     const std::size_t before = handler.events.size();
