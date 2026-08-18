@@ -63,7 +63,7 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 - [x] M6-phase-35 Multi-select, move, duplicate, copy/paste, and delete nodes with deterministic connector remapping.
 - [x] M6-phase-36 Search/focus nodes by name and UUID.
 - [x] M6-phase-37 Undo/redo a complete connector drag as one transaction.
-- [ ] M6-phase-38 Retain custom colors and freeform notes in project persistence.
+- [x] M6-phase-38 Retain custom colors and freeform notes in project persistence.
 
 ## Acceptance Criteria
 
