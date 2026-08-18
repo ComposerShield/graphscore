@@ -58,6 +58,35 @@ struct CanvasFixture {
   }
 };
 
+class RecordingPlaybackController final
+    : public graphscore::CanvasConnectorPlaybackController {
+ public:
+  explicit RecordingPlaybackController(
+      std::optional<graphscore::NodeId> active_node) noexcept
+      : active_node_(active_node) {}
+
+  [[nodiscard]] std::optional<graphscore::NodeId> active_node()
+      const noexcept override {
+    return active_node_;
+  }
+
+  void queue_sequential_connector(
+      graphscore::CanvasConnectorSelection connector) noexcept override {
+    sequential = connector;
+  }
+
+  void take_vertical_connector(
+      graphscore::CanvasConnectorSelection connector) noexcept override {
+    vertical = connector;
+  }
+
+  std::optional<graphscore::CanvasConnectorSelection> sequential;
+  std::optional<graphscore::CanvasConnectorSelection> vertical;
+
+ private:
+  std::optional<graphscore::NodeId> active_node_;
+};
+
 TEST(CanvasSingleClickSelectionTest, SelectsPortsControlsAndNodeBackground) {
   CanvasFixture fixture;
   ASSERT_EQ(fixture.scene.nodes.size(), 2U);
@@ -372,6 +401,78 @@ TEST(CanvasPlaybackActionAvailabilityTest, ReportsWhenPlaybackHasNoActiveNode) {
   EXPECT_FALSE(result.available());
   EXPECT_FALSE(result.request.has_value());
   EXPECT_EQ(result.unavailable_reason, "playback is not active");
+}
+
+TEST(CanvasPlaybackActionControllerTest,
+     RoutesSequentialOutputThroughTheControllerSeam) {
+  CanvasFixture               fixture;
+  RecordingPlaybackController controller(fixture.source);
+  const graphscore::CanvasConnectorPlaybackActionRequest request{
+      {fixture.source, fixture.output}};
+
+  const auto result = graphscore::canvas_connector_playback_action(
+      fixture.project, request, controller);
+
+  ASSERT_TRUE(result.available()) << result.unavailable_reason;
+  EXPECT_EQ(controller.sequential, request.connector);
+  EXPECT_FALSE(controller.vertical.has_value());
+}
+
+TEST(CanvasPlaybackActionControllerTest,
+     RoutesVerticalOutputThroughTheControllerSeam) {
+  CanvasFixture fixture;
+  ASSERT_TRUE(fixture.project.find_node(fixture.source)
+                  ->set_output_type(fixture.output,
+                                    graphscore::ConnectorType::kVertical)
+                  .ok());
+  RecordingPlaybackController controller(fixture.source);
+  const graphscore::CanvasConnectorPlaybackActionRequest request{
+      {fixture.source, fixture.output}};
+
+  const auto result = graphscore::canvas_connector_playback_action(
+      fixture.project, request, controller);
+
+  ASSERT_TRUE(result.available()) << result.unavailable_reason;
+  EXPECT_EQ(controller.vertical, request.connector);
+  EXPECT_FALSE(controller.sequential.has_value());
+}
+
+TEST(CanvasPlaybackActionControllerTest,
+     DoesNotRouteUnavailableOrStaleConnections) {
+  CanvasFixture                                          fixture;
+  const graphscore::CanvasConnectorPlaybackActionRequest request{
+      {fixture.source, fixture.output}};
+  RecordingPlaybackController inactive_controller(fixture.destination);
+
+  const auto inactive = graphscore::canvas_connector_playback_action(
+      fixture.project, request, inactive_controller);
+  ASSERT_TRUE(graphscore::Graph(fixture.project)
+                  .disconnect(fixture.source, fixture.output)
+                  .ok());
+  RecordingPlaybackController stale_controller(fixture.source);
+  const auto stale = graphscore::canvas_connector_playback_action(
+      fixture.project, request, stale_controller);
+  fixture.project.find_node(fixture.source)
+      ->find_output(fixture.output)
+      ->set_destination(graphscore::ConnectorDestination{
+          graphscore::NodeId::generate(), graphscore::ConnectorId::generate()});
+  RecordingPlaybackController dangling_controller(fixture.source);
+  const auto dangling = graphscore::canvas_connector_playback_action(
+      fixture.project, request, dangling_controller);
+
+  EXPECT_FALSE(inactive.available());
+  EXPECT_EQ(inactive.unavailable_reason,
+            "connection source is not the active node");
+  EXPECT_FALSE(inactive_controller.sequential.has_value());
+  EXPECT_FALSE(inactive_controller.vertical.has_value());
+  EXPECT_FALSE(stale.available());
+  EXPECT_EQ(stale.unavailable_reason, "connection is no longer available");
+  EXPECT_FALSE(stale_controller.sequential.has_value());
+  EXPECT_FALSE(stale_controller.vertical.has_value());
+  EXPECT_FALSE(dangling.available());
+  EXPECT_EQ(dangling.unavailable_reason, "connection is no longer available");
+  EXPECT_FALSE(dangling_controller.sequential.has_value());
+  EXPECT_FALSE(dangling_controller.vertical.has_value());
 }
 
 }  // namespace

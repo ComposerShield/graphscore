@@ -667,12 +667,37 @@ struct CanvasConnectorPlaybackActionResult {
   [[nodiscard]] bool available() const noexcept { return request.has_value(); }
 };
 
+// App-owned playback implementations expose current transport state and the
+// two semantic connector actions through this toolkit-neutral seam. Canvas
+// routes requests here but does not render audio; Milestones 08/09 connect an
+// implementation to the writer scheduler and plugin chains.
+class CanvasConnectorPlaybackController {
+ public:
+  virtual ~CanvasConnectorPlaybackController() = default;
+
+  [[nodiscard]] virtual std::optional<NodeId> active_node() const noexcept = 0;
+
+  virtual void queue_sequential_connector(
+      CanvasConnectorSelection connector) noexcept = 0;
+  virtual void take_vertical_connector(
+      CanvasConnectorSelection connector) noexcept = 0;
+};
+
 // Enables an action only when its output belongs to the active node. No active
 // node represents stopped playback and carries a distinct unavailable reason.
 [[nodiscard]] CanvasConnectorPlaybackActionResult
 canvas_connector_playback_action(
     const CanvasConnectorPlaybackActionRequest& request,
     std::optional<NodeId>                       active_node);
+
+// Resolves availability against controller-owned transport state, looks up the
+// output's current semantic type, and routes exactly one action through the
+// corresponding controller method. Stale or disconnected identities are
+// unavailable and never reach the controller.
+[[nodiscard]] CanvasConnectorPlaybackActionResult
+canvas_connector_playback_action(
+    const Project& project, const CanvasConnectorPlaybackActionRequest& request,
+    CanvasConnectorPlaybackController& controller);
 
 // Resolves a normal double-click to a playback-action request only when the
 // same topmost target would be selected as a connector path by a single click.

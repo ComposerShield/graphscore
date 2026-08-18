@@ -1569,6 +1569,38 @@ CanvasConnectorPlaybackActionResult canvas_connector_playback_action(
   return {request, {}};
 }
 
+CanvasConnectorPlaybackActionResult canvas_connector_playback_action(
+    const Project& project, const CanvasConnectorPlaybackActionRequest& request,
+    CanvasConnectorPlaybackController& controller) {
+  auto result =
+      canvas_connector_playback_action(request, controller.active_node());
+  if (!result.available()) {
+    return result;
+  }
+
+  const Node* const source = project.find_node(request.connector.source_node);
+  const OutputConnector* const output =
+      source == nullptr
+          ? nullptr
+          : source->find_output(request.connector.source_connector);
+  if (output == nullptr || !output->destination().has_value()) {
+    return {std::nullopt, "connection is no longer available"};
+  }
+  const ConnectorDestination destination = *output->destination();
+  const Node* const destination_node     = project.find_node(destination.node);
+  if (destination_node == nullptr ||
+      destination_node->find_input(destination.connector) == nullptr) {
+    return {std::nullopt, "connection is no longer available"};
+  }
+
+  if (output->type() == ConnectorType::kSequential) {
+    controller.queue_sequential_connector(request.connector);
+  } else {
+    controller.take_vertical_connector(request.connector);
+  }
+  return result;
+}
+
 std::optional<CanvasConnectorPlaybackActionRequest>
 canvas_action_circle_playback_action_request(const CanvasNotationScene& scene,
                                              GraphPosition pointer) noexcept {
