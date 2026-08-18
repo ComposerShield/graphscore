@@ -33,19 +33,16 @@
 namespace graphscore::writer_app {
 // ---- key-event delivery tests (M5-phase-19b-ii) ----------------------------
 //
-// This sub-phase delivers platform-neutral key events from SDL (or a test
-// seam) to a registered InputHandler; it does not interpret them. These
-// tests only assert that a key event arrives at the handler unchanged
-// (headless seam) or correctly translated from real SDL scancode/modifier
-// values (production SDL path). Interpreting keys into selection changes is
-// M5-phase-19b-iii and is out of scope here.
+// The headless test asserts that platform-neutral key events arrive unchanged.
+// The production SDL-path test also covers M5-phase-53's physical/logical
+// keyboard-layout split and one moved-letter route into step entry.
 
 namespace {
 // Records every KeyEvent delivered to on_key_press() and every composed
 // TextInputEvent delivered to on_text_input(); the pointer methods and
 // on_cancel() are no-ops because this handler exists only to observe key and
-// text delivery. Deliberately not SelectionToolHandler — that handler is
-// untouched this sub-phase and inherits the default no-op on_key_press.
+// text delivery. Translation-only cases use it rather than interpreting an
+// action; the layout-routing case below installs SelectionToolHandler.
 class RecordingKeyHandler final : public graphscore::InputHandler {
  public:
   void on_pointer_press(graphscore::PointerEvent /*event*/) override {}
@@ -245,7 +242,11 @@ int key_events_shell_test() {
   constexpr std::uint32_t kScancodeEquals    = 46;
   constexpr std::uint32_t kScancodeBackspace = 42;
   constexpr std::uint32_t kScancodeDelete    = 76;
+  constexpr std::uint32_t kScancodeA         = 4;
+  constexpr std::uint32_t kScancodeQ         = 20;
   constexpr std::uint32_t kScancodeR         = 21;
+  constexpr std::uint32_t kScancodeY         = 28;
+  constexpr std::uint32_t kScancodeZ         = 29;
   constexpr std::uint32_t kScancodeDigit1    = 30;
   constexpr std::uint32_t kScancodeDigit2    = 31;
   constexpr std::uint32_t kScancodeDigit3    = 32;
@@ -269,7 +270,6 @@ int key_events_shell_test() {
   constexpr std::uint32_t kScancodeKp7       = 95;
   constexpr std::uint32_t kScancodeKp0       = 98;
   constexpr std::uint32_t kScancodeKpPeriod  = 99;
-  constexpr std::uint32_t kScancodeA         = 4;
 
   struct ScancodeCase {
     std::uint32_t       scancode;
@@ -382,6 +382,123 @@ int key_events_shell_test() {
       shell.set_input_handler(nullptr);
       return 1;
     }
+  }
+
+  // Named layout cases exercise both identity axes together. Letter
+  // mnemonics follow the character produced by the active layout, while
+  // digits, symbols, and numpad keys retain their physical identity even
+  // when the same press produces a different logical character.
+  struct KeyboardLayoutCase {
+    const char*            layout;
+    std::uint32_t          scancode;
+    std::uint32_t          keycode;
+    graphscore::KeyCode    expected_code;
+    graphscore::LogicalKey expected_logical;
+  };
+
+  constexpr std::array<KeyboardLayoutCase, 9> kKeyboardLayoutCases{{
+      {"QWERTY A", kScancodeA, 0x61, graphscore::KeyCode::kUnknown,
+       graphscore::LogicalKey::kA},
+      {"AZERTY A", kScancodeQ, 0x61, graphscore::KeyCode::kUnknown,
+       graphscore::LogicalKey::kA},
+      {"AZERTY Q", kScancodeA, 0x71, graphscore::KeyCode::kUnknown,
+       graphscore::LogicalKey::kUnknown},
+      {"QWERTZ Z", kScancodeY, 0x7A, graphscore::KeyCode::kUnknown,
+       graphscore::LogicalKey::kZ},
+      {"QWERTZ Y", kScancodeZ, 0x79, graphscore::KeyCode::kUnknown,
+       graphscore::LogicalKey::kUnknown},
+      {"AZERTY top-row 2", kScancodeDigit2, 0xE9, graphscore::KeyCode::kDigit2,
+       graphscore::LogicalKey::kUnknown},
+      {"AZERTY physical minus", kScancodeMinus, 0x29,
+       graphscore::KeyCode::kMinus, graphscore::LogicalKey::kUnknown},
+      {"QWERTZ physical equals", kScancodeEquals, 0xB4,
+       graphscore::KeyCode::kEquals, graphscore::LogicalKey::kUnknown},
+      {"AZERTY numpad 3", kScancodeKp3, 0x33, graphscore::KeyCode::kNumPad3,
+       graphscore::LogicalKey::kUnknown},
+  }};
+  for (const KeyboardLayoutCase& test_case : kKeyboardLayoutCases) {
+    const std::size_t before = handler.events.size();
+    shell.dispatch_sdl_test_key_event(test_case.scancode, 0, test_case.keycode);
+    if (handler.events.size() != before + 1 ||
+        handler.events.back().code != test_case.expected_code ||
+        handler.events.back().logical != test_case.expected_logical) {
+      std::fprintf(stderr,
+                   "key-events-shell-test: %s did not preserve physical and "
+                   "logical identity\n",
+                   test_case.layout);
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+  }
+
+  // Route a moved AZERTY letter through the production SDL seam into step
+  // entry. The US physical A position produces logical Q and must do nothing;
+  // the physical Q position produces logical A and must commit A4.
+  {
+    const SelfTestMetrics metrics;
+    auto                  project = build_key_selection_project(metrics);
+    if (!project.has_value()) {
+      std::fprintf(stderr,
+                   "key-events-shell-test: layout-routing fixture failed\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    SelectionToolHandler layout_handler(std::move(project->project),
+                                        std::move(project->layout), &shell);
+    layout_handler.set_metrics(&metrics);
+    layout_handler.set_active_tool(graphscore::ActiveTool::kNoteEntry);
+    shell.set_input_handler(&layout_handler);
+
+    const auto voice = [&]() -> const graphscore::VoiceContent& {
+      return layout_handler.project()
+          .find_node(project->node_id)
+          ->lane(project->track_ids[0])
+          ->stave(project->stave_ids[0])
+          ->voice(voice_one());
+    };
+    const graphscore::VoiceContent voice_before = voice();
+
+    shell.dispatch_sdl_test_key_event(kScancodeA, 0, 0x71);
+    const auto cursor_before = layout_handler.step_entry_cursor();
+    if (layout_handler.previous_pitch().has_value() ||
+        !cursor_before.has_value() ||
+        cursor_before->position != graphscore::Rational(0) ||
+        !(voice() == voice_before)) {
+      std::fprintf(stderr,
+                   "key-events-shell-test: AZERTY physical A triggered the "
+                   "US-position mnemonic\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+
+    shell.dispatch_sdl_test_key_event(kScancodeQ, 0, 0x61);
+    const auto               cursor_after = layout_handler.step_entry_cursor();
+    const auto&              events       = voice().events();
+    const graphscore::Chord* chord        = nullptr;
+    if (!events.empty()) {
+      chord = std::get_if<graphscore::Chord>(&events.front());
+    }
+    const bool has_a4 =
+        chord != nullptr &&
+        std::any_of(chord->notes.begin(), chord->notes.end(),
+                    [](const auto& note) {
+                      return note.pitch == spelled(graphscore::Letter::kA, 4);
+                    });
+    if (layout_handler.previous_pitch() !=
+            std::optional<graphscore::SpelledPitch>(
+                spelled(graphscore::Letter::kA, 4)) ||
+        !cursor_after.has_value() ||
+        cursor_after->position != *graphscore::Rational::create(1, 4) ||
+        !has_a4 ||
+        graphscore::event_duration(events.front()).resolved() !=
+            *graphscore::Rational::create(1, 4)) {
+      std::fprintf(stderr,
+                   "key-events-shell-test: AZERTY logical A did not commit "
+                   "through step entry\n");
+      shell.set_input_handler(nullptr);
+      return 1;
+    }
+    shell.set_input_handler(&handler);
   }
 
   // The repeat flag surfaces verbatim: dispatch_sdl_test_key_event never

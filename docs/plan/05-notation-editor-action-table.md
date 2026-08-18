@@ -119,10 +119,10 @@ shell's header explicitly deferred to this table.
   semantics and force Shift for the most frequent operations. Physical
   identity also preserves the already-delivered M5-phase-25 interval digits
   byte-for-byte.
-- Letter mnemonics must be logical: on AZERTY the physical key that is `R` on
-  QWERTY is labelled `T`, so a physical `R` binding would force the composer
-  to hunt for the US position of a mnemonic — the exact "relying on US key
-  labels alone" failure M5-phase-53 forbids.
+- Letter mnemonics must be logical: on AZERTY the physical key that produces
+  `A` on QWERTY produces `Q`, so a physical `A` binding would force the
+  composer to hunt for the US position of a mnemonic — the exact "relying on
+  US key labels alone" failure M5-phase-53 forbids.
 - `-` and `=` stay physical: they are symbol keys (not letters), their
   unmodified US position is canonical, and making them logical would force
   Shift/AltGr on AZERTY/QWERTZ, breaking the unmodified-chord discipline the

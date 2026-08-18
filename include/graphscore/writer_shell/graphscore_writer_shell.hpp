@@ -120,8 +120,8 @@ enum class KeyCode : std::uint8_t {
 // (undo/redo), `K` (command palette). A mnemonic must mean the same
 // character on every layout, so these are translated from SDL's logical
 // keycode (the character the active layout produces), never from the
-// physical scancode: on AZERTY the physical key that is `R` on QWERTY is
-// labelled `T`, and a physical binding would force the composer to hunt for
+// physical scancode: on AZERTY the physical key that produces `A` on QWERTY
+// produces `Q`, and a physical binding would force the composer to hunt for
 // the US position of a mnemonic.
 //
 // Only the letters that are bound are represented; every other logical key
