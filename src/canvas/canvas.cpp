@@ -4,6 +4,7 @@
 #include <graphscore/canvas/graphscore_canvas.hpp>
 #include <graphscore/domain/bind_output_event_command.hpp>
 #include <graphscore/domain/connect_command.hpp>
+#include <graphscore/domain/disconnect_command.hpp>
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/project.hpp>
 #include <graphscore/domain/reset_route_command.hpp>
@@ -1912,6 +1913,56 @@ Result CanvasConnectorSelectionController::reset_selected_route() noexcept {
     }
     static_assert(std::is_nothrow_move_assignable_v<CanvasConnectorGeometry>);
     *found = std::move(*automatic);
+    return Result();
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+}
+
+Result
+CanvasConnectorSelectionController::delete_selected_connector() noexcept {
+  if (!selection_.has_value() ||
+      !scene_connectors_match_project(scene_, project_) ||
+      !scene_nodes_match_project(scene_, project_)) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+
+  const CanvasConnectorSelection selected = *selection_;
+  Node* const            node = project_.find_node(selected.source_node);
+  OutputConnector* const output =
+      node == nullptr ? nullptr : node->find_output(selected.source_connector);
+  if (output == nullptr || !output->destination().has_value()) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+
+  try {
+    const auto found = std::ranges::find_if(
+        scene_.connectors,
+        [&selected](const CanvasConnectorGeometry& geometry) {
+          return geometry.source_node == selected.source_node &&
+                 geometry.source_connector == selected.source_connector;
+        });
+    if (found == scene_.connectors.end()) {
+      return Result(ResultCode::kInvalidArgument);
+    }
+
+    const auto current = connector_geometry(
+        scene_, selected.source_node, selected.source_connector,
+        *output->destination(), output->type(), output->route());
+    if (!current.has_value() || *current != *found) {
+      return Result(ResultCode::kInvalidArgument);
+    }
+
+    const Result result = history_.execute_new(
+        std::make_unique<DisconnectCommand>(selected.source_node,
+                                            selected.source_connector),
+        project_);
+    if (!result.ok()) {
+      return result;
+    }
+    static_assert(std::is_nothrow_move_assignable_v<CanvasConnectorGeometry>);
+    scene_.connectors.erase(found);
+    selection_.reset();
     return Result();
   } catch (...) {
     return Result(ResultCode::kOutOfMemory);

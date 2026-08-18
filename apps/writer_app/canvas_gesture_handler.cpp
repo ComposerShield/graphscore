@@ -133,6 +133,11 @@ void CanvasGestureHandler::on_key_press(graphscore::KeyEvent event) {
   if (chord == ChordClass::kUnmodified) {
     bool consumed = true;
     switch (event.code) {
+      case graphscore::KeyCode::kDelete:
+        if (!event.repeat && delete_selected_connector_handler_) {
+          delete_selected_connector_handler_();
+        }
+        break;
       case graphscore::KeyCode::kLeft:
         (void)navigation_.pan({graphscore::kKeyboardPanStep, 0.0});
         break;
@@ -209,6 +214,11 @@ void CanvasGestureHandler::set_keyboard_focus(
 void CanvasGestureHandler::set_reset_selected_connector_handler(
     ResetSelectedConnectorHandler handler) {
   reset_selected_connector_handler_ = std::move(handler);
+}
+
+void CanvasGestureHandler::set_delete_selected_connector_handler(
+    DeleteSelectedConnectorHandler handler) {
+  delete_selected_connector_handler_ = std::move(handler);
 }
 
 void CanvasGestureHandler::set_window_center(

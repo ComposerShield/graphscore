@@ -718,9 +718,9 @@ class CanvasConnectorSegmentDragController {
   bool          active_              = false;
 };
 
-// Owns the selected connector identity and its route-reset action. Automatic
-// geometry is prepared before the command is committed, then published with a
-// no-throw move so the project and retained scene cannot be left disagreeing.
+// Owns the selected connection identity and its route-reset/delete actions.
+// Retained-scene updates are prepared before commands are committed, then
+// published with no-throw operations so project and scene cannot disagree.
 class CanvasConnectorSelectionController {
  public:
   CanvasConnectorSelectionController(Project& project, CommandHistory& history,
@@ -750,6 +750,10 @@ class CanvasConnectorSelectionController {
   // selected connector to deterministic automatic routing. An already
   // automatic route is a successful no-op and does not add history.
   [[nodiscard]] Result reset_selected_route() noexcept;
+
+  // Delete's canvas action: disconnect the selected output through command
+  // history while retaining its named output port for later reconnection.
+  [[nodiscard]] Result delete_selected_connector() noexcept;
 
  private:
   Project&                                project_;

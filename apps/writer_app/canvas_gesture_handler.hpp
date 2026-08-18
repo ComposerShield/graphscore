@@ -79,6 +79,12 @@ class CanvasGestureHandler final : public graphscore::InputHandler {
   void set_reset_selected_connector_handler(
       ResetSelectedConnectorHandler handler);
 
+  // Installs the graph-canvas owner for deleting the selected connection.
+  // Delete remains notation-owned whenever canvas keyboard focus is inactive.
+  using DeleteSelectedConnectorHandler = std::function<void()>;
+  void set_delete_selected_connector_handler(
+      DeleteSelectedConnectorHandler handler);
+
   // The pinch focal fallback (logical viewport coordinates), forwarded to
   // the controller.
   void set_window_center(graphscore::ViewportPosition center) noexcept;
@@ -105,7 +111,8 @@ class CanvasGestureHandler final : public graphscore::InputHandler {
   graphscore::InputHandler*              delegate_       = nullptr;
   const graphscore::FocusPointProvider*  focus_provider_ = nullptr;
   CanvasKeyboardFocus keyboard_focus_ = CanvasKeyboardFocus::kNotation;
-  ResetSelectedConnectorHandler               reset_selected_connector_handler_;
+  ResetSelectedConnectorHandler  reset_selected_connector_handler_;
+  DeleteSelectedConnectorHandler delete_selected_connector_handler_;
   std::optional<graphscore::ViewportPosition> middle_drag_position_;
 };
 

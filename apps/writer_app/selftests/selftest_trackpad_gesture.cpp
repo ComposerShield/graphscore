@@ -354,6 +354,39 @@ int trackpad_gesture_test() {
     }
   }
 
+  // --- test: Delete belongs to the focused canvas ------------------------
+  {
+    CanvasGestureHandler     handler;
+    RecordingDelegateHandler delegate;
+    int                      deletes = 0;
+    handler.set_delegate(&delegate);
+    handler.set_keyboard_focus(CanvasKeyboardFocus::kCanvas);
+    handler.set_delete_selected_connector_handler([&deletes] { ++deletes; });
+
+    graphscore::KeyEvent delete_key;
+    delete_key.code = graphscore::KeyCode::kDelete;
+    handler.on_key_press(delete_key);
+    delete_key.repeat = true;
+    handler.on_key_press(delete_key);
+    if (deletes != 1 || !delegate.keys.empty()) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: canvas Delete was not consumed "
+                   "exactly once\n");
+      return 1;
+    }
+
+    handler.set_keyboard_focus(CanvasKeyboardFocus::kNotation);
+    delete_key.repeat = false;
+    handler.on_key_press(delete_key);
+    if (delegate.keys.size() != 1 ||
+        delegate.keys.back().code != graphscore::KeyCode::kDelete) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: notation focus lost Delete "
+                   "ownership\n");
+      return 1;
+    }
+  }
+
   // --- test: Primary+Shift+R belongs to the focused canvas ---------------
   {
     for (const PrimaryModifier primary :
