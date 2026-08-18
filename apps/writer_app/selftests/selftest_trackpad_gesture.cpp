@@ -354,6 +354,48 @@ int trackpad_gesture_test() {
     }
   }
 
+  // --- test: Primary+Shift+R belongs to the focused canvas ---------------
+  {
+    for (const PrimaryModifier primary :
+         {PrimaryModifier::kMeta, PrimaryModifier::kControl}) {
+      CanvasGestureHandler     handler(primary);
+      RecordingDelegateHandler delegate;
+      int                      resets = 0;
+      handler.set_delegate(&delegate);
+      handler.set_keyboard_focus(CanvasKeyboardFocus::kCanvas);
+      handler.set_reset_selected_connector_handler([&resets] { ++resets; });
+
+      graphscore::KeyEvent reset;
+      reset.modifiers.shift = true;
+      reset.logical         = graphscore::LogicalKey::kR;
+      if (primary == PrimaryModifier::kMeta) {
+        reset.modifiers.meta = true;
+      } else {
+        reset.modifiers.control = true;
+      }
+      handler.on_key_press(reset);
+      reset.repeat = true;
+      handler.on_key_press(reset);
+      if (resets != 1 || !delegate.keys.empty()) {
+        std::fprintf(stderr,
+                     "trackpad-gesture-test: canvas Primary+Shift+R was not "
+                     "consumed exactly once\n");
+        return 1;
+      }
+
+      handler.set_keyboard_focus(CanvasKeyboardFocus::kNotation);
+      reset.repeat = false;
+      handler.on_key_press(reset);
+      if (delegate.keys.size() != 1 ||
+          delegate.keys.back().logical != graphscore::LogicalKey::kR) {
+        std::fprintf(stderr,
+                     "trackpad-gesture-test: notation focus stole canvas "
+                     "Primary+Shift+R ownership\n");
+        return 1;
+      }
+    }
+  }
+
   // --- test: wheel policy normalizes Primary for both platform mappings ----
   for (const PrimaryModifier primary :
        {PrimaryModifier::kMeta, PrimaryModifier::kControl}) {

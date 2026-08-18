@@ -8,6 +8,7 @@
 #include <graphscore/writer_shell/graphscore_writer_shell.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 
 namespace graphscore::writer_app {
@@ -71,6 +72,13 @@ class CanvasGestureHandler final : public graphscore::InputHandler {
       const graphscore::FocusPointProvider* provider) noexcept;
   void set_keyboard_focus(CanvasKeyboardFocus focus) noexcept;
 
+  // Installs the graph-canvas owner for the selected-connector reset action.
+  // The callback is consulted only while canvas keyboard focus is active; the
+  // notation context therefore keeps ownership of the same chord otherwise.
+  using ResetSelectedConnectorHandler = std::function<void()>;
+  void set_reset_selected_connector_handler(
+      ResetSelectedConnectorHandler handler);
+
   // The pinch focal fallback (logical viewport coordinates), forwarded to
   // the controller.
   void set_window_center(graphscore::ViewportPosition center) noexcept;
@@ -97,6 +105,7 @@ class CanvasGestureHandler final : public graphscore::InputHandler {
   graphscore::InputHandler*              delegate_       = nullptr;
   const graphscore::FocusPointProvider*  focus_provider_ = nullptr;
   CanvasKeyboardFocus keyboard_focus_ = CanvasKeyboardFocus::kNotation;
+  ResetSelectedConnectorHandler               reset_selected_connector_handler_;
   std::optional<graphscore::ViewportPosition> middle_drag_position_;
 };
 

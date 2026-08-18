@@ -123,6 +123,13 @@ void CanvasGestureHandler::on_key_press(graphscore::KeyEvent event) {
     (void)navigation_.zoom_in(keyboard_zoom_focal());
     return;
   }
+  if (chord == ChordClass::kShiftPrimary &&
+      event.logical == graphscore::LogicalKey::kR) {
+    if (!event.repeat && reset_selected_connector_handler_) {
+      reset_selected_connector_handler_();
+    }
+    return;
+  }
   if (chord == ChordClass::kUnmodified) {
     bool consumed = true;
     switch (event.code) {
@@ -197,6 +204,11 @@ void CanvasGestureHandler::set_focus_point_provider(
 void CanvasGestureHandler::set_keyboard_focus(
     CanvasKeyboardFocus focus) noexcept {
   keyboard_focus_ = focus;
+}
+
+void CanvasGestureHandler::set_reset_selected_connector_handler(
+    ResetSelectedConnectorHandler handler) {
+  reset_selected_connector_handler_ = std::move(handler);
 }
 
 void CanvasGestureHandler::set_window_center(

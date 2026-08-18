@@ -6,6 +6,7 @@
 #include <graphscore/domain/connect_command.hpp>
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/project.hpp>
+#include <graphscore/domain/reset_route_command.hpp>
 #include <graphscore/domain/set_custom_route_command.hpp>
 #include <graphscore/domain/set_listener_policy_command.hpp>
 #include <graphscore/domain/set_node_position_command.hpp>
@@ -1822,6 +1823,99 @@ void CanvasConnectorSegmentDragController::cancel() noexcept {
   destination_start_.reset();
   preview_changed_ = false;
   active_          = false;
+}
+
+CanvasConnectorSelectionController::CanvasConnectorSelectionController(
+    Project& project, CommandHistory& history,
+    CanvasNotationScene& scene) noexcept
+    : project_(project), history_(history), scene_(scene) {}
+
+bool CanvasConnectorSelectionController::select(
+    NodeId source_node, ConnectorId source_connector) noexcept {
+  if (!scene_connectors_match_project(scene_, project_) ||
+      !scene_nodes_match_project(scene_, project_)) {
+    return false;
+  }
+  const Node* const            node = project_.find_node(source_node);
+  const OutputConnector* const output =
+      node == nullptr ? nullptr : node->find_output(source_connector);
+  if (output == nullptr || !output->destination().has_value()) {
+    return false;
+  }
+  const auto found = std::ranges::find_if(
+      scene_.connectors,
+      [source_node, source_connector](const CanvasConnectorGeometry& geometry) {
+        return geometry.source_node == source_node &&
+               geometry.source_connector == source_connector;
+      });
+  if (found == scene_.connectors.end()) {
+    return false;
+  }
+  selection_ = CanvasConnectorSelection{source_node, source_connector};
+  return true;
+}
+
+void CanvasConnectorSelectionController::clear_selection() noexcept {
+  selection_.reset();
+}
+
+Result CanvasConnectorSelectionController::reset_selected_route() noexcept {
+  if (!selection_.has_value() ||
+      !scene_connectors_match_project(scene_, project_) ||
+      !scene_nodes_match_project(scene_, project_)) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+
+  const CanvasConnectorSelection selected = *selection_;
+  Node* const            node = project_.find_node(selected.source_node);
+  OutputConnector* const output =
+      node == nullptr ? nullptr : node->find_output(selected.source_connector);
+  if (output == nullptr || !output->destination().has_value()) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+
+  try {
+    const auto found = std::ranges::find_if(
+        scene_.connectors,
+        [&selected](const CanvasConnectorGeometry& geometry) {
+          return geometry.source_node == selected.source_node &&
+                 geometry.source_connector == selected.source_connector;
+        });
+    if (found == scene_.connectors.end()) {
+      return Result(ResultCode::kInvalidArgument);
+    }
+
+    const auto current = connector_geometry(
+        scene_, selected.source_node, selected.source_connector,
+        *output->destination(), output->type(), output->route());
+    if (!current.has_value() || *current != *found) {
+      return Result(ResultCode::kInvalidArgument);
+    }
+    if (output->route().is_automatic()) {
+      return Result();
+    }
+
+    const RouteGeometry automatic_route_geometry;
+    auto                automatic = connector_geometry(
+        scene_, selected.source_node, selected.source_connector,
+        *output->destination(), output->type(), automatic_route_geometry);
+    if (!automatic.has_value()) {
+      return Result(ResultCode::kInvalidArgument);
+    }
+
+    const Result result = history_.execute_new(
+        std::make_unique<ResetRouteCommand>(selected.source_node,
+                                            selected.source_connector),
+        project_);
+    if (!result.ok()) {
+      return result;
+    }
+    static_assert(std::is_nothrow_move_assignable_v<CanvasConnectorGeometry>);
+    *found = std::move(*automatic);
+    return Result();
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
 }
 
 bool CanvasConnectorSegmentDragController::set_preview_route(

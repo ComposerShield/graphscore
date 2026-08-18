@@ -557,6 +557,16 @@ struct CanvasConnectorGeometry {
   [[nodiscard]] bool operator==(const CanvasConnectorGeometry&) const = default;
 };
 
+// The stable identity of a selected connector. A scene vector index is not
+// suitable selection state because project edits can reorder derived geometry.
+struct CanvasConnectorSelection {
+  NodeId      source_node;
+  ConnectorId source_connector;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorSelection&) const =
+      default;
+};
+
 struct CanvasConnectorDestinationFields {
   NodeId                     node_id;
   std::optional<std::string> node_name;
@@ -706,6 +716,46 @@ class CanvasConnectorSegmentDragController {
   bool          route_was_automatic_ = true;
   bool          preview_changed_     = false;
   bool          active_              = false;
+};
+
+// Owns the selected connector identity and its route-reset action. Automatic
+// geometry is prepared before the command is committed, then published with a
+// no-throw move so the project and retained scene cannot be left disagreeing.
+class CanvasConnectorSelectionController {
+ public:
+  CanvasConnectorSelectionController(Project& project, CommandHistory& history,
+                                     CanvasNotationScene& scene) noexcept;
+
+  CanvasConnectorSelectionController(
+      const CanvasConnectorSelectionController&) = delete;
+  CanvasConnectorSelectionController& operator=(
+      const CanvasConnectorSelectionController&) = delete;
+  CanvasConnectorSelectionController(CanvasConnectorSelectionController&&) =
+      delete;
+  CanvasConnectorSelectionController& operator=(
+      CanvasConnectorSelectionController&&) = delete;
+
+  // Selects a connected output represented by the current retained scene.
+  // Selection is stable across scene vector reordering because it stores ids.
+  [[nodiscard]] bool select(NodeId      source_node,
+                            ConnectorId source_connector) noexcept;
+  void               clear_selection() noexcept;
+
+  [[nodiscard]] const std::optional<CanvasConnectorSelection>& selection()
+      const noexcept {
+    return selection_;
+  }
+
+  // Primary+Shift+R's canvas action: discard custom waypoints and return the
+  // selected connector to deterministic automatic routing. An already
+  // automatic route is a successful no-op and does not add history.
+  [[nodiscard]] Result reset_selected_route() noexcept;
+
+ private:
+  Project&                                project_;
+  CommandHistory&                         history_;
+  CanvasNotationScene&                    scene_;
+  std::optional<CanvasConnectorSelection> selection_;
 };
 
 // Owns one toolkit-neutral output-to-input attachment gesture. begin() accepts
