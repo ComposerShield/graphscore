@@ -26,6 +26,7 @@ add_executable(graphscore_notation_test
   tuplet_edit_test.cpp
   selection/selection_drag_lifecycle_test.cpp
   selection/selection_highlight_rects_test.cpp
+  selection/selection_hit_dense_notation_test.cpp
   selection/selection_hit_isolation_test.cpp
   selection/selection_hit_notehead_column_test.cpp
   selection/selection_hit_object_kind_test.cpp
