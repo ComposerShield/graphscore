@@ -2,6 +2,8 @@
 
 add_library(graphscore_writer_shell STATIC
   writer_shell.cpp
+  writer_shell_events.cpp
+  writer_shell_rendering.cpp
 )
 
 target_compile_features(graphscore_writer_shell PRIVATE cxx_std_23)
@@ -22,9 +24,10 @@ target_link_libraries(graphscore_writer_shell
     graphscore_accessibility
 )
 
-# SDL3 is PRIVATE and stays PRIVATE: it is named only in writer_shell.cpp,
-# never in a public header (ADR 0003 §2.2). The static SDL3 target is used so
-# that the writer ships one executable with no SDL runtime to locate.
+# SDL3 is PRIVATE and stays PRIVATE: it is named only in the writer-shell
+# implementation .cpp files, never in a public or internal header (ADR 0003
+# §2.2). The static SDL3 target is used so the writer ships one executable
+# with no SDL runtime to locate.
 if (GRAPHSCORE_BUILD_WRITER)
   target_compile_definitions(graphscore_writer_shell
     PRIVATE GRAPHSCORE_HAVE_SDL3)

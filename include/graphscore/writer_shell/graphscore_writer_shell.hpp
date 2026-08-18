@@ -20,14 +20,15 @@ namespace graphscore {
 // Platform shell for the GraphScore Writer. Owns the native window and the
 // event loop.
 //
-// Every platform type — SDL3's included — is confined to writer_shell.cpp
-// (ADR 0003 §2.2). Nothing in this header names, includes, or forward-
+// Every platform type — SDL3's included — is confined to the writer-shell
+// implementation .cpp files (ADR 0003 §2.2). Nothing in this header names,
+// includes, or forward-
 // declares an SDL type, so no consumer of graphscore_writer_shell acquires a
 // dependency on the windowing backend.
 
 // Platform-neutral pointer button. The SDL3 button code is translated to
-// this enum inside writer_shell.cpp; no consumer of this header sees an
-// SDL constant.
+// this enum inside the writer-shell implementation .cpp files; no consumer
+// of this header sees an SDL constant.
 enum class PointerButton : std::uint8_t {
   kPrimary,    // Left button, or single-finger tap.
   kSecondary,  // Right button.
@@ -53,7 +54,7 @@ struct PointerEvent {
 // binding the letter mnemonics by LOGICAL identity (see LogicalKey below).
 //
 // Every member is therefore translated from SDL's physical scancode in
-// writer_shell.cpp, never from the layout-dependent logical keycode. For
+// writer_shell_events.cpp, never from the layout-dependent logical keycode. For
 // arrows and Home/End that is exact: they are not remapped by keyboard
 // layout the way character keys are (compare a QWERTY vs. AZERTY 'A' key,
 // which sit at different physical scancodes for the same intended letter).
@@ -143,7 +144,7 @@ enum class LogicalKey : std::uint8_t {
 };
 
 // Platform-neutral key modifiers, translated from SDL3's combined
-// left/right modifier masks in writer_shell.cpp.
+// left/right modifier masks in writer_shell_events.cpp.
 //
 // `meta` is the Command key on macOS and the Windows/Super key elsewhere.
 // This struct deliberately does not collapse it into a "Primary" concept:
@@ -218,7 +219,7 @@ class InputHandler {
   virtual void on_cancel() = 0;
 
   // Called on a key press (including auto-repeat; see the dispatch site in
-  // writer_shell.cpp). Deliberately not pure virtual, unlike the pointer
+  // writer_shell_events.cpp). Deliberately not pure virtual, unlike the pointer
   // methods above: a handler that only responds to pointer input should
   // not be forced to write an empty override, and this keeps key-event
   // delivery independent of any app-layer handler, which lands in
@@ -370,7 +371,7 @@ class WriterShell {
   // until a window exists; writer-OFF and windowless shells safely retain the
   // state without calling a platform API. Passing false is always safe.
   //
-  // SDL/platform types remain confined to writer_shell.cpp.
+  // SDL/platform types remain confined to the implementation .cpp files.
   void set_text_input_active(bool active);
 
   // Test seam for the GraphScore-owned activation state driven through
@@ -466,13 +467,13 @@ class WriterShell {
   // apply — key events carry no coordinates.  Does nothing when no handler
   // is registered.  Compiles and behaves identically in writer-ON and
   // writer-OFF builds, and lives in the shared (non-#ifdef) region of
-  // writer_shell.cpp for that reason, unlike the SDL translation helpers in
-  // writer_shell.cpp.
+  // writer_shell_events.cpp for that reason, alongside the SDL translation
+  // helpers.
   void dispatch_test_key_event(KeyEvent event);
 
   // Test-only: inject a synthetic key event through the actual production
   // SDL event-conversion path (the physical-scancode and modifier-mask
-  // translation in writer_shell.cpp), so a test can assert what the
+  // translation in writer_shell_events.cpp), so a test can assert what the
   // handler actually receives rather than testing a reverse mapping
   // written only for the test.  Builds a real SDL_EVENT_KEY_DOWN and
   // routes it through the production dispatch_sdl_event.  Does nothing
@@ -639,7 +640,8 @@ class WriterShell {
 
   // Test-only: run the production render pass exactly once and present it,
   // checking every SDL result including the pre-present flush gate (see
-  // render_frame in writer_shell.cpp). Returns the same ShellResult the event
+  // render_frame in writer_shell_rendering.cpp). Returns the same ShellResult
+  // the event
   // loop and one-frame paths surface. Unlike test_render_frame(), this leaves
   // no readable composed back buffer — the frame is presented and the back
   // buffer invalidated — so it exercises the observable queued-command flush/
@@ -734,8 +736,8 @@ class WriterShell {
   // Renders one complete frame — clear, notation surface through the viewport
   // transform, highlight rects, and (when `present`) present — checking every
   // SDL result. Called by open_window's event-loop and one-frame paths and by
-  // the test_render_frame() seam. Defined only in writer_shell.cpp, where the
-  // SDL types are confined (ADR 0003 §2.2).
+  // the test_render_frame() seam. Defined in writer_shell_rendering.cpp, where
+  // the SDL types are confined (ADR 0003 §2.2).
   ShellResult render_frame(bool present);
 
   struct Impl;
