@@ -21,6 +21,7 @@ add_executable(graphscore_canvas_test
   node_drag_test.cpp
   node_operations_test.cpp
   node_search_test.cpp
+  canvas_performance_test.cpp
 )
 
 target_compile_features(graphscore_canvas_test PRIVATE cxx_std_23)

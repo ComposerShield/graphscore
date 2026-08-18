@@ -67,7 +67,7 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 
 ## Acceptance Criteria
 
-- [ ] M6-phase-39 Pan, zoom, node drag, selection, and connector segment drag meet the 60 fps target on the representative 1,000-node fixture.
+- [x] M6-phase-39 Pan, zoom, node drag, selection, and connector segment drag meet the 60 fps target on the representative 1,000-node fixture.
 - [ ] M6-phase-40 Offscreen work is culled and interaction cost scales with visible/spatially relevant content rather than total graph size.
 - [ ] M6-phase-41 Default routes avoid nodes, custom routes remain orthogonal with rounded corners, and route reset is deterministic.
 - [ ] M6-phase-42 Node moves preserve manually positioned interior segments where geometrically valid.
