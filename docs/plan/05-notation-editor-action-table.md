@@ -808,3 +808,27 @@ space and assert the one action or no-op each cell maps to: the five bound
 classes' cells **and the remainder cells (asserted as no-ops)**. Every cell is
 covered exactly once, with no cell reachable through two classes or two
 families.
+
+## 13. Manual platform shortcut check
+
+M5-phase-52 complements the automated command and shell tests with this native
+keyboard smoke check. Run it in a normal writer window on macOS, Windows, and
+Linux using the platform's native keyboard input path. The check is against
+observable edits, selection, and suppression; it does not replace the
+exhaustive layout matrix owned by M5-phase-53.
+
+| Check | macOS chord | Windows/Linux chord | Expected result |
+|---|---|---|---|
+| Primary mapping | Command+Up/Down | Control+Up/Down | Staff focus moves; Control on macOS and Meta on Windows/Linux do nothing. |
+| Clipboard | Command+C/X/V | Control+C/X/V | Copy is non-destructive, cut clears the selected range, and paste replaces only the destination range. |
+| History | Command+Z / Shift+Command+Z | Control+Z / Shift+Control+Z | The edit is undone and redone once per press. |
+| Palette focus | Command+K | Control+K | The palette takes keyboard focus; notation-editing keys are suppressed until Escape or the same chord closes it. |
+| Voice and octave | Option+1..4 / Option+Up/Down | Alt+1..4 / Alt+Up/Down | In note entry, the armed voice or octave reference changes; the chords do nothing in selection mode. |
+| Physical keys | `2`..`8`, Shift+`2`..`8`, `-`, `=`, numpad | same | Interval direction, accidental stepping, duration, rest, and dot actions follow physical key positions. |
+| Logical letters | `A`..`G`, `N`, `R` | same | Letter mnemonics follow the active layout's produced character rather than the US physical position. |
+| Exact modifiers | representative mixed and non-Primary chords | same | Extra or non-Primary modifiers do not trigger a notation action. |
+
+Use a keyboard with a numpad where available and repeat the duration/rest/dot
+rows through the searchable command palette on a numpad-less keyboard. For the
+logical-letter row, switch to one installed non-US layout and verify one moved
+letter mnemonic; exhaustive key/layout combinations remain M5-phase-53.

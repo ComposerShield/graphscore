@@ -142,7 +142,7 @@ gates.
 - [x] M5-phase-49 A composer can copy a complete measure to another measure and copy a pointer-dragged partial range to another valid musical position on the same or different compatible staves.
 - [x] M5-phase-50 Engraving remains deterministic for golden fixtures across supported platforms, allowing documented raster tolerance only at the backend boundary.
 - [x] M5-phase-51 Four voices, tuplets, grace notes, cross-measure ties, signatures, and markings survive complex measure edits without invalid references.
-- [ ] M5-phase-52 The specified keyboard workflow is covered by automated command tests and manual platform shortcut checks.
+- [x] M5-phase-52 The specified keyboard workflow is covered by automated command tests and manual platform shortcut checks.
 - [ ] M5-phase-53 The action table defines a complete step-entry protocol and has keyboard-layout tests rather than relying on US key labels alone.
 - [ ] M5-phase-55 Editing a representative 64-track, 64-measure node remains responsive when only a small visible region changes.
 
