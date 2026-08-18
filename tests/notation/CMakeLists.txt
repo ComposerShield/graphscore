@@ -9,6 +9,7 @@ add_executable(graphscore_notation_test
   beam_override_edit_test.cpp
   convert_event_to_rest_test.cpp
   event_style_edit_test.cpp
+  generated_measure_property_test.cpp
   marking_style_edit_test.cpp
   measure_edit_test.cpp
   notation_golden_test.cpp

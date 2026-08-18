@@ -154,4 +154,4 @@ gates.
 - [x] M5-phase-59 Keyboard command tables, wrapping staff focus, selection recovery, and interval spelling in every standard key.
 - [ ] M5-phase-60 Round-trip edit/undo/redo tests for every notation command.
 - [x] M5-phase-61 Measure and arbitrary-range paste tests cover empty/occupied destinations, multiple voices/staves, partial beats, tuplets, boundary-crossing spans, UUID remapping, preview/commit equality, and undo/redo.
-- [ ] M5-phase-63 Property-style generated valid measures checked for non-overlap and complete voice duration.
+- [x] M5-phase-63 Property-style generated valid measures checked for non-overlap and complete voice duration.
