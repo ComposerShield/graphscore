@@ -33,14 +33,14 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 ### Connector creation and semantics
 
 - [x] M6-phase-16 Create any number of named input/output ports with stable identity and clear labels.
-- [ ] M6-phase-17 One output attaches to at most one destination input.
-- [ ] M6-phase-18 Author sequential versus vertical type and show redundant color plus line-pattern distinction.
-- [ ] M6-phase-19 Provide connector inspector fields for event binding, priority, random weight, and name, plus linked node/event-listener fields for queue policy/capacity and validation diagnostics.
-- [ ] M6-phase-20 Reject loops only where a specific invariant requires it; ordinary graph cycles remain valid.
+- [x] M6-phase-17 One output attaches to at most one destination input.
+- [x] M6-phase-18 Author sequential versus vertical type and show redundant color plus line-pattern distinction.
+- [x] M6-phase-19 Provide connector inspector fields for event binding, priority, random weight, and name, plus linked node/event-listener fields for queue policy/capacity and validation diagnostics.
+- [x] M6-phase-20 Reject loops only where a specific invariant requires it; ordinary graph cycles remain valid.
 
 ### Orthogonal route editing
 
-- [ ] M6-phase-21 Automatically compute obstacle-avoiding straight/Manhattan routes around node bounds.
+- [x] M6-phase-21 Automatically compute obstacle-avoiding straight/Manhattan routes around node bounds.
 - [ ] M6-phase-22 Render all 90-degree turns with consistent rounded corners.
 - [ ] M6-phase-23 Hovering a segment presents a bidirectional cursor perpendicular to its movement axis.
 - [ ] M6-phase-24 Dragging any segment inserts/moves/removes bends as needed while preserving orthogonality and minimum endpoint clearance.

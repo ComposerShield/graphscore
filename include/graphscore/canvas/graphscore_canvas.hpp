@@ -3,7 +3,10 @@
 #pragma once
 
 #include <graphscore/domain/command_history.hpp>
+#include <graphscore/domain/connector.hpp>
+#include <graphscore/domain/event_listener.hpp>
 #include <graphscore/domain/graph_position.hpp>
+#include <graphscore/domain/validation_service.hpp>
 #include <graphscore/notation/notation_layout.hpp>
 
 #include <array>
@@ -438,9 +441,7 @@ struct CanvasNodeNotation {
 };
 
 // The short orthogonal legs that attach one connected output to its source
-// and destination node bounds. Port distribution and complete route finding
-// are separate phases; these retained legs establish the moving endpoint
-// geometry without persisting derived canvas coordinates in the domain model.
+// and destination node bounds.
 struct CanvasConnectorEndpointLeg {
   GraphPosition attachment;
   GraphPosition outer;
@@ -448,6 +449,32 @@ struct CanvasConnectorEndpointLeg {
   [[nodiscard]] bool operator==(const CanvasConnectorEndpointLeg&) const =
       default;
 };
+
+enum class CanvasConnectorLinePattern : std::uint8_t {
+  kSolid = 0,
+  kDashed,
+};
+
+// Toolkit-neutral route styling. Color uses packed 0xRRGGBBAA so canvas does
+// not depend on the rendering backend; line pattern redundantly communicates
+// the semantic type without relying on color perception.
+struct CanvasConnectorStyle {
+  std::uint32_t              color_rgba   = 0;
+  CanvasConnectorLinePattern line_pattern = CanvasConnectorLinePattern::kSolid;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorStyle&) const = default;
+};
+
+[[nodiscard]] constexpr CanvasConnectorStyle canvas_connector_style(
+    ConnectorType type) noexcept {
+  switch (type) {
+    case ConnectorType::kSequential:
+      return {0x2F80EDFFU, CanvasConnectorLinePattern::kSolid};
+    case ConnectorType::kVertical:
+      return {0xD35400FFU, CanvasConnectorLinePattern::kDashed};
+  }
+  return {};
+}
 
 struct CanvasConnectorGeometry {
   static constexpr double kEndpointClearance = 24.0;
@@ -458,8 +485,62 @@ struct CanvasConnectorGeometry {
   ConnectorId                destination_connector;
   CanvasConnectorEndpointLeg source_leg;
   CanvasConnectorEndpointLeg destination_leg;
+  // Complete derived world-space polyline, including both attachment and
+  // outer points. Consecutive points are orthogonal and avoid every node
+  // interior not already covering a fixed endpoint clearance point.
+  std::vector<GraphPosition> route_points;
+  ConnectorType              type = ConnectorType::kSequential;
+  CanvasConnectorStyle       style =
+      canvas_connector_style(ConnectorType::kSequential);
 
   [[nodiscard]] bool operator==(const CanvasConnectorGeometry&) const = default;
+};
+
+struct CanvasConnectorDestinationFields {
+  NodeId                     node_id;
+  std::optional<std::string> node_name;
+  ConnectorId                input_id;
+  std::optional<std::string> input_name;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorDestinationFields&) const =
+      default;
+};
+
+struct CanvasConnectorEventFields {
+  EventId                    event_id;
+  std::optional<std::string> event_name;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorEventFields&) const =
+      default;
+};
+
+struct CanvasConnectorListenerFields {
+  QueuePolicy policy   = QueuePolicy::kLatestValidWins;
+  std::size_t capacity = 1;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorListenerFields&) const =
+      default;
+};
+
+// Toolkit-neutral values for an output connector inspector. Listener values
+// are resolved from the source node's shared (node, event) listener rather
+// than copied onto the connector. Missing linked entities remain visible by
+// stable identity and are explained by the attached validation diagnostics.
+struct CanvasConnectorInspector {
+  NodeId                                    source_node_id;
+  std::string                               source_node_name;
+  ConnectorId                               output_id;
+  std::string                               name;
+  ConnectorType                             type = ConnectorType::kSequential;
+  std::optional<CanvasConnectorEventFields> event;
+  int                                       priority      = 0;
+  Rational                                  random_weight = Rational(1);
+  std::optional<CanvasConnectorDestinationFields> destination;
+  std::optional<CanvasConnectorListenerFields>    listener;
+  std::vector<Diagnostic>                         diagnostics;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorInspector&) const =
+      default;
 };
 
 struct CanvasNotationScene {
@@ -499,13 +580,98 @@ class CanvasNodeDragController {
   [[nodiscard]] CanvasNodeNotation* dragged_node() noexcept;
   [[nodiscard]] bool set_preview_position(GraphPosition position) noexcept;
 
+  Project&                             project_;
+  CommandHistory&                      history_;
+  CanvasNotationScene&                 scene_;
+  NodeId                               node_id_;
+  GraphPosition                        pointer_start_;
+  GraphPosition                        position_start_;
+  std::vector<CanvasConnectorGeometry> connectors_start_;
+  bool                                 active_ = false;
+};
+
+// Owns one toolkit-neutral output-to-input attachment gesture. begin() accepts
+// only an unconnected output represented in the retained scene. finish()
+// commits through ConnectCommand, publishes exactly one derived connector
+// geometry, and ends the gesture. An occupied output must be disconnected
+// before it can begin another attachment, so retargeting is never implicit.
+class CanvasConnectorAttachmentController {
+ public:
+  CanvasConnectorAttachmentController(Project& project, CommandHistory& history,
+                                      CanvasNotationScene& scene) noexcept;
+
+  CanvasConnectorAttachmentController(
+      const CanvasConnectorAttachmentController&) = delete;
+  CanvasConnectorAttachmentController& operator=(
+      const CanvasConnectorAttachmentController&) = delete;
+  CanvasConnectorAttachmentController(CanvasConnectorAttachmentController&&) =
+      delete;
+  CanvasConnectorAttachmentController& operator=(
+      CanvasConnectorAttachmentController&&) = delete;
+
+  [[nodiscard]] bool   begin(NodeId      source_node,
+                             ConnectorId source_output) noexcept;
+  [[nodiscard]] Result finish(NodeId      destination_node,
+                              ConnectorId destination_input) noexcept;
+  void                 cancel() noexcept;
+
+  [[nodiscard]] bool active() const noexcept { return active_; }
+
+ private:
   Project&             project_;
   CommandHistory&      history_;
   CanvasNotationScene& scene_;
-  NodeId               node_id_;
-  GraphPosition        pointer_start_;
-  GraphPosition        position_start_;
+  NodeId               source_node_;
+  ConnectorId          source_output_;
   bool                 active_ = false;
+};
+
+// Authors an output's semantic transition type through the reversible domain
+// command path and updates any retained connected route immediately. The
+// style is always derived from ConnectorType and is never persisted as a
+// second source of truth.
+class CanvasConnectorTypeController {
+ public:
+  CanvasConnectorTypeController(Project& project, CommandHistory& history,
+                                CanvasNotationScene& scene) noexcept;
+
+  [[nodiscard]] Result set_type(NodeId node_id, ConnectorId output_id,
+                                ConnectorType type) noexcept;
+
+ private:
+  Project&             project_;
+  CommandHistory&      history_;
+  CanvasNotationScene& scene_;
+};
+
+// Authors connector-inspector values through reversible domain commands.
+// Queue policy and capacity are addressed through an output only to locate its
+// bound source-node listener; matching outputs therefore observe one shared
+// value. Renaming also refreshes the retained port presentation immediately.
+class CanvasConnectorInspectorController {
+ public:
+  CanvasConnectorInspectorController(Project& project, CommandHistory& history,
+                                     CanvasNotationScene& scene) noexcept;
+
+  [[nodiscard]] Result set_event_binding(NodeId node_id, ConnectorId output_id,
+                                         std::optional<EventId> event) noexcept;
+  [[nodiscard]] Result set_priority(NodeId node_id, ConnectorId output_id,
+                                    int priority) noexcept;
+  [[nodiscard]] Result set_random_weight(NodeId node_id, ConnectorId output_id,
+                                         Rational weight) noexcept;
+  [[nodiscard]] Result set_name(NodeId node_id, ConnectorId output_id,
+                                std::string name) noexcept;
+  [[nodiscard]] Result set_listener(NodeId node_id, ConnectorId output_id,
+                                    QueuePolicy policy,
+                                    std::size_t capacity) noexcept;
+
+ private:
+  [[nodiscard]] OutputConnector* find_output(NodeId      node_id,
+                                             ConnectorId output_id) noexcept;
+
+  Project&             project_;
+  CommandHistory&      history_;
+  CanvasNotationScene& scene_;
 };
 
 class Canvas {
@@ -519,6 +685,9 @@ class Canvas {
   [[nodiscard]] CanvasNotationScene layout_nodes(
       const Project& project, const GlyphMetrics& metrics,
       const NotationLayoutOptions& options = {}) const;
+
+  [[nodiscard]] std::optional<CanvasConnectorInspector> inspect_connector(
+      const Project& project, NodeId source_node, ConnectorId output_id) const;
 };
 
 [[nodiscard]] int canvas_version() noexcept;

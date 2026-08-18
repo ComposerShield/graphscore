@@ -2,17 +2,27 @@
 
 #include <graphscore/accessibility/graphscore_accessibility.hpp>
 #include <graphscore/canvas/graphscore_canvas.hpp>
+#include <graphscore/domain/bind_output_event_command.hpp>
+#include <graphscore/domain/connect_command.hpp>
 #include <graphscore/domain/node.hpp>
 #include <graphscore/domain/project.hpp>
+#include <graphscore/domain/set_listener_policy_command.hpp>
 #include <graphscore/domain/set_node_position_command.hpp>
+#include <graphscore/domain/set_output_connector_name_command.hpp>
+#include <graphscore/domain/set_output_priority_command.hpp>
+#include <graphscore/domain/set_output_type_command.hpp>
+#include <graphscore/domain/set_output_weight_command.hpp>
 #include <graphscore/domain/validation_service.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <memory>
 #include <new>
 #include <optional>
+#include <queue>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -139,6 +149,41 @@ void append_ports(std::vector<CanvasNodePort>& ports, NodeId node_id,
   return found == node.ports.end() ? nullptr : &*found;
 }
 
+[[nodiscard]] CanvasNodePort* find_port(CanvasNodeNotation& node,
+                                        ConnectorId         connector,
+                                        CanvasPortDirection direction) {
+  const auto found = std::ranges::find_if(
+      node.ports, [connector, direction](const CanvasNodePort& port) {
+        return port.connector_id == connector && port.direction == direction;
+      });
+  return found == node.ports.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] CanvasNodeNotation* find_scene_node(CanvasNotationScene& scene,
+                                                  NodeId node_id) noexcept {
+  const auto found =
+      std::ranges::find(scene.nodes, node_id, &CanvasNodeNotation::node_id);
+  return found == scene.nodes.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] bool diagnostic_applies_to_connector(
+    const Diagnostic& diagnostic, NodeId source_node,
+    ConnectorId output_id) noexcept {
+  if (const auto* const connector =
+          std::get_if<ConnectorId>(&diagnostic.entity);
+      connector != nullptr && *connector == output_id) {
+    return !diagnostic.node.has_value() || diagnostic.node == source_node;
+  }
+  const auto* const node = std::get_if<NodeId>(&diagnostic.entity);
+  return node != nullptr && *node == source_node;
+}
+
+[[nodiscard]] bool valid_queue_policy(QueuePolicy policy) noexcept {
+  return policy == QueuePolicy::kFirstWins ||
+         policy == QueuePolicy::kLatestValidWins ||
+         policy == QueuePolicy::kFifo;
+}
+
 [[nodiscard]] std::optional<CanvasConnectorEndpointLeg> endpoint_leg(
     const CanvasNodeNotation& node, ConnectorId connector,
     CanvasPortDirection direction) noexcept {
@@ -165,9 +210,290 @@ void append_ports(std::vector<CanvasNodePort>& ports, NodeId node_id,
                                     {outer_x, attachment_y}};
 }
 
+struct RouteObstacle {
+  double left;
+  double top;
+  double right;
+  double bottom;
+};
+
+[[nodiscard]] std::optional<std::vector<RouteObstacle>> route_obstacles(
+    const CanvasNotationScene& scene) {
+  std::vector<RouteObstacle> obstacles;
+  obstacles.reserve(scene.nodes.size());
+  for (const CanvasNodeNotation& node : scene.nodes) {
+    const WorldBounds& bounds = node.geometry.bounds;
+    const double       right  = bounds.origin.x + bounds.width;
+    const double       bottom = bounds.origin.y + bounds.height;
+    if (!is_finite(bounds.origin) || !std::isfinite(bounds.width) ||
+        !std::isfinite(bounds.height) || !std::isfinite(right) ||
+        !std::isfinite(bottom) || bounds.width < 0.0 || bounds.height < 0.0) {
+      continue;
+    }
+    obstacles.push_back(
+        RouteObstacle{bounds.origin.x, bounds.origin.y, right, bottom});
+  }
+  return obstacles;
+}
+
+[[nodiscard]] bool point_clear(GraphPosition                     point,
+                               const std::vector<RouteObstacle>& obstacles) {
+  return std::ranges::none_of(
+      obstacles, [point](const RouteObstacle& obstacle) {
+        return point.x > obstacle.left && point.x < obstacle.right &&
+               point.y > obstacle.top && point.y < obstacle.bottom;
+      });
+}
+
+[[nodiscard]] bool obstacle_contains(GraphPosition        point,
+                                     const RouteObstacle& obstacle) noexcept {
+  return point.x > obstacle.left && point.x < obstacle.right &&
+         point.y > obstacle.top && point.y < obstacle.bottom;
+}
+
+[[nodiscard]] bool segment_clear(GraphPosition first, GraphPosition second,
+                                 const std::vector<RouteObstacle>& obstacles) {
+  if (first.x == second.x) {
+    const double low  = std::min(first.y, second.y);
+    const double high = std::max(first.y, second.y);
+    return std::ranges::none_of(
+        obstacles, [first, low, high](const RouteObstacle& obstacle) {
+          return first.x > obstacle.left && first.x < obstacle.right &&
+                 low < obstacle.bottom && high > obstacle.top;
+        });
+  }
+  if (first.y == second.y) {
+    const double low  = std::min(first.x, second.x);
+    const double high = std::max(first.x, second.x);
+    return std::ranges::none_of(
+        obstacles, [first, low, high](const RouteObstacle& obstacle) {
+          return first.y > obstacle.top && first.y < obstacle.bottom &&
+                 low < obstacle.right && high > obstacle.left;
+        });
+  }
+  return false;
+}
+
+enum class RouteDirection : std::uint8_t {
+  kNone = 0,
+  kHorizontal,
+  kVertical,
+};
+
+struct RouteCost {
+  double      distance = std::numeric_limits<double>::infinity();
+  std::size_t bends    = std::numeric_limits<std::size_t>::max();
+};
+
+[[nodiscard]] bool route_cost_less(RouteCost left, RouteCost right) noexcept {
+  return left.distance < right.distance ||
+         (left.distance == right.distance && left.bends < right.bends);
+}
+
+struct RouteQueueEntry {
+  RouteCost   cost;
+  std::size_t state;
+};
+
+struct RouteQueueGreater {
+  [[nodiscard]] bool operator()(const RouteQueueEntry& left,
+                                const RouteQueueEntry& right) const noexcept {
+    if (route_cost_less(right.cost, left.cost)) {
+      return true;
+    }
+    if (route_cost_less(left.cost, right.cost)) {
+      return false;
+    }
+    return left.state > right.state;
+  }
+};
+
+[[nodiscard]] std::vector<double> route_coordinates(
+    double first, double second, const std::vector<RouteObstacle>& obstacles,
+    bool horizontal) {
+  std::vector<double> coordinates;
+  coordinates.reserve(2U + obstacles.size() * 2U);
+  coordinates.push_back(first);
+  coordinates.push_back(second);
+  for (const RouteObstacle& obstacle : obstacles) {
+    coordinates.push_back(horizontal ? obstacle.left : obstacle.top);
+    coordinates.push_back(horizontal ? obstacle.right : obstacle.bottom);
+  }
+  std::ranges::sort(coordinates);
+  const auto unique_end = std::ranges::unique(coordinates).begin();
+  coordinates.erase(unique_end, coordinates.end());
+  return coordinates;
+}
+
+[[nodiscard]] std::optional<std::vector<GraphPosition>> automatic_route(
+    GraphPosition start, GraphPosition finish,
+    const std::vector<RouteObstacle>& obstacles) {
+  std::vector<RouteObstacle> effective_obstacles;
+  effective_obstacles.reserve(obstacles.size());
+  for (const RouteObstacle& obstacle : obstacles) {
+    // Overlapping endpoint nodes can cover the fixed clearance point of the
+    // other endpoint. That node cannot be avoided until the overlap is
+    // resolved, so do not let it make the retained connector disappear.
+    if (!obstacle_contains(start, obstacle) &&
+        !obstacle_contains(finish, obstacle)) {
+      effective_obstacles.push_back(obstacle);
+    }
+  }
+  if (start == finish) {
+    return std::vector<GraphPosition>{start};
+  }
+  if ((start.x == finish.x || start.y == finish.y) &&
+      segment_clear(start, finish, effective_obstacles)) {
+    return std::vector<GraphPosition>{start, finish};
+  }
+
+  const std::vector<double> xs =
+      route_coordinates(start.x, finish.x, effective_obstacles, true);
+  const std::vector<double> ys =
+      route_coordinates(start.y, finish.y, effective_obstacles, false);
+  if (xs.empty() || ys.empty() ||
+      xs.size() > std::numeric_limits<std::size_t>::max() / ys.size()) {
+    return std::nullopt;
+  }
+  const std::size_t     point_count     = xs.size() * ys.size();
+  constexpr std::size_t kDirectionCount = 3U;
+  if (point_count > std::numeric_limits<std::size_t>::max() / kDirectionCount) {
+    return std::nullopt;
+  }
+  const std::size_t state_count = point_count * kDirectionCount;
+  std::vector<bool> valid_points(point_count, false);
+  for (std::size_t y = 0; y < ys.size(); ++y) {
+    for (std::size_t x = 0; x < xs.size(); ++x) {
+      valid_points[y * xs.size() + x] =
+          point_clear({xs[x], ys[y]}, effective_obstacles);
+    }
+  }
+
+  const auto start_x  = std::ranges::lower_bound(xs, start.x) - xs.begin();
+  const auto start_y  = std::ranges::lower_bound(ys, start.y) - ys.begin();
+  const auto finish_x = std::ranges::lower_bound(xs, finish.x) - xs.begin();
+  const auto finish_y = std::ranges::lower_bound(ys, finish.y) - ys.begin();
+  const std::size_t start_point =
+      static_cast<std::size_t>(start_y) * xs.size() +
+      static_cast<std::size_t>(start_x);
+  const std::size_t finish_point =
+      static_cast<std::size_t>(finish_y) * xs.size() +
+      static_cast<std::size_t>(finish_x);
+  const std::size_t start_state = start_point * kDirectionCount;
+
+  std::vector<RouteCost>   costs(state_count);
+  std::vector<std::size_t> parents(state_count,
+                                   std::numeric_limits<std::size_t>::max());
+  std::priority_queue<RouteQueueEntry, std::vector<RouteQueueEntry>,
+                      RouteQueueGreater>
+      queue;
+  costs[start_state] = {0.0, 0U};
+  queue.push({costs[start_state], start_state});
+
+  const auto relax = [&](std::size_t from_state, std::size_t to_point,
+                         RouteDirection direction, double length,
+                         auto& pending) {
+    if (!std::isfinite(length) || length <= 0.0) {
+      return;
+    }
+    const auto prior_direction =
+        static_cast<RouteDirection>(from_state % kDirectionCount);
+    const std::size_t to_state =
+        to_point * kDirectionCount + static_cast<std::size_t>(direction);
+    const RouteCost candidate{
+        costs[from_state].distance + length,
+        costs[from_state].bends +
+            static_cast<std::size_t>(prior_direction != RouteDirection::kNone &&
+                                     prior_direction != direction)};
+    if (!std::isfinite(candidate.distance) ||
+        !route_cost_less(candidate, costs[to_state])) {
+      return;
+    }
+    costs[to_state]   = candidate;
+    parents[to_state] = from_state;
+    pending.push(RouteQueueEntry{candidate, to_state});
+  };
+
+  while (!queue.empty()) {
+    const RouteQueueEntry current = queue.top();
+    queue.pop();
+    if (current.cost.distance != costs[current.state].distance ||
+        current.cost.bends != costs[current.state].bends) {
+      continue;
+    }
+    const std::size_t   point = current.state / kDirectionCount;
+    const std::size_t   x     = point % xs.size();
+    const std::size_t   y     = point / xs.size();
+    const GraphPosition position{xs[x], ys[y]};
+    if (x > 0U && valid_points[point - 1U] &&
+        segment_clear(position, {xs[x - 1U], ys[y]}, effective_obstacles)) {
+      relax(current.state, point - 1U, RouteDirection::kHorizontal,
+            xs[x] - xs[x - 1U], queue);
+    }
+    if (x + 1U < xs.size() && valid_points[point + 1U] &&
+        segment_clear(position, {xs[x + 1U], ys[y]}, effective_obstacles)) {
+      relax(current.state, point + 1U, RouteDirection::kHorizontal,
+            xs[x + 1U] - xs[x], queue);
+    }
+    if (y > 0U && valid_points[point - xs.size()] &&
+        segment_clear(position, {xs[x], ys[y - 1U]}, effective_obstacles)) {
+      relax(current.state, point - xs.size(), RouteDirection::kVertical,
+            ys[y] - ys[y - 1U], queue);
+    }
+    if (y + 1U < ys.size() && valid_points[point + xs.size()] &&
+        segment_clear(position, {xs[x], ys[y + 1U]}, effective_obstacles)) {
+      relax(current.state, point + xs.size(), RouteDirection::kVertical,
+            ys[y + 1U] - ys[y], queue);
+    }
+  }
+
+  std::size_t finish_state =
+      finish_point * kDirectionCount +
+      static_cast<std::size_t>(RouteDirection::kHorizontal);
+  const std::size_t vertical_finish =
+      finish_point * kDirectionCount +
+      static_cast<std::size_t>(RouteDirection::kVertical);
+  if (route_cost_less(costs[vertical_finish], costs[finish_state])) {
+    finish_state = vertical_finish;
+  }
+  if (!std::isfinite(costs[finish_state].distance)) {
+    return std::nullopt;
+  }
+
+  std::vector<GraphPosition> reversed;
+  for (std::size_t state = finish_state;; state = parents[state]) {
+    const std::size_t point = state / kDirectionCount;
+    reversed.push_back({xs[point % xs.size()], ys[point / xs.size()]});
+    if (state == start_state) {
+      break;
+    }
+    if (parents[state] == std::numeric_limits<std::size_t>::max()) {
+      return std::nullopt;
+    }
+  }
+  std::ranges::reverse(reversed);
+
+  std::vector<GraphPosition> simplified;
+  simplified.reserve(reversed.size());
+  for (GraphPosition point : reversed) {
+    if (simplified.size() >= 2U) {
+      const GraphPosition before = simplified[simplified.size() - 2U];
+      const GraphPosition last   = simplified.back();
+      if ((before.x == last.x && last.x == point.x) ||
+          (before.y == last.y && last.y == point.y)) {
+        simplified.back() = point;
+        continue;
+      }
+    }
+    simplified.push_back(point);
+  }
+  return simplified;
+}
+
 [[nodiscard]] std::optional<CanvasConnectorGeometry> connector_geometry(
     const CanvasNotationScene& scene, NodeId source_node,
-    ConnectorId source_connector, const ConnectorDestination& destination) {
+    ConnectorId source_connector, const ConnectorDestination& destination,
+    ConnectorType type) {
   const CanvasNodeNotation* const source = find_scene_node(scene, source_node);
   const CanvasNodeNotation* const target =
       find_scene_node(scene, destination.node);
@@ -181,28 +507,95 @@ void append_ports(std::vector<CanvasNodePort>& ports, NodeId node_id,
   if (!source_leg.has_value() || !destination_leg.has_value()) {
     return std::nullopt;
   }
-  return CanvasConnectorGeometry{source_node,      source_connector,
-                                 destination.node, destination.connector,
-                                 *source_leg,      *destination_leg};
+  const auto obstacles = route_obstacles(scene);
+  if (!obstacles.has_value()) {
+    return std::nullopt;
+  }
+  const auto route =
+      automatic_route(source_leg->outer, destination_leg->outer, *obstacles);
+  if (!route.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<GraphPosition> route_points;
+  route_points.reserve(route->size() + 2U);
+  route_points.push_back(source_leg->attachment);
+  route_points.insert(route_points.end(), route->begin(), route->end());
+  route_points.push_back(destination_leg->attachment);
+  return CanvasConnectorGeometry{source_node,
+                                 source_connector,
+                                 destination.node,
+                                 destination.connector,
+                                 *source_leg,
+                                 *destination_leg,
+                                 std::move(route_points),
+                                 type,
+                                 canvas_connector_style(type)};
 }
 
-[[nodiscard]] bool refresh_attached_connector_legs(CanvasNotationScene& scene,
-                                                   NodeId moved_node) noexcept {
-  for (CanvasConnectorGeometry& connector : scene.connectors) {
-    if (connector.source_node != moved_node &&
-        connector.destination_node != moved_node) {
-      continue;
+[[nodiscard]] bool scene_connectors_match_project(
+    const CanvasNotationScene& scene, const Project& project) noexcept {
+  std::size_t scene_index = 0;
+  for (const Node& node : project.nodes()) {
+    for (const OutputConnector& output : node.outputs()) {
+      if (!output.destination().has_value()) {
+        continue;
+      }
+      if (scene_index >= scene.connectors.size()) {
+        return false;
+      }
+      const CanvasConnectorGeometry& geometry = scene.connectors[scene_index];
+      if (geometry.source_node != node.id() ||
+          geometry.source_connector != output.id() ||
+          geometry.destination_node != output.destination()->node ||
+          geometry.destination_connector != output.destination()->connector ||
+          geometry.type != output.type() ||
+          geometry.style != canvas_connector_style(output.type())) {
+        return false;
+      }
+      ++scene_index;
     }
-    const ConnectorDestination destination{connector.destination_node,
-                                           connector.destination_connector};
-    const auto                 refreshed = connector_geometry(
-        scene, connector.source_node, connector.source_connector, destination);
-    if (!refreshed.has_value()) {
-      return false;
-    }
-    connector = *refreshed;
   }
-  return true;
+  return scene_index == scene.connectors.size();
+}
+
+[[nodiscard]] std::optional<std::size_t> connector_insertion_index(
+    const Project& project, NodeId source_node,
+    ConnectorId source_output) noexcept {
+  std::size_t connected_before = 0;
+  for (const Node& node : project.nodes()) {
+    for (const OutputConnector& output : node.outputs()) {
+      if (node.id() == source_node && output.id() == source_output) {
+        return connected_before;
+      }
+      if (output.destination().has_value()) {
+        ++connected_before;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] bool refresh_connector_routes(
+    CanvasNotationScene& scene) noexcept {
+  try {
+    std::vector<CanvasConnectorGeometry> refreshed;
+    refreshed.reserve(scene.connectors.size());
+    for (const CanvasConnectorGeometry& connector : scene.connectors) {
+      const ConnectorDestination destination{connector.destination_node,
+                                             connector.destination_connector};
+      auto geometry = connector_geometry(scene, connector.source_node,
+                                         connector.source_connector,
+                                         destination, connector.type);
+      if (!geometry.has_value()) {
+        return false;
+      }
+      refreshed.push_back(std::move(*geometry));
+    }
+    scene.connectors = std::move(refreshed);
+    return true;
+  } catch (...) {
+    return false;
+  }
 }
 
 [[nodiscard]] std::optional<double> map_forward_raw(
@@ -601,6 +994,12 @@ bool CanvasNodeDragController::begin(NodeId        node_id,
       !is_finite(scene_node->position)) {
     return false;
   }
+  try {
+    connectors_start_ = scene_.connectors;
+  } catch (...) {
+    connectors_start_.clear();
+    return false;
+  }
   node_id_        = node_id;
   pointer_start_  = pointer;
   position_start_ = scene_node->position;
@@ -637,6 +1036,7 @@ Result CanvasNodeDragController::finish() noexcept {
   }
   const GraphPosition final_position = node->position;
   if (final_position == position_start_) {
+    connectors_start_.clear();
     active_ = false;
     return Result();
   }
@@ -656,6 +1056,7 @@ Result CanvasNodeDragController::finish() noexcept {
     cancel();
     return result;
   }
+  connectors_start_.clear();
   active_ = false;
   return Result();
 }
@@ -664,8 +1065,15 @@ void CanvasNodeDragController::cancel() noexcept {
   if (!active_) {
     return;
   }
-  static_cast<void>(set_preview_position(position_start_));
-  active_ = false;
+  CanvasNodeNotation* const node = dragged_node();
+  if (node != nullptr) {
+    node->position               = position_start_;
+    node->geometry.bounds.origin = position_start_;
+  }
+  static_assert(
+      std::is_nothrow_move_assignable_v<std::vector<CanvasConnectorGeometry>>);
+  scene_.connectors = std::move(connectors_start_);
+  active_           = false;
 }
 
 CanvasNodeNotation* CanvasNodeDragController::dragged_node() noexcept {
@@ -683,13 +1091,295 @@ bool CanvasNodeDragController::set_preview_position(
   const GraphPosition previous = node->position;
   node->position               = position;
   node->geometry.bounds.origin = position;
-  if (!refresh_attached_connector_legs(scene_, node_id_)) {
+  if (!refresh_connector_routes(scene_)) {
     node->position               = previous;
     node->geometry.bounds.origin = previous;
-    static_cast<void>(refresh_attached_connector_legs(scene_, node_id_));
     return false;
   }
   return true;
+}
+
+CanvasConnectorAttachmentController::CanvasConnectorAttachmentController(
+    Project& project, CommandHistory& history,
+    CanvasNotationScene& scene) noexcept
+    : project_(project), history_(history), scene_(scene) {}
+
+bool CanvasConnectorAttachmentController::begin(
+    NodeId source_node, ConnectorId source_output) noexcept {
+  if (active_ || !scene_connectors_match_project(scene_, project_)) {
+    return false;
+  }
+  const Node* const node = project_.find_node(source_node);
+  if (node == nullptr) {
+    return false;
+  }
+  const OutputConnector* const    output = node->find_output(source_output);
+  const CanvasNodeNotation* const scene_node =
+      find_scene_node(scene_, source_node);
+  if (output == nullptr || output->destination().has_value() ||
+      scene_node == nullptr ||
+      find_port(*scene_node, source_output, CanvasPortDirection::kOutput) ==
+          nullptr) {
+    return false;
+  }
+  source_node_   = source_node;
+  source_output_ = source_output;
+  active_        = true;
+  return true;
+}
+
+Result CanvasConnectorAttachmentController::finish(
+    NodeId destination_node, ConnectorId destination_input) noexcept {
+  if (!active_) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  active_ = false;
+
+  const Node* const            source = project_.find_node(source_node_);
+  const OutputConnector* const output =
+      source == nullptr ? nullptr : source->find_output(source_output_);
+  const auto insertion_index =
+      connector_insertion_index(project_, source_node_, source_output_);
+  if (output == nullptr || output->destination().has_value() ||
+      !insertion_index.has_value() ||
+      !scene_connectors_match_project(scene_, project_)) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+
+  std::optional<CanvasConnectorGeometry> geometry;
+  std::unique_ptr<ConnectCommand>        command;
+  try {
+    const ConnectorDestination destination{destination_node, destination_input};
+    geometry = connector_geometry(scene_, source_node_, source_output_,
+                                  destination, output->type());
+    if (!geometry.has_value()) {
+      return Result(ResultCode::kInvalidArgument);
+    }
+    scene_.connectors.reserve(scene_.connectors.size() + 1U);
+    command = std::make_unique<ConnectCommand>(
+        source_node_, source_output_, destination_node, destination_input);
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+
+  const Result result = history_.execute_new(std::move(command), project_);
+  if (!result.ok()) {
+    return result;
+  }
+  static_assert(std::is_nothrow_move_constructible_v<CanvasConnectorGeometry>);
+  static_assert(std::is_nothrow_move_assignable_v<CanvasConnectorGeometry>);
+  scene_.connectors.insert(
+      scene_.connectors.begin() + static_cast<std::ptrdiff_t>(*insertion_index),
+      std::move(*geometry));
+  return Result();
+}
+
+void CanvasConnectorAttachmentController::cancel() noexcept {
+  active_ = false;
+}
+
+CanvasConnectorTypeController::CanvasConnectorTypeController(
+    Project& project, CommandHistory& history,
+    CanvasNotationScene& scene) noexcept
+    : project_(project), history_(history), scene_(scene) {}
+
+Result CanvasConnectorTypeController::set_type(NodeId        node_id,
+                                               ConnectorId   output_id,
+                                               ConnectorType type) noexcept {
+  if (type != ConnectorType::kSequential && type != ConnectorType::kVertical) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (!scene_connectors_match_project(scene_, project_)) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  Node* const node = project_.find_node(node_id);
+  if (node == nullptr) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  const OutputConnector* const    output     = node->find_output(output_id);
+  const CanvasNodeNotation* const scene_node = find_scene_node(scene_, node_id);
+  if (output == nullptr || scene_node == nullptr ||
+      find_port(*scene_node, output_id, CanvasPortDirection::kOutput) ==
+          nullptr) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (output->type() == type) {
+    return Result();
+  }
+
+  std::unique_ptr<SetOutputTypeCommand> command;
+  try {
+    command = std::make_unique<SetOutputTypeCommand>(node_id, output_id, type);
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  const Result result = history_.execute_new(std::move(command), project_);
+  if (!result.ok()) {
+    return result;
+  }
+
+  const auto geometry = std::ranges::find_if(
+      scene_.connectors, [node_id, output_id](const auto& connector) {
+        return connector.source_node == node_id &&
+               connector.source_connector == output_id;
+      });
+  if (geometry != scene_.connectors.end()) {
+    geometry->type  = type;
+    geometry->style = canvas_connector_style(type);
+  }
+  return Result();
+}
+
+CanvasConnectorInspectorController::CanvasConnectorInspectorController(
+    Project& project, CommandHistory& history,
+    CanvasNotationScene& scene) noexcept
+    : project_(project), history_(history), scene_(scene) {}
+
+OutputConnector* CanvasConnectorInspectorController::find_output(
+    NodeId node_id, ConnectorId output_id) noexcept {
+  Node* const               node       = project_.find_node(node_id);
+  CanvasNodeNotation* const scene_node = find_scene_node(scene_, node_id);
+  if (node == nullptr || scene_node == nullptr) {
+    return nullptr;
+  }
+  OutputConnector* const      output = node->find_output(output_id);
+  const CanvasNodePort* const port =
+      find_port(*scene_node, output_id, CanvasPortDirection::kOutput);
+  if (output == nullptr || port == nullptr) {
+    return nullptr;
+  }
+  try {
+    if (port->name != output->name() ||
+        port->accessibility_id !=
+            connector_accessibility_id(
+                node_id, output_id, AccessibilityConnectorDirection::kOutput) ||
+        port->accessibility_label !=
+            connector_accessibility_label(
+                output->name(), AccessibilityConnectorDirection::kOutput)) {
+      return nullptr;
+    }
+  } catch (...) {
+    return nullptr;
+  }
+  return output;
+}
+
+Result CanvasConnectorInspectorController::set_event_binding(
+    NodeId node_id, ConnectorId output_id,
+    std::optional<EventId> event) noexcept {
+  OutputConnector* const output = find_output(node_id, output_id);
+  if (output == nullptr) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (output->event_binding() == event) {
+    return Result();
+  }
+  try {
+    return history_.execute_new(
+        std::make_unique<BindOutputEventCommand>(node_id, output_id, event),
+        project_);
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+}
+
+Result CanvasConnectorInspectorController::set_priority(NodeId      node_id,
+                                                        ConnectorId output_id,
+                                                        int priority) noexcept {
+  OutputConnector* const output = find_output(node_id, output_id);
+  if (output == nullptr) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (output->priority() == priority) {
+    return Result();
+  }
+  try {
+    return history_.execute_new(std::make_unique<SetOutputPriorityCommand>(
+                                    node_id, output_id, priority),
+                                project_);
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+}
+
+Result CanvasConnectorInspectorController::set_random_weight(
+    NodeId node_id, ConnectorId output_id, Rational weight) noexcept {
+  OutputConnector* const output = find_output(node_id, output_id);
+  if (output == nullptr) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (output->weight() == weight) {
+    return Result();
+  }
+  try {
+    return history_.execute_new(
+        std::make_unique<SetOutputWeightCommand>(node_id, output_id, weight),
+        project_);
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+}
+
+Result CanvasConnectorInspectorController::set_name(NodeId      node_id,
+                                                    ConnectorId output_id,
+                                                    std::string name) noexcept {
+  OutputConnector* const    output     = find_output(node_id, output_id);
+  CanvasNodeNotation* const scene_node = find_scene_node(scene_, node_id);
+  CanvasNodePort* const     port =
+      scene_node == nullptr
+              ? nullptr
+              : find_port(*scene_node, output_id, CanvasPortDirection::kOutput);
+  if (output == nullptr || port == nullptr) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (output->name() == name) {
+    return Result();
+  }
+
+  std::string label;
+  try {
+    label = connector_accessibility_label(
+        name, AccessibilityConnectorDirection::kOutput);
+    auto command = std::make_unique<SetOutputConnectorNameCommand>(
+        node_id, output_id, name);
+    const Result result = history_.execute_new(std::move(command), project_);
+    if (!result.ok()) {
+      return result;
+    }
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
+  port->name                = std::move(name);
+  port->accessibility_label = std::move(label);
+  return Result();
+}
+
+Result CanvasConnectorInspectorController::set_listener(
+    NodeId node_id, ConnectorId output_id, QueuePolicy policy,
+    std::size_t capacity) noexcept {
+  if (!valid_queue_policy(policy)) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  OutputConnector* const output = find_output(node_id, output_id);
+  if (output == nullptr || !output->event_binding().has_value()) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  Node* const                node     = project_.find_node(node_id);
+  const EventId              event    = *output->event_binding();
+  const EventListener* const listener = node->find_listener(event);
+  if (listener == nullptr) {
+    return Result(ResultCode::kInvalidArgument);
+  }
+  if (listener->policy() == policy && listener->capacity() == capacity) {
+    return Result();
+  }
+  try {
+    return history_.execute_new(std::make_unique<SetListenerPolicyCommand>(
+                                    node_id, event, policy, capacity),
+                                project_);
+  } catch (...) {
+    return Result(ResultCode::kOutOfMemory);
+  }
 }
 
 CanvasNotationScene Canvas::layout_nodes(
@@ -730,14 +1420,78 @@ CanvasNotationScene Canvas::layout_nodes(
               nullptr) {
         continue;
       }
-      const auto geometry = connector_geometry(scene, node.id(), output.id(),
-                                               *output.destination());
+      auto geometry = connector_geometry(scene, node.id(), output.id(),
+                                         *output.destination(), output.type());
       if (geometry.has_value()) {
-        scene.connectors.push_back(*geometry);
+        scene.connectors.push_back(std::move(*geometry));
       }
     }
   }
   return scene;
+}
+
+std::optional<CanvasConnectorInspector> Canvas::inspect_connector(
+    const Project& project, NodeId source_node, ConnectorId output_id) const {
+  const Node* const node = project.find_node(source_node);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  const OutputConnector* const output = node->find_output(output_id);
+  if (output == nullptr) {
+    return std::nullopt;
+  }
+
+  CanvasConnectorInspector inspector{source_node,
+                                     node->name(),
+                                     output_id,
+                                     output->name(),
+                                     output->type(),
+                                     std::nullopt,
+                                     output->priority(),
+                                     output->weight(),
+                                     std::nullopt,
+                                     std::nullopt,
+                                     {}};
+  if (output->event_binding().has_value()) {
+    const EventId              event_id = *output->event_binding();
+    std::optional<std::string> event_name;
+    if (const EventDefinition* const event =
+            project.events().find_by_id(event_id);
+        event != nullptr) {
+      event_name = event->name;
+    }
+    inspector.event = CanvasConnectorEventFields{event_id, event_name};
+    if (const EventListener* const listener = node->find_listener(event_id);
+        listener != nullptr) {
+      inspector.listener = CanvasConnectorListenerFields{listener->policy(),
+                                                         listener->capacity()};
+    }
+  }
+  if (output->destination().has_value()) {
+    const ConnectorDestination destination = *output->destination();
+    inspector.destination                  = CanvasConnectorDestinationFields{
+        destination.node, std::nullopt, destination.connector, std::nullopt};
+    if (const Node* const destination_node =
+            project.find_node(destination.node);
+        destination_node != nullptr) {
+      inspector.destination->node_name = destination_node->name();
+      if (const InputConnector* const input =
+              destination_node->find_input(destination.connector);
+          input != nullptr) {
+        inspector.destination->input_name = input->name();
+      }
+    }
+  }
+
+  const ValidationReport report =
+      ValidationService{}.validate_complete(project);
+  std::ranges::copy_if(report.diagnostics,
+                       std::back_inserter(inspector.diagnostics),
+                       [source_node, output_id](const Diagnostic& diagnostic) {
+                         return diagnostic_applies_to_connector(
+                             diagnostic, source_node, output_id);
+                       });
+  return inspector;
 }
 
 int canvas_version() noexcept {
