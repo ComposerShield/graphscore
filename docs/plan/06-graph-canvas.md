@@ -41,7 +41,7 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 ### Orthogonal route editing
 
 - [x] M6-phase-21 Automatically compute obstacle-avoiding straight/Manhattan routes around node bounds.
-- [ ] M6-phase-22 Render all 90-degree turns with consistent rounded corners.
+- [x] M6-phase-22 Render all 90-degree turns with consistent rounded corners.
 - [ ] M6-phase-23 Hovering a segment presents a bidirectional cursor perpendicular to its movement axis.
 - [ ] M6-phase-24 Dragging any segment inserts/moves/removes bends as needed while preserving orthogonality and minimum endpoint clearance.
 - [ ] M6-phase-25 Preserve valid customized interior segments when either endpoint node moves; repair only endpoint legs and invalid collisions.

@@ -230,8 +230,18 @@ struct RouteObstacle {
         !std::isfinite(bottom) || bounds.width < 0.0 || bounds.height < 0.0) {
       continue;
     }
+    const double left_clear =
+        bounds.origin.x - CanvasConnectorGeometry::kCornerRadius;
+    const double top_clear =
+        bounds.origin.y - CanvasConnectorGeometry::kCornerRadius;
+    const double right_clear  = right + CanvasConnectorGeometry::kCornerRadius;
+    const double bottom_clear = bottom + CanvasConnectorGeometry::kCornerRadius;
+    if (!std::isfinite(left_clear) || !std::isfinite(top_clear) ||
+        !std::isfinite(right_clear) || !std::isfinite(bottom_clear)) {
+      continue;
+    }
     obstacles.push_back(
-        RouteObstacle{bounds.origin.x, bounds.origin.y, right, bottom});
+        RouteObstacle{left_clear, top_clear, right_clear, bottom_clear});
   }
   return obstacles;
 }
@@ -521,6 +531,7 @@ struct RouteQueueGreater {
   route_points.push_back(source_leg->attachment);
   route_points.insert(route_points.end(), route->begin(), route->end());
   route_points.push_back(destination_leg->attachment);
+  auto render_path = canvas_connector_render_path(route_points);
   return CanvasConnectorGeometry{source_node,
                                  source_connector,
                                  destination.node,
@@ -528,6 +539,7 @@ struct RouteQueueGreater {
                                  *source_leg,
                                  *destination_leg,
                                  std::move(route_points),
+                                 std::move(render_path),
                                  type,
                                  canvas_connector_style(type)};
 }
@@ -964,6 +976,73 @@ bool CanvasNavigationController::zoom_in(
 bool CanvasNavigationController::zoom_out(
     ViewportPosition focal_point) noexcept {
   return transform_.zoom_by(1.0 / kKeyboardZoomStep, focal_point);
+}
+
+std::vector<CanvasConnectorPathElement> canvas_connector_render_path(
+    std::span<const GraphPosition> route_points) {
+  if (route_points.empty()) {
+    return {};
+  }
+
+  std::vector<CanvasConnectorPathElement> path;
+  path.reserve(route_points.size() * 2U);
+  path.push_back({CanvasConnectorPathVerb::kMove, {}, route_points.front()});
+  GraphPosition current     = route_points.front();
+  const auto    append_line = [&path, &current](GraphPosition end) {
+    if (end != current) {
+      path.push_back({CanvasConnectorPathVerb::kLine, {}, end});
+      current = end;
+    }
+  };
+
+  for (std::size_t index = 1U; index + 1U < route_points.size(); ++index) {
+    const GraphPosition before              = route_points[index - 1U];
+    const GraphPosition corner              = route_points[index];
+    const GraphPosition after               = route_points[index + 1U];
+    const bool          incoming_horizontal = before.y == corner.y;
+    const bool          outgoing_horizontal = corner.y == after.y;
+    if (incoming_horizontal == outgoing_horizontal || before == corner ||
+        corner == after) {
+      append_line(corner);
+      continue;
+    }
+
+    const double incoming_length = incoming_horizontal
+                                       ? std::abs(corner.x - before.x)
+                                       : std::abs(corner.y - before.y);
+    const double outgoing_length = outgoing_horizontal
+                                       ? std::abs(after.x - corner.x)
+                                       : std::abs(after.y - corner.y);
+    const double radius =
+        std::min({CanvasConnectorGeometry::kCornerRadius, incoming_length / 2.0,
+                  outgoing_length / 2.0});
+    const GraphPosition approach{
+        corner.x - (incoming_horizontal
+                        ? std::copysign(radius, corner.x - before.x)
+                        : 0.0),
+        corner.y - (!incoming_horizontal
+                        ? std::copysign(radius, corner.y - before.y)
+                        : 0.0)};
+    const GraphPosition departure{
+        corner.x + (outgoing_horizontal
+                        ? std::copysign(radius, after.x - corner.x)
+                        : 0.0),
+        corner.y + (!outgoing_horizontal
+                        ? std::copysign(radius, after.y - corner.y)
+                        : 0.0)};
+    if (approach == corner || departure == corner || approach == departure) {
+      append_line(corner);
+      continue;
+    }
+    append_line(approach);
+    path.push_back({CanvasConnectorPathVerb::kQuadratic, corner, departure});
+    current = departure;
+  }
+
+  if (route_points.size() > 1U) {
+    append_line(route_points.back());
+  }
+  return path;
 }
 
 bool CanvasNotationScene::complete() const noexcept {

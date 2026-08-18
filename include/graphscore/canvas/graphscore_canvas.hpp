@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -476,8 +477,33 @@ struct CanvasConnectorStyle {
   return {};
 }
 
+enum class CanvasConnectorPathVerb : std::uint8_t {
+  kMove = 0,
+  kLine,
+  kQuadratic,
+};
+
+// One world-space command in the toolkit-neutral connector render path.
+// kQuadratic uses control as its control point; kMove and kLine ignore it.
+struct CanvasConnectorPathElement {
+  CanvasConnectorPathVerb verb = CanvasConnectorPathVerb::kMove;
+  GraphPosition           control;
+  GraphPosition           end;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorPathElement&) const =
+      default;
+};
+
+// Converts an orthogonal route polyline into a render path. Every 90-degree
+// turn uses the same radius unless an adjacent segment is too short, in which
+// case the radius is clamped symmetrically so neighboring corners never
+// overlap.
+[[nodiscard]] std::vector<CanvasConnectorPathElement>
+canvas_connector_render_path(std::span<const GraphPosition> route_points);
+
 struct CanvasConnectorGeometry {
   static constexpr double kEndpointClearance = 24.0;
+  static constexpr double kCornerRadius      = 12.0;
 
   NodeId                     source_node;
   ConnectorId                source_connector;
@@ -489,8 +515,11 @@ struct CanvasConnectorGeometry {
   // outer points. Consecutive points are orthogonal and avoid every node
   // interior not already covering a fixed endpoint clearance point.
   std::vector<GraphPosition> route_points;
-  ConnectorType              type = ConnectorType::kSequential;
-  CanvasConnectorStyle       style =
+  // Derived from route_points for painting. The orthogonal polyline remains
+  // authoritative for routing and hit testing.
+  std::vector<CanvasConnectorPathElement> render_path;
+  ConnectorType                           type = ConnectorType::kSequential;
+  CanvasConnectorStyle                    style =
       canvas_connector_style(ConnectorType::kSequential);
 
   [[nodiscard]] bool operator==(const CanvasConnectorGeometry&) const = default;

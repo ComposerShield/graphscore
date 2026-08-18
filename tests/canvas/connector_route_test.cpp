@@ -6,8 +6,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
+#include <ranges>
 
 namespace {
 
@@ -39,6 +41,13 @@ class RouteMetrics final : public graphscore::GlyphMetrics {
          std::max(first.x, second.x) > bounds.origin.x;
 }
 
+[[nodiscard]] bool point_is_interior(graphscore::GraphPosition      point,
+                                     const graphscore::WorldBounds& bounds) {
+  return point.x > bounds.origin.x &&
+         point.x < bounds.origin.x + bounds.width &&
+         point.y > bounds.origin.y && point.y < bounds.origin.y + bounds.height;
+}
+
 void expect_well_formed(const graphscore::CanvasConnectorGeometry& connector) {
   ASSERT_GE(connector.route_points.size(), 2U);
   EXPECT_EQ(connector.route_points.front(), connector.source_leg.attachment);
@@ -54,6 +63,29 @@ void expect_well_formed(const graphscore::CanvasConnectorGeometry& connector) {
     EXPECT_TRUE(std::isfinite(first.y));
     EXPECT_NE(first, second);
     EXPECT_TRUE(first.x == second.x || first.y == second.y);
+  }
+  ASSERT_FALSE(connector.render_path.empty());
+  EXPECT_EQ(connector.render_path.front().verb,
+            graphscore::CanvasConnectorPathVerb::kMove);
+  EXPECT_EQ(connector.render_path.front().end, connector.route_points.front());
+  EXPECT_EQ(connector.render_path.back().end, connector.route_points.back());
+  std::size_t turn_count = 0U;
+  for (std::size_t index = 1U; index + 1U < connector.route_points.size();
+       ++index) {
+    const auto before = connector.route_points[index - 1U];
+    const auto corner = connector.route_points[index];
+    const auto after  = connector.route_points[index + 1U];
+    turn_count += static_cast<std::size_t>((before.y == corner.y) !=
+                                           (corner.y == after.y));
+  }
+  const auto rounded_count = std::ranges::count(
+      connector.render_path, graphscore::CanvasConnectorPathVerb::kQuadratic,
+      &graphscore::CanvasConnectorPathElement::verb);
+  EXPECT_EQ(rounded_count, turn_count);
+  auto current = connector.render_path.front().end;
+  for (const auto& element : connector.render_path | std::views::drop(1U)) {
+    EXPECT_NE(element.end, current);
+    current = element.end;
   }
 }
 
@@ -123,6 +155,25 @@ TEST(CanvasConnectorRouteTest, DetoursAroundInterveningNodeBounds) {
     EXPECT_FALSE(segment_crosses_interior(
         scene.connectors[0].route_points[index - 1U],
         scene.connectors[0].route_points[index], obstacle->geometry.bounds));
+  }
+  auto current = scene.connectors[0].render_path.front().end;
+  for (const auto& element :
+       scene.connectors[0].render_path | std::views::drop(1U)) {
+    if (element.verb == graphscore::CanvasConnectorPathVerb::kQuadratic) {
+      for (std::size_t step = 1U; step < 10U; ++step) {
+        const double amount  = static_cast<double>(step) / 10.0;
+        const double inverse = 1.0 - amount;
+        const graphscore::GraphPosition sample{
+            inverse * inverse * current.x +
+                2.0 * inverse * amount * element.control.x +
+                amount * amount * element.end.x,
+            inverse * inverse * current.y +
+                2.0 * inverse * amount * element.control.y +
+                amount * amount * element.end.y};
+        EXPECT_FALSE(point_is_interior(sample, obstacle->geometry.bounds));
+      }
+    }
+    current = element.end;
   }
 }
 
@@ -215,6 +266,66 @@ TEST(CanvasConnectorRouteTest, IgnoresUnusableUnrelatedObstacleBounds) {
   expect_well_formed(scene.connectors[0]);
   EXPECT_EQ(scene.connectors[0].source_node, fixture.source_id);
   EXPECT_EQ(scene.connectors[0].destination_node, fixture.destination_id);
+}
+
+TEST(CanvasConnectorRouteTest, RoundsEveryNinetyDegreeTurnConsistently) {
+  constexpr std::array route{
+      graphscore::GraphPosition{0.0, 0.0},
+      graphscore::GraphPosition{40.0, 0.0},
+      graphscore::GraphPosition{40.0, 40.0},
+      graphscore::GraphPosition{80.0, 40.0},
+  };
+
+  const auto path = graphscore::canvas_connector_render_path(route);
+
+  ASSERT_EQ(path.size(), 6U);
+  EXPECT_EQ(path[0],
+            (graphscore::CanvasConnectorPathElement{
+                graphscore::CanvasConnectorPathVerb::kMove, {}, {0.0, 0.0}}));
+  EXPECT_EQ(path[1].end, (graphscore::GraphPosition{28.0, 0.0}));
+  EXPECT_EQ(path[2], (graphscore::CanvasConnectorPathElement{
+                         graphscore::CanvasConnectorPathVerb::kQuadratic,
+                         {40.0, 0.0},
+                         {40.0, 12.0}}));
+  EXPECT_EQ(path[3].end, (graphscore::GraphPosition{40.0, 28.0}));
+  EXPECT_EQ(path[4], (graphscore::CanvasConnectorPathElement{
+                         graphscore::CanvasConnectorPathVerb::kQuadratic,
+                         {40.0, 40.0},
+                         {52.0, 40.0}}));
+  EXPECT_EQ(path[5].end, (graphscore::GraphPosition{80.0, 40.0}));
+}
+
+TEST(CanvasConnectorRouteTest, ClampsCornersOnShortSharedSegments) {
+  constexpr std::array route{
+      graphscore::GraphPosition{0.0, 0.0},
+      graphscore::GraphPosition{10.0, 0.0},
+      graphscore::GraphPosition{10.0, 8.0},
+      graphscore::GraphPosition{20.0, 8.0},
+  };
+
+  const auto path = graphscore::canvas_connector_render_path(route);
+
+  ASSERT_EQ(path.size(), 5U);
+  EXPECT_EQ(path[1].end, (graphscore::GraphPosition{6.0, 0.0}));
+  EXPECT_EQ(path[2].end, (graphscore::GraphPosition{10.0, 4.0}));
+  EXPECT_EQ(path[3].end, (graphscore::GraphPosition{14.0, 8.0}));
+  EXPECT_EQ(path[4].end, (graphscore::GraphPosition{20.0, 8.0}));
+}
+
+TEST(CanvasConnectorRouteTest, LeavesStraightAndReversingPointsSharp) {
+  constexpr std::array route{
+      graphscore::GraphPosition{0.0, 0.0},
+      graphscore::GraphPosition{20.0, 0.0},
+      graphscore::GraphPosition{10.0, 0.0},
+  };
+
+  const auto path = graphscore::canvas_connector_render_path(route);
+
+  ASSERT_EQ(path.size(), 3U);
+  EXPECT_EQ(path[1],
+            (graphscore::CanvasConnectorPathElement{
+                graphscore::CanvasConnectorPathVerb::kLine, {}, {20.0, 0.0}}));
+  EXPECT_EQ(path[2].end, (graphscore::GraphPosition{10.0, 0.0}));
 }
 
 }  // namespace
