@@ -149,7 +149,7 @@ gates.
 ## Test Focus
 
 - [x] M5-phase-56 Toolkit-neutral layout goldens and semantic geometry assertions.
-- [ ] M5-phase-57 Hit-testing around dense chords, accidentals, overlapping voices, beams, and spans.
+- [x] M5-phase-57 Hit-testing around dense chords, accidentals, overlapping voices, beams, and spans.
 - [ ] M5-phase-58 Duration replacement, automatic-rest normalization, chord building, and explicit voice isolation.
 - [ ] M5-phase-59 Keyboard command tables, wrapping staff focus, selection recovery, and interval spelling in every standard key.
 - [ ] M5-phase-60 Round-trip edit/undo/redo tests for every notation command.
