@@ -1045,6 +1045,52 @@ std::vector<CanvasConnectorPathElement> canvas_connector_render_path(
   return path;
 }
 
+std::optional<CanvasConnectorSegmentHover> canvas_connector_segment_hover(
+    std::span<const GraphPosition> route_points, GraphPosition pointer,
+    double hit_tolerance) noexcept {
+  if (!is_finite(pointer) || !std::isfinite(hit_tolerance) ||
+      hit_tolerance < 0.0) {
+    return std::nullopt;
+  }
+
+  std::optional<CanvasConnectorSegmentHover> hover;
+  double                                     nearest_distance = 0.0;
+  for (std::size_t index = 0U; index + 1U < route_points.size(); ++index) {
+    const GraphPosition first  = route_points[index];
+    const GraphPosition second = route_points[index + 1U];
+    if (!is_finite(first) || !is_finite(second) || first == second) {
+      continue;
+    }
+
+    const bool horizontal = first.y == second.y;
+    const bool vertical   = first.x == second.x;
+    if (horizontal == vertical) {
+      continue;
+    }
+
+    const double parallel_value  = horizontal ? pointer.x : pointer.y;
+    const double parallel_first  = horizontal ? first.x : first.y;
+    const double parallel_second = horizontal ? second.x : second.y;
+    if (parallel_value < std::min(parallel_first, parallel_second) ||
+        parallel_value > std::max(parallel_first, parallel_second)) {
+      continue;
+    }
+
+    const double distance = std::abs((horizontal ? pointer.y : pointer.x) -
+                                     (horizontal ? first.y : first.x));
+    if (distance > hit_tolerance ||
+        (hover.has_value() && distance >= nearest_distance)) {
+      continue;
+    }
+
+    hover = CanvasConnectorSegmentHover{
+        index, horizontal ? CanvasCursorShape::kResizeNorthSouth
+                          : CanvasCursorShape::kResizeEastWest};
+    nearest_distance = distance;
+  }
+  return hover;
+}
+
 bool CanvasNotationScene::complete() const noexcept {
   return std::ranges::all_of(nodes, [](const CanvasNodeNotation& node) {
     return static_cast<bool>(node);

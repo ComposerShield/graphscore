@@ -501,6 +501,29 @@ struct CanvasConnectorPathElement {
 [[nodiscard]] std::vector<CanvasConnectorPathElement>
 canvas_connector_render_path(std::span<const GraphPosition> route_points);
 
+enum class CanvasCursorShape : std::uint8_t {
+  kDefault = 0,
+  kResizeEastWest,
+  kResizeNorthSouth,
+};
+
+// A hovered segment in the authoritative route polyline. The cursor describes
+// the segment's permitted movement, perpendicular to the segment itself.
+struct CanvasConnectorSegmentHover {
+  std::size_t       segment_index = 0;
+  CanvasCursorShape cursor        = CanvasCursorShape::kDefault;
+
+  [[nodiscard]] bool operator==(const CanvasConnectorSegmentHover&) const =
+      default;
+};
+
+// Resolves a world-space pointer to the nearest orthogonal route segment
+// within the inclusive hit tolerance. Equal-distance hits use route order.
+[[nodiscard]] std::optional<CanvasConnectorSegmentHover>
+canvas_connector_segment_hover(std::span<const GraphPosition> route_points,
+                               GraphPosition                  pointer,
+                               double hit_tolerance) noexcept;
+
 struct CanvasConnectorGeometry {
   static constexpr double kEndpointClearance = 24.0;
   static constexpr double kCornerRadius      = 12.0;
