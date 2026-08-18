@@ -316,4 +316,62 @@ TEST(CanvasActionCirclePlaybackActionTest, RejectsMissesAndNonFinitePointers) {
           .has_value());
 }
 
+TEST(CanvasPlaybackActionAvailabilityTest,
+     EnablesAnOutputWhoseSourceIsTheActiveNode) {
+  CanvasFixture                                          fixture;
+  const graphscore::CanvasConnectorPlaybackActionRequest request{
+      {fixture.source, fixture.output}};
+
+  const auto result =
+      graphscore::canvas_connector_playback_action(request, fixture.source);
+
+  ASSERT_TRUE(result.available()) << result.unavailable_reason;
+  ASSERT_TRUE(result.request.has_value());
+  EXPECT_EQ(*result.request, request);
+  EXPECT_TRUE(result.unavailable_reason.empty());
+}
+
+TEST(CanvasPlaybackActionAvailabilityTest,
+     ReportsWhyAnOutputFromAnotherNodeIsUnavailableButStillEditable) {
+  CanvasFixture fixture;
+  ASSERT_EQ(fixture.scene.connectors.size(), 1U);
+  const auto& connector = fixture.scene.connectors.front();
+  ASSERT_GE(connector.route_points.size(), 4U);
+  constexpr std::size_t kInteriorSegment = 1U;
+  const auto            first  = connector.route_points[kInteriorSegment];
+  const auto            second = connector.route_points[kInteriorSegment + 1U];
+  const graphscore::GraphPosition midpoint{(first.x + second.x) / 2.0,
+                                           (first.y + second.y) / 2.0};
+  const auto request = graphscore::canvas_double_click_playback_action_request(
+      fixture.project, fixture.scene, fixture.palette, midpoint, 4.0);
+  ASSERT_TRUE(request.has_value());
+
+  const auto result = graphscore::canvas_connector_playback_action(
+      *request, fixture.destination);
+  const auto selection = graphscore::canvas_single_click_selection(
+      fixture.project, fixture.scene, fixture.palette, midpoint, 4.0);
+
+  EXPECT_FALSE(result.available());
+  EXPECT_FALSE(result.request.has_value());
+  EXPECT_EQ(result.unavailable_reason,
+            "connection source is not the active node");
+  ASSERT_TRUE(selection.has_value());
+  EXPECT_EQ(
+      std::get<graphscore::CanvasConnectorPathSelection>(*selection).connector,
+      request->connector);
+}
+
+TEST(CanvasPlaybackActionAvailabilityTest, ReportsWhenPlaybackHasNoActiveNode) {
+  CanvasFixture                                          fixture;
+  const graphscore::CanvasConnectorPlaybackActionRequest request{
+      {fixture.source, fixture.output}};
+
+  const auto result =
+      graphscore::canvas_connector_playback_action(request, std::nullopt);
+
+  EXPECT_FALSE(result.available());
+  EXPECT_FALSE(result.request.has_value());
+  EXPECT_EQ(result.unavailable_reason, "playback is not active");
+}
+
 }  // namespace

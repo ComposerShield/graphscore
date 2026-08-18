@@ -1557,6 +1557,18 @@ canvas_double_click_playback_action_request(const Project&             project,
   return CanvasConnectorPlaybackActionRequest{connector->connector};
 }
 
+CanvasConnectorPlaybackActionResult canvas_connector_playback_action(
+    const CanvasConnectorPlaybackActionRequest& request,
+    std::optional<NodeId>                       active_node) {
+  if (!active_node.has_value()) {
+    return {std::nullopt, "playback is not active"};
+  }
+  if (*active_node != request.connector.source_node) {
+    return {std::nullopt, "connection source is not the active node"};
+  }
+  return {request, {}};
+}
+
 std::optional<CanvasConnectorPlaybackActionRequest>
 canvas_action_circle_playback_action_request(const CanvasNotationScene& scene,
                                              GraphPosition pointer) noexcept {

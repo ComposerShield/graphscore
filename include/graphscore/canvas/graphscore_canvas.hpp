@@ -646,16 +646,33 @@ canvas_single_click_selection(const Project&             project,
                               GraphPosition              pointer,
                               double connector_hit_tolerance);
 
-// A request to invoke a connection's playback action. Availability and the
-// sequential-queue versus vertical-jump dispatch are resolved by the playback
-// controller in later integration phases; canvas gesture recognition carries
-// only the stable output identity.
+// A request to invoke a connection's playback action. Canvas gesture
+// recognition carries only the stable output identity; availability is
+// resolved against the active node before a later playback controller performs
+// sequential-queue versus vertical-jump dispatch.
 struct CanvasConnectorPlaybackActionRequest {
   CanvasConnectorSelection connector;
 
   [[nodiscard]] bool operator==(
       const CanvasConnectorPlaybackActionRequest&) const = default;
 };
+
+// Toolkit-neutral action availability used by both connector invocation
+// gestures. An unavailable action retains a composer-facing reason but no
+// request to dispatch, while the connector remains independently editable.
+struct CanvasConnectorPlaybackActionResult {
+  std::optional<CanvasConnectorPlaybackActionRequest> request;
+  std::string                                         unavailable_reason;
+
+  [[nodiscard]] bool available() const noexcept { return request.has_value(); }
+};
+
+// Enables an action only when its output belongs to the active node. No active
+// node represents stopped playback and carries a distinct unavailable reason.
+[[nodiscard]] CanvasConnectorPlaybackActionResult
+canvas_connector_playback_action(
+    const CanvasConnectorPlaybackActionRequest& request,
+    std::optional<NodeId>                       active_node);
 
 // Resolves a normal double-click to a playback-action request only when the
 // same topmost target would be selected as a connector path by a single click.
