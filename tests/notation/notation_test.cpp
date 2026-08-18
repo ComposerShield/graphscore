@@ -133,8 +133,8 @@ struct Fixture {
       for (const auto& stave : layout.staves()) {
         staves.push_back(stave);
       }
-      const auto track_id = project.add_track("Track", std::move(layout),
-                                              *MidiChannel::create(channel));
+      const auto track_id = project.add_track(
+          "Track", std::move(layout), *MidiChannel::create(channel % 16));
       EXPECT_TRUE(track_id.has_value());
       track_ids.push_back(*track_id);
       ++channel;
@@ -1273,6 +1273,52 @@ TEST(NotationIncrementalTest,
   EXPECT_EQ(updated.work.rebuilt_measures, (std::vector<std::size_t>{1}));
   EXPECT_EQ(updated.work.rebuilt_systems, (std::vector<std::size_t>{1}));
   EXPECT_EQ(updated.work.reused_systems.size(), 63U);
+  EXPECT_EQ(system_commands(*updated.layout, 63), trailing_commands);
+  EXPECT_EQ(system_hits(*updated.layout, 63), trailing_hits);
+  const auto fresh =
+      layout_notation(fixture.project, fixture.node_id, metrics, options);
+  ASSERT_TRUE(fresh);
+  EXPECT_EQ(*updated.layout, *fresh.layout);
+}
+
+TEST(NotationIncrementalTest,
+     Representative64Track64MeasureNodeBoundsLocalEditWork) {
+  std::vector<StaffLayout> layouts;
+  layouts.reserve(64);
+  for (std::size_t track = 0; track < 64; ++track) {
+    layouts.push_back(StaffLayout::single_staff());
+  }
+  Fixture fixture(std::move(layouts), 64);
+  for (std::size_t track = 0; track < 64; ++track) {
+    fixture.append_quarter_notes(track, 0, 1, 256);
+  }
+  const FixedMetrics          metrics;
+  const NotationLayoutOptions options = one_measure_system_options();
+  NotationLayoutCache         cache;
+  const auto                  initial =
+      cache.update(fixture.project, fixture.node_id, metrics, options, {});
+  ASSERT_TRUE(initial);
+  ASSERT_EQ(initial.layout->systems.size(), 64U);
+  ASSERT_EQ(initial.layout->systems[0].staves.size(), 64U);
+  const auto trailing_commands = system_commands(*initial.layout, 63);
+  const auto trailing_hits     = system_hits(*initial.layout, 63);
+
+  ASSERT_TRUE(fixture.voice()
+                  .add_dynamic(graphscore::make_dynamic_marking(
+                      graphscore::event_id(fixture.voice().events()[4]),
+                      graphscore::Dynamic::kF))
+                  .ok());
+  const auto updated =
+      cache.update(fixture.project, fixture.node_id, metrics, options,
+                   {{NotationInvalidationKind::kLocalContent, 1, 1}});
+  ASSERT_TRUE(updated);
+  EXPECT_EQ(updated.work.visited_measures, (std::vector<std::size_t>{1}));
+  EXPECT_EQ(updated.work.rebuilt_measures, (std::vector<std::size_t>{1}));
+  EXPECT_EQ(updated.work.rebuilt_systems, (std::vector<std::size_t>{1}));
+  EXPECT_EQ(updated.work.reused_systems.size(), 63U);
+  EXPECT_EQ(updated.work.event_visits, 256U);
+  EXPECT_EQ(updated.work.reference_visits, 1U);
+  EXPECT_EQ(updated.layout->systems[1].staves.size(), 64U);
   EXPECT_EQ(system_commands(*updated.layout, 63), trailing_commands);
   EXPECT_EQ(system_hits(*updated.layout, 63), trailing_hits);
   const auto fresh =

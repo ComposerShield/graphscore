@@ -143,12 +143,12 @@ gates.
 - [x] M5-phase-50 Engraving remains deterministic for golden fixtures across supported platforms, allowing documented raster tolerance only at the backend boundary.
 - [x] M5-phase-51 Four voices, tuplets, grace notes, cross-measure ties, signatures, and markings survive complex measure edits without invalid references.
 - [x] M5-phase-52 The specified keyboard workflow is covered by automated command tests and manual platform shortcut checks.
-- [ ] M5-phase-53 The action table defines a complete step-entry protocol and has keyboard-layout tests rather than relying on US key labels alone.
-- [ ] M5-phase-55 Editing a representative 64-track, 64-measure node remains responsive when only a small visible region changes.
+- [x] M5-phase-53 The action table defines a complete step-entry protocol and has keyboard-layout tests rather than relying on US key labels alone.
+- [x] M5-phase-55 Editing a representative 64-track, 64-measure node remains responsive when only a small visible region changes.
 
 ## Test Focus
 
-- [ ] M5-phase-56 Toolkit-neutral layout goldens and semantic geometry assertions.
+- [x] M5-phase-56 Toolkit-neutral layout goldens and semantic geometry assertions.
 - [ ] M5-phase-57 Hit-testing around dense chords, accidentals, overlapping voices, beams, and spans.
 - [ ] M5-phase-58 Duration replacement, automatic-rest normalization, chord building, and explicit voice isolation.
 - [ ] M5-phase-59 Keyboard command tables, wrapping staff focus, selection recovery, and interval spelling in every standard key.
