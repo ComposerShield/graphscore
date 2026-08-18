@@ -168,6 +168,25 @@ TEST(CanvasNodeDragTest, EndpointMovesPreserveValidCustomizedInteriorSegments) {
   EXPECT_FALSE(std::ranges::search(scene.connectors[0].route_points,
                                    expected_source_move)
                    .empty());
+  const graphscore::CanvasConnectorGeometry committed_geometry =
+      scene.connectors[0];
+  ASSERT_TRUE(drag.finish().ok());
+
+  EXPECT_EQ(fixture.project.find_node(fixture.destination_id)->position(),
+            (graphscore::GraphPosition{500.0, 150.0}));
+  EXPECT_EQ(fixture.project.find_node(fixture.source_id)
+                ->find_output(fixture.output)
+                ->route()
+                .waypoints(),
+            (std::vector<graphscore::RoutePoint>(custom_points.begin(),
+                                                 custom_points.end())));
+  const graphscore::CanvasNotationScene relaid_scene =
+      graphscore::Canvas{}.layout_nodes(fixture.project, fixture.metrics);
+  ASSERT_EQ(relaid_scene.connectors.size(), 2U);
+  EXPECT_EQ(relaid_scene.connectors[0], committed_geometry);
+  EXPECT_FALSE(std::ranges::search(relaid_scene.connectors[0].route_points,
+                                   expected_source_move)
+                   .empty());
 }
 
 TEST(CanvasNodeDragTest, EndpointMoveRepairsOnlyCollidingCustomizedSegments) {
