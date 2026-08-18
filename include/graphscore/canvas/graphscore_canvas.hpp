@@ -623,6 +623,23 @@ struct CanvasControlSelection {
   [[nodiscard]] bool operator==(const CanvasControlSelection&) const = default;
 };
 
+// A dedicated node-play activation. Pointer selection and keyboard focus both
+// resolve through CanvasControlSelection first, so activating this request can
+// never be confused with selecting or beginning a drag on the containing node.
+struct CanvasNodePlaybackActionRequest {
+  NodeId node_id;
+
+  [[nodiscard]] bool operator==(const CanvasNodePlaybackActionRequest&) const =
+      default;
+};
+
+// Converts only the dedicated play control to a playback request. The other
+// header controls and the node background retain their independent editing
+// behavior.
+[[nodiscard]] std::optional<CanvasNodePlaybackActionRequest>
+canvas_node_playback_action_request(
+    const CanvasControlSelection& control) noexcept;
+
 struct CanvasNotationSelection {
   NodeId    node_id;
   Selection selection;

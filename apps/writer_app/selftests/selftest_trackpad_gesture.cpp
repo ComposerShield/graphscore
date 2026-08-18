@@ -429,6 +429,58 @@ int trackpad_gesture_test() {
     }
   }
 
+  // --- test: focused node play uses button keyboard activation -----------
+  {
+    CanvasGestureHandler     handler;
+    RecordingDelegateHandler delegate;
+    const graphscore::NodeId node_id = graphscore::NodeId::generate();
+    std::vector<graphscore::CanvasNodePlaybackActionRequest> requests;
+    handler.set_delegate(&delegate);
+    handler.set_keyboard_focus(CanvasKeyboardFocus::kCanvas);
+    handler.set_focused_control(graphscore::CanvasControlSelection{
+        node_id, graphscore::CanvasNodeHeaderAction::kPlay});
+    handler.set_node_play_handler(
+        [&requests](graphscore::CanvasNodePlaybackActionRequest request) {
+          requests.push_back(request);
+        });
+
+    for (const graphscore::KeyCode code :
+         {graphscore::KeyCode::kReturn, graphscore::KeyCode::kSpace}) {
+      graphscore::KeyEvent activation;
+      activation.code = code;
+      handler.on_key_press(activation);
+      activation.repeat = true;
+      handler.on_key_press(activation);
+    }
+    if (requests.size() != 2 || requests[0].node_id != node_id ||
+        requests[1].node_id != node_id || !delegate.keys.empty()) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: focused node play was not "
+                   "keyboard activated exactly once per key\n");
+      return 1;
+    }
+
+    handler.set_focused_control(graphscore::CanvasControlSelection{
+        node_id, graphscore::CanvasNodeHeaderAction::kOpenTempoLane});
+    graphscore::KeyEvent return_key;
+    return_key.code = graphscore::KeyCode::kReturn;
+    handler.on_key_press(return_key);
+    handler.set_keyboard_focus(CanvasKeyboardFocus::kNotation);
+    handler.set_focused_control(graphscore::CanvasControlSelection{
+        node_id, graphscore::CanvasNodeHeaderAction::kPlay});
+    graphscore::KeyEvent space_key;
+    space_key.code = graphscore::KeyCode::kSpace;
+    handler.on_key_press(space_key);
+    if (requests.size() != 2 || delegate.keys.size() != 2 ||
+        delegate.keys[0].code != graphscore::KeyCode::kReturn ||
+        delegate.keys[1].code != graphscore::KeyCode::kSpace) {
+      std::fprintf(stderr,
+                   "trackpad-gesture-test: node play activation stole a key "
+                   "outside its focused button context\n");
+      return 1;
+    }
+  }
+
   // --- test: wheel policy normalizes Primary for both platform mappings ----
   for (const PrimaryModifier primary :
        {PrimaryModifier::kMeta, PrimaryModifier::kControl}) {

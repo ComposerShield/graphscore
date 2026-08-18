@@ -1538,6 +1538,15 @@ std::optional<CanvasSingleClickSelection> canvas_single_click_selection(
   return std::nullopt;
 }
 
+std::optional<CanvasNodePlaybackActionRequest>
+canvas_node_playback_action_request(
+    const CanvasControlSelection& control) noexcept {
+  if (control.action != CanvasNodeHeaderAction::kPlay) {
+    return std::nullopt;
+  }
+  return CanvasNodePlaybackActionRequest{control.node_id};
+}
+
 std::optional<CanvasConnectorPlaybackActionRequest>
 canvas_double_click_playback_action_request(const Project&             project,
                                             const CanvasNotationScene& scene,

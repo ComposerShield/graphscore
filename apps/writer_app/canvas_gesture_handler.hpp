@@ -85,6 +85,15 @@ class CanvasGestureHandler final : public graphscore::InputHandler {
   void set_delete_selected_connector_handler(
       DeleteSelectedConnectorHandler handler);
 
+  // The canvas owner updates the focused control as focus moves among retained
+  // header buttons. Unmodified Return or Space activates a focused node-play
+  // button once, without selecting or starting a drag on its containing node.
+  void set_focused_control(
+      std::optional<graphscore::CanvasControlSelection> control) noexcept;
+  using NodePlayHandler =
+      std::function<void(graphscore::CanvasNodePlaybackActionRequest)>;
+  void set_node_play_handler(NodePlayHandler handler);
+
   // The pinch focal fallback (logical viewport coordinates), forwarded to
   // the controller.
   void set_window_center(graphscore::ViewportPosition center) noexcept;
@@ -113,7 +122,9 @@ class CanvasGestureHandler final : public graphscore::InputHandler {
   CanvasKeyboardFocus keyboard_focus_ = CanvasKeyboardFocus::kNotation;
   ResetSelectedConnectorHandler  reset_selected_connector_handler_;
   DeleteSelectedConnectorHandler delete_selected_connector_handler_;
-  std::optional<graphscore::ViewportPosition> middle_drag_position_;
+  std::optional<graphscore::CanvasControlSelection> focused_control_;
+  NodePlayHandler                                   node_play_handler_;
+  std::optional<graphscore::ViewportPosition>       middle_drag_position_;
 };
 
 }  // namespace graphscore::writer_app

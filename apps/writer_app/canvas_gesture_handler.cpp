@@ -133,6 +133,20 @@ void CanvasGestureHandler::on_key_press(graphscore::KeyEvent event) {
   if (chord == ChordClass::kUnmodified) {
     bool consumed = true;
     switch (event.code) {
+      case graphscore::KeyCode::kReturn:
+      case graphscore::KeyCode::kSpace:
+        if (focused_control_.has_value()) {
+          const auto request = graphscore::canvas_node_playback_action_request(
+              *focused_control_);
+          if (request.has_value()) {
+            if (!event.repeat && node_play_handler_) {
+              node_play_handler_(*request);
+            }
+            break;
+          }
+        }
+        consumed = false;
+        break;
       case graphscore::KeyCode::kDelete:
         if (!event.repeat && delete_selected_connector_handler_) {
           delete_selected_connector_handler_();
@@ -219,6 +233,15 @@ void CanvasGestureHandler::set_reset_selected_connector_handler(
 void CanvasGestureHandler::set_delete_selected_connector_handler(
     DeleteSelectedConnectorHandler handler) {
   delete_selected_connector_handler_ = std::move(handler);
+}
+
+void CanvasGestureHandler::set_focused_control(
+    std::optional<graphscore::CanvasControlSelection> control) noexcept {
+  focused_control_ = control;
+}
+
+void CanvasGestureHandler::set_node_play_handler(NodePlayHandler handler) {
+  node_play_handler_ = std::move(handler);
 }
 
 void CanvasGestureHandler::set_window_center(

@@ -153,7 +153,7 @@ ADR or one time-boxed investigation, not a review-and-evidence cycle.
 - [x] Notation nodes completed
 - [x] Connector creation and semantics completed
 - [x] Orthogonal route editing completed
-- [ ] Selection and playback affordances completed
+- [x] Selection and playback affordances completed
 - [ ] Organization operations completed
 - [ ] Acceptance criteria passed
 - [ ] Test focus completed

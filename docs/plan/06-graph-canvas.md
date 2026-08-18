@@ -56,7 +56,7 @@ Build the large-scale graph authoring surface with notation-filled nodes and tid
 - [x] M6-phase-31 Add a small destination-end action circle that invokes the same queue/jump action and has a sufficiently large interaction target.
 - [x] M6-phase-32 Enable playback actions only for outputs whose source is the active node; other paths remain editable and show an unavailable reason.
 - [x] M6-phase-33 Play actions are initially routed through controller interfaces and become audible in Milestones 08/09.
-- [ ] M6-phase-34 Node play controls are keyboard operable and clearly distinct from selecting/dragging a node.
+- [x] M6-phase-34 Node play controls are keyboard operable and clearly distinct from selecting/dragging a node.
 
 ### Organization operations
 

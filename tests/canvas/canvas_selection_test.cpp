@@ -236,6 +236,26 @@ TEST(CanvasSingleClickSelectionTest, RejectsMissesAndInvalidTolerance) {
                    .has_value());
 }
 
+TEST(CanvasNodePlaybackActionTest, RequestsOnlyTheDedicatedPlayControl) {
+  CanvasFixture                            fixture;
+  const graphscore::CanvasControlSelection play{
+      fixture.source, graphscore::CanvasNodeHeaderAction::kPlay};
+
+  const auto request = graphscore::canvas_node_playback_action_request(play);
+
+  ASSERT_TRUE(request.has_value());
+  EXPECT_EQ(*request,
+            (graphscore::CanvasNodePlaybackActionRequest{fixture.source}));
+  EXPECT_FALSE(graphscore::canvas_node_playback_action_request(
+                   {fixture.source,
+                    graphscore::CanvasNodeHeaderAction::kEditFreeformNotes})
+                   .has_value());
+  EXPECT_FALSE(
+      graphscore::canvas_node_playback_action_request(
+          {fixture.source, graphscore::CanvasNodeHeaderAction::kOpenTempoLane})
+          .has_value());
+}
+
 TEST(CanvasDoubleClickPlaybackActionTest,
      RequestsActionForTheSingleClickConnectorIdentity) {
   CanvasFixture fixture;
